@@ -186,3 +186,8 @@ cython_debug/
 
 *.mp4
 .pokeagent_cache/*
+
+# mGBA installation files (use system package instead)
+mGBA-*/
+*.tar.xz
+*.tar.xz.*
