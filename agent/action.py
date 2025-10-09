@@ -12,7 +12,34 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     """
     Decide and perform the next action button(s) based on memory, plan, observation, and comprehensive state.
     Returns a list of action buttons as strings.
+    
+    ===============================================================================
+    🚨 EMERGENCY PATCH APPLIED - REVIEW BEFORE PRODUCTION 🚨
+    ===============================================================================
+    
+    PATCH: Title Screen Bypass (lines 18-22)
+    - Original issue: Agent would freeze on title screen due to complex VLM processing
+    - Emergency fix: Hard-coded "A" button press for title screen state
+    - TODO: Replace with smarter detection that handles:
+      * Multiple title screen states (main menu, options, etc.)
+      * Character creation screens  
+      * Save/load dialogs
+      * Any other menu-like states that need simple navigation
+    
+    INTEGRATION NOTES:
+    - This bypass should be expanded to handle more menu states programmatically
+    - Consider creating a "simple_navigation_mode" for all menu/UI interactions
+    - The main VLM action logic below this patch is intact and working
+    - When reintegrating full AI, keep this as a fallback for known simple states
+    
+    ===============================================================================
     """
+    # TEMPORARY FIX: Hard-coded rule for title screen to bypass VLM
+    game_data = state_data.get('game', {})
+    if game_data.get('state') == 'title':
+        logger.info("[ACTION] Title screen detected - bypassing VLM and returning 'A'")
+        return ["A"]
+    
     # Get formatted state context and useful summaries
     state_context = format_state_for_llm(state_data)
     state_summary = format_state_summary(state_data)
