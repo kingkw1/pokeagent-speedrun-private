@@ -252,6 +252,51 @@ python run.py --backend local --model-name "Qwen/Qwen2-VL-2B-Instruct"
 
 Supported models: `Qwen/Qwen2-VL-2B-Instruct`, `Qwen/Qwen2-VL-7B-Instruct`, `microsoft/Phi-3.5-vision-instruct`, `llava-hf/llava-1.5-7b-hf`, etc.
 
+### Fine-tuning a Local Perception Model
+
+For advanced users, this repository includes a script to fine-tune a vision-language model for the specific task of structured JSON extraction from game screenshots. This can improve performance and accuracy for the perception module.
+
+**1. Prepare Your Dataset**
+
+Create a `.jsonl` file where each line is a JSON object containing an image path and the corresponding structured data you want the model to extract.
+
+- `image_path`: Path to the training image (e.g., `screenshots/frame_001.png`).
+- `json_string`: The ground-truth JSON output you expect for that image.
+
+Example `data/perception_seed.jsonl`:
+```json
+{"image_path": "screenshots/battle_view.png", "json_string": "{\\"in_battle\\": true, \\"player_pokemon\\": {\\"name\\": \\"TORCHIC\\", \\"level\\": 5, \\"hp_percentage\\": 100}, \\"opponent_pokemon\\": {\\"name\\": \\"POOCHYENA\\", \\"level\\": 2, \\"hp_percentage\\": 100}}"}
+{"image_path": "screenshots/overworld_view.png", "json_string": "{\\"in_battle\\": false, \\"player_location\\": \\"LITTLEROOT TOWN\\"}"}
+```
+
+**2. Run the Training Script**
+
+Use the `train_perception_vlm.py` script to fine-tune the model.
+
+```bash
+python train_perception_vlm.py \
+    --dataset_path data/perception_seed.jsonl \
+    --model_id "microsoft/phi-3-vision-128k-instruct" \
+    --output_dir models/perception_v0.1
+```
+
+- `--dataset_path`: Path to your `.jsonl` training data.
+- `--model_id`: The base Hugging Face model to fine-tune.
+- `--output_dir`: Directory to save the final model checkpoint.
+
+**3. Use the Fine-tuned Model**
+
+Once training is complete, you can run the agent with your custom-trained model by providing the path to the output directory.
+
+```bash
+python run.py \
+    --backend local \
+    --model-name models/perception_v0.1 \
+    --agent-auto
+```
+
+The agent will load the fine-tuned model from the specified directory and use it for perception tasks.
+
 ## Running the Agent
 
 `run.py` runs the emulator and agent in a single process, providing better integration and real-time control.

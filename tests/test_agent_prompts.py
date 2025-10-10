@@ -116,7 +116,7 @@ class TestAgentPrompts:
         
         # Start new server
         server_process = subprocess.Popen([
-            "conda", "run", "-n", "mgba", "python", "-m", "server.app", 
+            sys.executable, "-m", "server.app",
             "--load-state", state_file_path
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         

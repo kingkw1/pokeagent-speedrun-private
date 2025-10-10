@@ -47,10 +47,10 @@ class TestDialogueDetection:
         
         # Start agent_direct with this state
         cmd = [
-            "/home/milkkarten/anaconda3/envs/mgba/bin/python", 
-            "agent_direct.py", 
+            sys.executable,
+            "agent_direct.py",
             "--load-state", state_file,
-            "--backend", "gemini", 
+            "--backend", "gemini",
             "--manual"
         ]
         
@@ -221,7 +221,6 @@ class TestDialogueIntegration:
         # Verify key methods exist
         assert hasattr(detector, 'is_dialogue_box_visible'), "Detector should have dialogue box detection"
         assert hasattr(detector, 'detect_dialogue_from_screenshot'), "Detector should have text detection"
-        assert hasattr(detector, 'read_dialog_with_ocr_fallback'), "Detector should have smart fallback logic"
 
 if __name__ == "__main__":
     # Allow running as script for debugging

@@ -1,14 +1,19 @@
-# Data Collection Pipeline Scripts
+# Scripts Directory
 
-This directory contains two scripts for the data collection pipeline that help generate and aggregate structured JSON data from game screenshots.
+This directory contains development and utility scripts for the PokeAgent project.
 
-## Scripts Overview
+## Data Collection Pipeline Scripts
 
 ### 1. `generate_draft.py` - VLM Draft Generator
 Generates structured JSON data from screenshots using the production VLM perception logic.
 
 ### 2. `aggregate_to_jsonl.py` - JSONL Aggregator
 Combines individual JSON files into a single JSONL file for training data.
+
+## Training Scripts
+
+### 3. `train_perception_vlm_fast.py` - Fast VLM Training
+Fast development version of VLM training using a smaller model for quick testing.
 
 ---
 
@@ -91,7 +96,29 @@ Each line in the JSONL file contains:
 
 ---
 
-## Complete Workflow
+## train_perception_vlm_fast.py
+
+### Purpose
+- Fast development version of VLM training
+- Uses Qwen2-VL-2B-Instruct (smaller, faster model)
+- Quick prototyping and testing changes before full training
+
+### Usage
+```bash
+python scripts/train_perception_vlm_fast.py \
+  --dataset_path data/perception_seed.jsonl \
+  --output_dir models/test_run \
+  --max_steps 10
+```
+
+### Features
+- **Model**: Uses Qwen2-VL-2B-Instruct for speed
+- **Fast Training**: Minimal steps for quick iteration
+- **Development Focus**: Testing configurations before production training
+
+---
+
+## Complete Data Collection Workflow
 
 ### Step 1: Collect Screenshots
 Gather ~50 PNG screenshots in a directory (e.g., `data/screenshots/`)
@@ -114,13 +141,32 @@ This creates `.json` files next to each `.png` file.
 python scripts/aggregate_to_jsonl.py --directory data/screenshots --output data/perception_seed.jsonl --validate-images
 ```
 
+### Step 5: Test Training (Optional)
+```bash
+# Quick test with fast training script
+python scripts/train_perception_vlm_fast.py --dataset_path data/perception_seed.jsonl --output_dir models/test_run --max_steps 10
+```
+
 ### Final Output
 - `data/screenshots/` - Directory with PNG and JSON file pairs
 - `data/perception_seed.jsonl` - Single file with all labeled examples
 
 ---
 
-## Features
+## Production Training
+
+For production training, use the main script in the root directory:
+```bash
+python train_perception_vlm.py \
+  --dataset_path data/perception_seed.jsonl \
+  --output_dir models/perception_v0.1
+```
+
+This uses Phi-3 Vision (8B parameters) and is the proven working configuration.
+
+---
+
+## Features Summary
 
 ### generate_draft.py Features
 - ✅ Single image and batch processing modes
@@ -136,11 +182,17 @@ python scripts/aggregate_to_jsonl.py --directory data/screenshots --output data/
 - ✅ Detailed progress reporting and error handling
 - ✅ Example output display for verification
 
+### train_perception_vlm_fast.py Features
+- ✅ Fast training with smaller model (Qwen2-VL-2B)
+- ✅ Configurable max steps for quick iteration
+- ✅ Same dataset format as production training
+- ✅ Minimal resource requirements for development
+
 ---
 
 ## Error Handling
 
-Both scripts include comprehensive error handling:
+All scripts include comprehensive error handling:
 - File existence validation
 - JSON parsing error handling
 - VLM initialization and timeout handling
@@ -153,7 +205,8 @@ Both scripts include comprehensive error handling:
 
 - Python 3.7+
 - PIL/Pillow for image processing
-- VLM backend (Gemini configured)
+- PyTorch and Transformers (for training scripts)
+- VLM backend (Gemini configured for data collection)
 - Valid API credentials for VLM service
 
 ---
