@@ -280,7 +280,7 @@ class LocalHuggingFaceBackend(VLMBackend):
     def __init__(self, model_name: str, device: str = "auto", load_in_4bit: bool = False, **kwargs):
         try:
             import torch
-            from transformers import AutoProcessor, AutoModelForImageTextToText, BitsAndBytesConfig
+            from transformers import AutoProcessor, AutoModelForCausalLM, BitsAndBytesConfig
             from PIL import Image
         except ImportError as e:
             raise ImportError(f"Required packages not found. Install with: pip install torch transformers bitsandbytes accelerate. Error: {e}")
@@ -304,12 +304,12 @@ class LocalHuggingFaceBackend(VLMBackend):
         
         # Load processor and model
         try:
-            self.processor = AutoProcessor.from_pretrained(model_name)
-            self.model = AutoModelForImageTextToText.from_pretrained(
+            self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+            self.model = AutoModelForCausalLM.from_pretrained(
                 model_name,
                 quantization_config=quantization_config,
                 device_map=device if device != "auto" else "auto",
-                torch_dtype=torch.float16 if not load_in_4bit else None,
+                torch_dtype=torch.float16 if not load_in_4bit else "auto",
                 trust_remote_code=True
             )
             
@@ -341,30 +341,30 @@ class LocalHuggingFaceBackend(VLMBackend):
                     device = next(self.model.parameters()).device
                 
                 # Move inputs to device if needed
-                inputs_on_device = {}
-                for k, v in inputs.items():
-                    if hasattr(v, 'to'):
-                        inputs_on_device[k] = v.to(device)
-                    else:
-                        inputs_on_device[k] = v
+                inputs_on_device = {k: v.to(device) for k, v in inputs.items()}
+
+                # Set termination condition for generation
+                eos_token_id = self.processor.tokenizer.eos_token_id
                 
                 generated_ids = self.model.generate(
                     **inputs_on_device,
                     max_new_tokens=1024,
-                    do_sample=True,
-                    temperature=0.7,
-                    pad_token_id=self.processor.tokenizer.eos_token_id
+                    do_sample=False, # Use greedy decoding for deterministic output
+                    temperature=0.0, # No temperature for greedy
+                    eos_token_id=eos_token_id,
+                    pad_token_id=self.processor.tokenizer.pad_token_id
                 )
                 
-                # Decode the response
-                generated_text = self.processor.decode(generated_ids[0], skip_special_tokens=True)
+                # Decode the response, removing the prompt part
+                input_token_len = inputs_on_device["input_ids"].shape[1]
+                generated_text = self.processor.batch_decode(
+                    generated_ids[:, input_token_len:],
+                    skip_special_tokens=True
+                )[0]
                 
-                # Extract only the generated part (remove the prompt)
-                if text in generated_text:
-                    result = generated_text.split(text)[-1].strip()
-                else:
-                    result = generated_text.strip()
-            
+                # Clean up the output
+                result = generated_text.strip()
+
             # Log the response
             result_preview = result[:1000] + "..." if len(result) > 1000 else result
             logger.info(f"[{module_name}] RESPONSE: {result_preview}")
@@ -380,37 +380,31 @@ class LocalHuggingFaceBackend(VLMBackend):
         """Process an image and text prompt using local HuggingFace model"""
         # Handle both PIL Images and numpy arrays
         if hasattr(img, 'convert'):  # It's a PIL Image
-            image = img
+            image = img.convert("RGB")
         elif hasattr(img, 'shape'):  # It's a numpy array
-            image = Image.fromarray(img)
+            image = Image.fromarray(img).convert("RGB")
         else:
             raise ValueError(f"Unsupported image type: {type(img)}")
         
-        # Prepare messages with proper chat template format
-        messages = [
-            {"role": "user",
-             "content": [
-                 {"type": "image", "image": image},
-                 {"type": "text", "text": text}
-             ]}
-        ]
-        formatted_text = self.processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True)
-        inputs = self.processor(text=formatted_text, images=image, return_tensors="pt")
+        # Construct the prompt in the specific format for fine-tuned models
+        prompt = f"<|user|>\n<|image_1|>\n{text}<|end|>\n<|assistant|>\n"
+
+        # Process the prompt and image
+        inputs = self.processor(
+            text=prompt,
+            images=image,
+            return_tensors="pt"
+        )
         
-        return self._generate_response(inputs, text, module_name)
+        return self._generate_response(inputs, prompt, module_name)
     
     def get_text_query(self, text: str, module_name: str = "Unknown") -> str:
         """Process a text-only prompt using local HuggingFace model"""
-        # For text-only queries, use simple text format without image
-        messages = [
-            {"role": "user", "content": text}
-        ]
-        formatted_text = self.processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True)
-        inputs = self.processor(text=formatted_text, return_tensors="pt")
+        # For text-only queries, use simple text format
+        prompt = f"<|user|>\n{text}<|end|>\n<|assistant|>\n"
+        inputs = self.processor(text=prompt, return_tensors="pt")
         
-        return self._generate_response(inputs, text, module_name)
+        return self._generate_response(inputs, prompt, module_name)
 
 class LegacyOllamaBackend(VLMBackend):
     """Legacy Ollama backend for backward compatibility"""
