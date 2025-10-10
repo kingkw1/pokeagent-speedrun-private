@@ -194,3 +194,5 @@ mGBA-*/
 
 # Screenshots folder
 data/screenshots/
+data/
+docs/development/
