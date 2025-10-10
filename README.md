@@ -317,7 +317,7 @@ When running with display (default):
 - **A**: Toggle auto agent mode
 - **1/2**: Save/Load state
 - **Space**: Trigger single agent step
-- **Arrow Keys/WASD**: Manual movement
+- **Arrow Keys**: Manual movement
 - **X/Z**: A/B buttons
 
 ### Web Interface

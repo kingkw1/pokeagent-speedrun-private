@@ -208,13 +208,13 @@ def run_multiprocess_client(server_port=8000, args=None):
                         # Manual controls (only in manual mode)
                         elif mode == "MANUAL":
                             action = None
-                            if event.key in (pygame.K_UP, pygame.K_w):
+                            if event.key == pygame.K_UP:
                                 action = "UP"
-                            elif event.key in (pygame.K_DOWN, pygame.K_s):
+                            elif event.key == pygame.K_DOWN:
                                 action = "DOWN"
-                            elif event.key in (pygame.K_LEFT, pygame.K_a):
+                            elif event.key == pygame.K_LEFT:
                                 action = "LEFT"
-                            elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                            elif event.key == pygame.K_RIGHT:
                                 action = "RIGHT"
                             elif event.key == pygame.K_z:
                                 action = "A"
@@ -274,6 +274,35 @@ def run_multiprocess_client(server_port=8000, args=None):
                                         print(f"❌ Failed to get state: {response.status_code}")
                                 except Exception as e:
                                     print(f"❌ Error getting state: {e}")
+                            elif event.key == pygame.K_s:
+                                # Save screenshot
+                                print("📸 Saving screenshot...")
+                                try:
+                                    response = requests.get(f"{server_url}/screenshot", timeout=5)
+                                    if response.status_code == 200:
+                                        screenshot_data = response.json().get("screenshot_base64", "")
+                                        if screenshot_data:
+                                            import datetime
+                                            import os
+                                            
+                                            # Create screenshots directory if it doesn't exist
+                                            screenshots_dir = "data/screenshots"
+                                            os.makedirs(screenshots_dir, exist_ok=True)
+                                            
+                                            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                                            filename = os.path.join(screenshots_dir, f"screenshot_{timestamp}.png")
+                                            
+                                            # Decode and save the screenshot
+                                            img_data = base64.b64decode(screenshot_data)
+                                            img = Image.open(io.BytesIO(img_data))
+                                            img.save(filename)
+                                            print(f"✅ Screenshot saved as {filename}")
+                                        else:
+                                            print("❌ No screenshot data received")
+                                    else:
+                                        print(f"❌ Failed to get screenshot: {response.status_code}")
+                                except Exception as e:
+                                    print(f"❌ Error saving screenshot: {e}")
                             
                             if action:
                                 # Send manual action to server using the same endpoint as agent actions
