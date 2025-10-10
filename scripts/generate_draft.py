@@ -120,9 +120,10 @@ def create_extraction_prompt(image_path):
                     "dialogue": null,
                     "speaker": null,
                     "menu_title": null,
-                    "button_prompts": []
+                    "button_prompts": [],
+                    "current_selection": null // The text of the currently highlighted menu option
                 }},
-                "visible_entities": [],
+                "visible_entities": [], // List of objects, e.g., [{{"type": "npc", "name": "May", "position": "top"}}, {{"type": "pokemon", "name": "Torchic"}}]
                 "menu_state": null,
                 "visual_elements": {{
                     "health_bars_visible": false,
