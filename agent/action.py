@@ -33,6 +33,68 @@ def format_observation_for_action(observation):
         # Original text format or non-structured data
         return str(observation)
 
+def calculate_2x2_moves(options, current, target):
+    """Calculates D-pad presses in a 2x2 menu layout."""
+    raise NotImplementedError
+    # Example layout:
+    # FIGHT (0,0) | BAG (1,0)
+    # POKEMON(0,1)| RUN (1,1)
+    positions = {opt: (i % 2, i // 2) for i, opt in enumerate(options)}
+    if current not in positions or target not in positions:
+        return []
+    
+    curr_x, curr_y = positions[current]
+    targ_x, targ_y = positions[target]
+    
+    moves = []
+    while curr_y < targ_y:
+        moves.append("DOWN")
+        curr_y += 1
+    while curr_y > targ_y:
+        moves.append("UP")
+        curr_y -= 1
+    while curr_x < targ_x:
+        moves.append("RIGHT")
+        curr_x += 1
+    while curr_x > targ_x:
+        moves.append("LEFT")
+        curr_x -= 1
+    return moves    
+
+def calculate_column_moves(options, current, target):
+    """Calculates D-pad presses in a single-column menu layout."""
+    raise NotImplementedError
+    if current not in options or target not in options:
+        return []
+    
+    curr_index = options.index(current)
+    targ_index = options.index(target)
+    
+    moves = []
+    while curr_index < targ_index:
+        moves.append("DOWN")
+        curr_index += 1
+    while curr_index > targ_index:
+        moves.append("UP")
+        curr_index -= 1
+    
+    return moves
+
+def get_menu_navigation_moves(menu_state, options, current, target):
+    """Calculates D-pad presses to go from current to target selection."""
+    raise NotImplementedError
+    if menu_state == "battle_action_select":
+        # Use 2x2 logic: knows "FIGHT" is left of "BAG", "POKEMON" is below "FIGHT"
+        # Example: to get from "FIGHT" to "RUN", press DOWN then RIGHT.
+        return calculate_2x2_moves(options, current, target)
+
+    elif menu_state in ["main_menu", "shop_menu"]:
+        # Use 1-column logic: knows it only needs to press UP or DOWN.
+        # Example: to get from "BAG" to "EXIT", press DOWN four times.
+        return calculate_column_moves(options, current, target)
+    
+    # ... other menu types ...
+
 def action_step(memory_context, current_plan, latest_observation, frame, state_data, recent_actions, vlm):
     """
     Decide and perform the next action button(s) based on memory, plan, observation, and comprehensive state.
