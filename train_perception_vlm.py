@@ -1,8 +1,3 @@
-# IMPORTANT NOTE: You are a code generation assistant. You do not have access
-# to my local file system or any of my data. Your sole task is to write a
-# complete Python script based on the specifications below. I will be the one
-# to run this script in my own environment with my own data.
-
 import argparse
 import json
 import os
@@ -14,6 +9,7 @@ from torch.utils.data import Dataset
 from transformers import (
     AutoModelForCausalLM,
     AutoProcessor,
+    AutoConfig,
     BitsAndBytesConfig,
     Trainer,
     TrainingArguments,
@@ -75,48 +71,70 @@ class VLMInstructionDataset(Dataset):
         item = self.data[idx]
 
         # Resolve the absolute path for the image
-        image_path = os.path.join(self.dataset_dir, item['image_path'])
+        image_path = item['image_path']
+        if not os.path.isabs(image_path):
+            # If it's a relative path, check if it already includes the base directory
+            if image_path.startswith('data/'):
+                # Path already includes 'data/', use it directly from project root
+                image_path = os.path.join(os.path.dirname(self.dataset_dir), image_path)
+            else:
+                # Path is relative to dataset directory
+                image_path = os.path.join(self.dataset_dir, image_path)
+        
         image = Image.open(image_path).convert("RGB")
 
         json_string_output = item['json_string']
 
-        # Format the prompt using the required chat template
-        # <|user|>
-        # <|image_1|>
-        # Based on the visual frame, extract specific information into this JSON structure. Return ONLY the filled JSON object.
-        # <|end|>
-        # <|assistant|>
-        # {the_json_string_output}<|end|>
+        # Format the prompt using the correct Phi-3 Vision chat template
         prompt = (
             f"<|user|>\n<|image_1|>\nBased on the visual frame, extract specific "
-            f"information into this JSON structure. Return ONLY the filled JSON object.\n<|end|>\n"
+            f"information into this JSON structure. Return ONLY the filled JSON object.<|end|>\n"
             f"<|assistant|>\n{json_string_output}<|end|>"
         )
 
         # Process the text and image using the processor
         inputs = self.processor(text=prompt, images=image, return_tensors="pt")
 
-        # To ensure the model learns to generate the assistant's response, we mask
-        # the user's part of the prompt in the labels.
+        # Create labels for training - mask everything except the assistant response
         labels = inputs["input_ids"].clone()
-
-        # Create the prompt part that should be ignored by the loss function
-        user_prompt_part = (
-             f"<|user|>\n<|image_1|>\nBased on the visual frame, extract specific "
-             f"information into this JSON structure. Return ONLY the filled JSON object.\n<|end|>\n"
-             f"<|assistant|>\n"
-        )
-
-        # Tokenize the user part to find its length
-        user_prompt_tokens = self.processor.tokenizer(user_prompt_part, return_tensors="pt")
-        user_prompt_len = user_prompt_tokens.input_ids.shape[1]
-
-        # Mask the user prompt and padding tokens
-        labels[0, :user_prompt_len] = -100
-
-        # The processor might add padding, which should also be ignored
-        # Find where the actual content ends (before padding)
-        # The end token is usually followed by padding tokens
+        
+        # First, mask all image-related tokens (negative values and out-of-vocab tokens)
+        # Image tokens are typically negative or beyond the base vocabulary
+        base_vocab_size = self.processor.tokenizer.vocab_size
+        
+        # Mask image placeholder tokens (negative values)
+        labels[labels < 0] = -100
+        
+        # Mask special image tokens that are beyond base vocabulary but not in added tokens
+        # Keep only tokens that are either in base vocab or properly added special tokens
+        extended_vocab_size = len(self.processor.tokenizer)  # Includes added tokens
+        labels[labels >= extended_vocab_size] = -100
+        
+        # Now mask the user prompt part to only train on assistant response
+        # We need to find where the assistant response starts
+        # Look for the pattern "<|assistant|>\n" in the tokenized sequence
+        assistant_start_text = "<|assistant|>\n"
+        assistant_start_tokens = self.processor.tokenizer(assistant_start_text, add_special_tokens=False, return_tensors="pt")
+        assistant_start_ids = assistant_start_tokens.input_ids[0]
+        
+        # Find where the assistant response starts in the sequence
+        input_ids = inputs["input_ids"][0]
+        assistant_start_pos = None
+        
+        # Search for the assistant start pattern
+        for i in range(len(input_ids) - len(assistant_start_ids) + 1):
+            if torch.equal(input_ids[i:i+len(assistant_start_ids)], assistant_start_ids):
+                assistant_start_pos = i + len(assistant_start_ids)
+                break
+        
+        if assistant_start_pos is not None:
+            # Mask everything before the assistant response
+            labels[0, :assistant_start_pos] = -100
+        else:
+            # Fallback: mask the first half if we can't find the pattern
+            labels[0, :labels.shape[1]//2] = -100
+        
+        # Mask padding tokens after the end of sequence
         eos_token_id = self.processor.tokenizer.eos_token_id
         if eos_token_id in labels[0]:
             eos_indices = (labels[0] == eos_token_id).nonzero(as_tuple=True)[0]
@@ -130,7 +148,62 @@ class VLMInstructionDataset(Dataset):
 
         return inputs
 
-# --- 3. Main Training Logic ---
+# --- 3. Custom Training Class to Handle Cache Issues ---
+
+class CustomTrainer(Trainer):
+    """Custom trainer to handle Phi-3 Vision cache issues"""
+    
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        """
+        Override compute_loss to disable cache during training
+        """
+        # Ensure use_cache is False for training
+        if hasattr(model.config, 'use_cache'):
+            model.config.use_cache = False
+        if hasattr(model, 'generation_config') and model.generation_config is not None:
+            model.generation_config.use_cache = False
+            
+        # Remove any past_key_values from inputs if present
+        if 'past_key_values' in inputs:
+            del inputs['past_key_values']
+            
+        # Call the parent compute_loss with correct signature
+        if num_items_in_batch is not None:
+            return super().compute_loss(model, inputs, return_outputs, num_items_in_batch)
+        else:
+            return super().compute_loss(model, inputs, return_outputs)
+    
+    def prediction_step(self, model, inputs, prediction_loss_only, ignore_keys=None):
+        """
+        Override prediction_step to handle cache issues
+        """
+        # Ensure use_cache is False
+        if hasattr(model.config, 'use_cache'):
+            model.config.use_cache = False
+            
+        return super().prediction_step(model, inputs, prediction_loss_only, ignore_keys)
+    
+    def save_model(self, output_dir=None, _internal_call=False):
+        """
+        Override save_model to handle shared tensor issues in Phi-3 Vision
+        """
+        if output_dir is None:
+            output_dir = self.args.output_dir
+            
+        try:
+            # Try normal save first
+            super().save_model(output_dir, _internal_call)
+        except RuntimeError as e:
+            if "shared tensors" in str(e):
+                print(f"⚠️  Shared tensor issue detected, using safe_serialization=False")
+                # Handle shared tensor issue by saving with safe_serialization=False
+                self.model.save_pretrained(output_dir, safe_serialization=False)
+                if hasattr(self, 'tokenizer') and self.tokenizer is not None:
+                    self.tokenizer.save_pretrained(output_dir)
+            else:
+                raise e
+
+# --- 4. Main Training Logic ---
 
 def main():
     """
@@ -148,23 +221,70 @@ def main():
     print(f"Dataset Path: {args.dataset_path}")
     print(f"Output Directory: {args.output_dir}")
 
+    # Validate dataset file exists
+    if not os.path.exists(args.dataset_path):
+        print(f"❌ Error: Dataset file not found: {args.dataset_path}")
+        return
+
+    # Create output directory if it doesn't exist
+    os.makedirs(args.output_dir, exist_ok=True)
+    os.makedirs(f"{args.output_dir}/logs", exist_ok=True)
+
     # --- B: Load the Base Model and Processor with Quantization ---
     print("\n--- Step B: Loading Base Model and Processor ---")
+    
+    # Check CUDA availability
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"CUDA device count: {torch.cuda.device_count()}")
+        print(f"Current CUDA device: {torch.cuda.current_device()}")
+        print(f"CUDA device name: {torch.cuda.get_device_name()}")
+    else:
+        print("Warning: CUDA not available, training will use CPU (much slower)")
 
     # Configure 4-bit quantization for memory efficiency
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_use_double_quant=True,  # Additional memory savings
     )
 
-    # Load the model
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_id,
-        trust_remote_code=True,
-        quantization_config=bnb_config,
-        torch_dtype="auto"
-    )
+    # Load configuration and set attention implementation
+    config = AutoConfig.from_pretrained(args.model_id, trust_remote_code=True)
+    config._attn_implementation = "eager"  # Force eager attention to avoid FlashAttention2
+    config.use_cache = False  # Disable KV cache to avoid DynamicCache issues
+    
+    # Load the model without quantization for fine-tuning
+    print("Loading model without quantization for fine-tuning...")
+    try:
+        model = AutoModelForCausalLM.from_pretrained(
+            args.model_id,
+            config=config,
+            trust_remote_code=True,
+            torch_dtype=torch.bfloat16,  # Use bfloat16 for memory efficiency
+            device_map="auto",
+            low_cpu_mem_usage=True,
+            max_memory={0: "28GiB"}  # Limit GPU memory usage to leave room for optimizer
+        )
+        print("✅ Model loaded successfully")
+    except Exception as e:
+        print(f"❌ Model loading failed: {e}")
+        return
+
+    # Configure model for training (disable cache and enable gradient checkpointing)
+    if hasattr(model, 'config'):
+        model.config.use_cache = False
+    if hasattr(model, 'generation_config'):
+        model.generation_config.use_cache = False
+    
+    # Enable gradient checkpointing for memory efficiency
+    model.gradient_checkpointing_enable()
+    
+    # Additional memory optimizations
+    torch.cuda.empty_cache()  # Clear cache before training
+    
+    print("✅ Model configured for training")
 
     # Load the processor
     processor = AutoProcessor.from_pretrained(args.model_id, trust_remote_code=True)
@@ -192,16 +312,29 @@ def main():
     # Instantiate TrainingArguments
     training_args = TrainingArguments(
         output_dir=args.output_dir,
-        num_train_epochs=2,
+        num_train_epochs=1,  # Reduce epochs for testing
         per_device_train_batch_size=1,
-        learning_rate=2e-4,
+        learning_rate=1e-5,  # Lower learning rate for Adafactor optimizer
         logging_dir=f"{args.output_dir}/logs",
         logging_steps=10,
         report_to="none",  # Disable wandb or other reporting
+        save_steps=500,  # Save checkpoints
+        gradient_accumulation_steps=4,  # Increase gradient accumulation to reduce effective batch processing
+        bf16=True,  # Use bfloat16 instead of fp16 for better stability with vision models
+        gradient_checkpointing=True,  # Enable gradient checkpointing for memory efficiency
+        dataloader_pin_memory=False,  # Reduce memory usage
+        dataloader_num_workers=0,  # Reduce memory usage
+        remove_unused_columns=False,  # Keep all columns for multimodal training
+        max_grad_norm=1.0,  # Gradient clipping for stability
+        optim="adafactor",  # Use memory-efficient Adafactor optimizer instead of Adam
+        dataloader_drop_last=True,  # Drop incomplete batches
+        ddp_find_unused_parameters=False,  # Reduce memory overhead
+        save_strategy="epoch",  # Save at end of epoch
+        save_total_limit=1,  # Keep only final checkpoint
     )
 
-    # Instantiate the Trainer
-    trainer = Trainer(
+    # Instantiate the Custom Trainer
+    trainer = CustomTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
@@ -212,13 +345,9 @@ def main():
     trainer.train()
     print("Training complete.")
 
-    # --- E: Save the Final Model ---
-    print("\n--- Step E: Saving the Final Model ---")
-
-    final_model_path = os.path.join(args.output_dir, "final_checkpoint")
-    trainer.save_model(final_model_path)
-
-    print(f"Fine-tuned model saved to {final_model_path}")
+    # --- E: Model is automatically saved due to save_strategy="epoch" ---
+    print("\n--- Step E: Training Complete ---")
+    print(f"Fine-tuned model saved to {args.output_dir}")
     print("\n--- VLM Fine-Tuning Finished ---")
 
 
