@@ -209,85 +209,42 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     context_str = "\n".join(action_context)
     
     action_prompt = f"""
-    ★★★ COMPREHENSIVE GAME STATE DATA ★★★
+    You are playing Pokemon Emerald. Based on the current situation, choose your next action.
     
-    {state_context}
-    
-    ★★★ ENHANCED ACTION CONTEXT ★★★
+    Current situation: {format_observation_for_action(latest_observation)}
     
     {context_str}
     
-    ★★★ ACTION DECISION TASK ★★★
+    Choose ONE of these actions: A, B, UP, DOWN, LEFT, RIGHT, START
     
-    You are the agent playing Pokemon Emerald with a speedrunning mindset. Make quick, efficient decisions.
+    Quick decision rules:
+    - If you see dialogue/text: press A
+    - If you see a menu: use UP/DOWN to navigate, A to select
+    - If you're in the overworld: use UP/DOWN/LEFT/RIGHT to move
+    - If you're stuck: press B to go back
     
-    Memory Context: {memory_context}
-    Current Plan: {current_plan if current_plan else 'No plan yet'}
-    Latest Observation: {format_observation_for_action(latest_observation)}
-    
-    Based on the comprehensive state information above, decide your next action(s):
-    
-    BATTLE STRATEGY:
-    - If in battle: Choose moves strategically based on type effectiveness and damage
-    - Consider switching pokemon if current one is weak/low HP
-    - Use items if pokemon is in critical condition
-    
-    NAVIGATION STRATEGY:
-    - Use movement options analysis above for efficient navigation
-    - Avoid blocked tiles (marked as BLOCKED)
-    - Consider tall grass: avoid if party is weak, seek if need to train/catch
-    - Navigate around water unless you have Surf
-    - Use coordinates to track progress toward objectives
-    
-    MENU/DIALOGUE STRATEGY:
-    - If in dialogue: A to advance text, B to cancel/skip if possible
-    - If in menu: Navigate with UP/DOWN/LEFT/RIGHT, A to select, B to cancel/back out
-    - If stuck in menu/interface: B repeatedly to exit to overworld
-    - In Pokemon Center: A to talk to Nurse Joy, A to confirm healing
-    
-    HEALTH MANAGEMENT:
-    - If pokemon are low HP/fainted, head to Pokemon Center
-    - If no healthy pokemon, prioritize healing immediately
-    - Consider terrain: avoid wild encounters if party is weak
-    
-    EFFICIENCY RULES:
-    1. Output sequences of actions when you know what's coming (e.g., "RIGHT, RIGHT, RIGHT, A" to enter a door)
-    2. For dialogue: "A, A, A, A, A" to mash through
-    3. For movement: repeat directions based on movement options (e.g., "UP, UP, UP, UP" if UP shows "Normal path")
-    4. If uncertain, output single action and reassess
-    5. Use traversability data: move toward open paths, avoid obstacles
-    6. If movement doesn't change coordinates (e.g., RIGHT but X doesn't increase), check map for walls (#) blocking your path
-    
-    Valid buttons: A, B, SELECT, START, UP, DOWN, LEFT, RIGHT, L, R
-    - A: Interact with NPCs/objects, confirm selections, advance dialogue, use moves in battle
-    - B: Cancel menus, back out of interfaces, run faster (with running shoes), flee from battle
-    - START: Open main menu (Title sequence, Pokedex, Pokemon, Bag, etc.)
-    - SELECT: Use registered key item (typically unused)
-    - UP/DOWN/LEFT/RIGHT: Move character, navigate menus, select options
-    - L/R: Cycle through pages in some menus, switch Pokemon in battle (rare usage)
-    
-    ⚠️ CRITICAL WARNING: NEVER save the game using the in-game save menu! Saving will crash the entire run and end your progress. If you encounter a save prompt in the game, press B to cancel it immediately!
-    
-    Return ONLY the button name(s) as a comma-separated list, nothing else.
-    Maximum 10 actions in sequence. Avoid repeating same button more than 6 times.
+    Return ONLY ONE button name, nothing else.
     """
     
     # Construct complete prompt for VLM
     complete_prompt = system_prompt + action_prompt
     
     action_response = vlm.get_text_query(complete_prompt, "ACTION").strip().upper()
-    valid_buttons = ['A', 'B', 'SELECT', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'L', 'R']
     
-    # Split the response by commas and clean up
-    actions = [btn.strip() for btn in action_response.split(',') if btn.strip() in valid_buttons]
+    valid_buttons = ['A', 'B', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT']
+    
+    # Handle single action response or comma-separated
+    if ',' in action_response:
+        actions = [btn.strip() for btn in action_response.split(',') if btn.strip() in valid_buttons][:3]  # Max 3 actions
+    else:
+        # Single action response
+        action = action_response.strip()
+        actions = [action] if action in valid_buttons else []
     
     print(f"Parsed actions: {actions}")
     if len(actions) == 0:
         print("❌ No valid actions parsed - using default 'A'")
     print("-" * 80 + "\n")
-    
-    # Limit to maximum 10 actions and prevent excessive repetition
-    actions = actions[:10]
     
     # If no valid actions found, make intelligent default based on state
     if not actions:

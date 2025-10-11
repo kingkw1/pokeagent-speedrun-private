@@ -97,8 +97,9 @@ def perception_step(frame, state_data, vlm):
                 }}
 
                 Fill screen_context with one of: "overworld", "battle", "menu", "dialogue", "title"
-                For visible_entities, list NPCs, trainers, or Pokemon you can see with their approximate positions
+                For visible_entities, list NPCs, trainers, or Pokemon you can see with their approximate positions as JSON arrays [x, y]
                 For menu_state, specify the open menu name or "closed"
+                IMPORTANT: Use JSON array syntax [x, y] for positions, NOT Python tuple syntax (x, y)
                 """
             
             # Make VLM call with timeout protection
@@ -116,7 +117,11 @@ def perception_step(frame, state_data, vlm):
                 # Extract JSON from response (handle cases where VLM adds extra text)
                 json_match = re.search(r'\{.*\}', vlm_response, re.DOTALL)
                 if json_match:
-                    visual_data = json.loads(json_match.group(0))
+                    # Fix Python tuple syntax to JSON array syntax before parsing
+                    json_text = json_match.group(0)
+                    # Replace Python tuples like (x, y) with JSON arrays [x, y]
+                    json_text = re.sub(r'\((\d+),\s*(\d+)\)', r'[\1, \2]', json_text)
+                    visual_data = json.loads(json_text)
                     logger.info("[PERCEPTION] VLM extraction successful")
                 else:
                     logger.warning("[PERCEPTION] VLM response not in JSON format, using fallback")
