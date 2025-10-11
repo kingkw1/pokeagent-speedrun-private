@@ -1,5 +1,3 @@
-
-
 # AI Agent for the PokéAgent Speedrunning Challenge
 
 This repository contains the development of a sophisticated AI agent designed to compete in **Track 2 (RPG Speedrunning)** of the NeurIPS 2025 PokéAgent Challenge. Our goal is to build a highly autonomous agent that can complete Pokémon Emerald by optimizing for the competition's "Adjusted Performance" metric, which rewards both speed and minimal reliance on human-provided scaffolding.
@@ -21,35 +19,25 @@ We've successfully resolved a critical issue where the VLM perception system was
 
 ## Architectural Overview
 
-Our agent employs a four-module architecture with advanced perception and intelligent action systems:
+This agent is built upon the starter kit's four-module framework (Perception, Planning, Memory, Action) but implements a sophisticated, learning-driven architecture designed to maximize autonomy and performance. Our design's core philosophy is to replace hard-coded components with learned policies to minimize the competition's scaffolding penalty.
 
-### 1. Advanced VLM Perception System
+### 1. Hierarchical Command Structure: Strategic Planner & Tactical Controller
+To address the long-horizon challenge of an RPG, our agent uses a two-layer hierarchical command structure that separates high-level strategy from low-level execution.
 
-The agent's "vision" is powered by the Qwen2-VL-2B-Instruct model, fine-tuned for Pokemon Emerald. Instead of producing simple text descriptions, our perception module performs **image-to-structure translation**, outputting structured JSON objects that represent the complete game state from raw pixels.
+* **High-Level Planner:** The strategic brain of the agent will be a fine-tuned Large Language Model (LLM). It is trained to analyze the game state and memory to issue the next major subgoal, such as `{"subgoal": "NAVIGATE_TO", "target": "Pewter City Gym"}`. This allows the agent to reason about the critical path of the speedrun at a strategic level.
+* **Low-Level Controller:** A goal-conditioned reinforcement learning (RL) policy is responsible for tactical execution. It takes a subgoal from the planner (e.g., "NAVIGATE_TO") and outputs the sequence of primitive game actions required to achieve it efficiently.
 
-**Key Features:**
-- Structured JSON extraction with robust error handling
-- Visual context recognition (overworld, battle, menu, dialogue)
-- On-screen text reading and entity detection
-- Real-time processing with 2.3s inference time
+### 2. Advanced VLM Perception: Image-to-Structure Translation
+The agent's "vision" is powered by a fine-tuned Vision-Language Model (VLM). Our perception module moves beyond simple descriptions by performing **image-to-structure translation**. Given a raw game screenshot, the VLM is trained to output a structured JSON object representing the complete multi-modal game state. This provides rich, machine-readable data for all other modules, forming a robust foundation for decision-making.
 
-### 2. Smart Action Sequencing System
+### 3. Active Memory Management
+To handle a game spanning thousands of steps, our blueprint specifies a hybrid memory system that is actively managed by a dedicated RL agent, the Memory Management Agent (MMA).
 
-Our action module uses an intelligent decision-making process that adapts to the current game state:
+* **Hybrid Memory:** The system includes a short-term "scratchpad," a long-term episodic memory (Vector DB), and a structured semantic memory (Knowledge Graph).
+* **Memory Management Agent (MMA):** This RL agent learns a policy for what information to store, what to retrieve, and what to forget. By learning to make goal-oriented memory decisions, the MMA transforms memory from a passive database into an active component of the agent's reasoning process, a key innovation for minimizing the scaffolding penalty.
 
-**Decision Rules:**
-- **Single actions by default** for safety and precision
-- **Controlled sequences** for efficient navigation when paths are clear
-- **Context-aware responses** based on visual screen analysis
-- **Fallback systems** for robust operation
-
-### 3. Four-Module Architecture
-
-Built on the competition's recommended structure:
-- **Perception**: VLM-based visual understanding with structured output
-- **Planning**: Context-aware decision making with strategic reasoning
-- **Memory**: Persistent game state and experience tracking
-- **Action**: Intelligent button sequencing with safety controls
+### 4. Phased Training Protocol
+The agent's complex capabilities are built incrementally through a structured, four-phase training curriculum. This approach de-risks development by mastering foundational skills like perception and tactical execution before moving on to more complex strategic planning and memory management.
 
 ---
 
