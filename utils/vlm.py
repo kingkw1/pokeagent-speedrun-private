@@ -275,7 +275,55 @@ class OpenRouterBackend(VLMBackend):
         return result
 
 class LocalHuggingFaceBackend(VLMBackend):
-    """Local HuggingFace transformers backend with bitsandbytes optimization"""
+    """Local HuggingFace VLM backend with GPU support and optimization"""
+    
+    def _detect_model_type(self, model_name: str) -> str:
+        """
+        Detect the model type from name patterns or config file.
+        
+        Supports all trained models:
+        - models/perception_v0.1/final_checkpoint (phi-3-vision)  
+        - models/perception_v0.2_qwen* (qwen2-vl)
+        - Hugging Face model names (qwen2-vl, phi-3, etc.)
+        
+        Returns:
+            str: Model type ("qwen2_vl", "phi3_v", or "unknown")
+        """
+        # Direct name pattern matching for known models
+        model_lower = model_name.lower()
+        
+        # Check for Qwen2-VL patterns
+        if any(pattern in model_lower for pattern in [
+            "qwen2-vl", "qwen2_vl", "perception_v0.2_qwen"
+        ]):
+            return "qwen2_vl"
+            
+        # Check for Phi-3 Vision patterns  
+        if any(pattern in model_lower for pattern in [
+            "phi-3-vision", "phi3-vision", "phi-3.5-vision", "perception_v0.1"
+        ]):
+            return "phi3_v"
+        
+        # For local checkpoint paths, try to read the config
+        try:
+            from transformers import AutoConfig
+            config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+            config_type = getattr(config, 'model_type', '').lower()
+            
+            if config_type == "qwen2_vl":
+                return "qwen2_vl"
+            elif config_type == "phi3_v":
+                return "phi3_v"
+            else:
+                logger.warning(f"Unknown model type from config: {config_type}")
+                return "unknown"
+                
+        except Exception as e:
+            logger.warning(f"Could not read config for model type detection: {e}")
+            
+        # Default fallback - assume Phi-3 for backward compatibility
+        logger.warning(f"Could not detect model type for {model_name}, defaulting to phi3_v")
+        return "phi3_v"
     
     def __init__(self, model_name: str, device: str = "auto", load_in_4bit: bool = False, **kwargs):
         try:
@@ -316,13 +364,28 @@ class LocalHuggingFaceBackend(VLMBackend):
         # Load processor and model
         try:
             self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                quantization_config=quantization_config,
-                device_map=device if device != "auto" else "auto",
-                torch_dtype=torch.float16 if not load_in_4bit else "auto",
-                trust_remote_code=True
-            )
+            
+            # Detect model type from name or config - supports all trained models
+            self.model_type = self._detect_model_type(model_name)
+            logger.info(f"Detected model type: {self.model_type}")
+            
+            if self.model_type == "qwen2_vl":
+                from transformers import Qwen2VLForConditionalGeneration
+                self.model = Qwen2VLForConditionalGeneration.from_pretrained(
+                    model_name,
+                    quantization_config=quantization_config,
+                    device_map=device if device != "auto" else "auto",
+                    torch_dtype=torch.float16 if not load_in_4bit else "auto",
+                    trust_remote_code=True
+                )
+            else:
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    model_name,
+                    quantization_config=quantization_config,
+                    device_map=device if device != "auto" else "auto",
+                    torch_dtype=torch.float16 if not load_in_4bit else "auto",
+                    trust_remote_code=True
+                )
             
             if device != "auto" and not load_in_4bit:
                 self.model = self.model.to(device)
@@ -405,15 +468,24 @@ class LocalHuggingFaceBackend(VLMBackend):
         else:
             raise ValueError(f"Unsupported image type: {type(img)}")
         
-        # Construct the prompt in the specific format for fine-tuned models
-        prompt = f"<|user|>\n<|image_1|>\n{text}<|end|>\n<|assistant|>\n"
-
-        # Process the prompt and image
-        inputs = self.processor(
-            text=prompt,
-            images=image,
-            return_tensors="pt"
-        )
+        # Handle different model formats using stored model type
+        if self.model_type == "qwen2_vl":
+            # Qwen2-VL format
+            messages = [
+                {
+                    "role": "user", 
+                    "content": [
+                        {"type": "image", "image": image},
+                        {"type": "text", "text": text}
+                    ]
+                }
+            ]
+            prompt = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs = self.processor(text=prompt, images=[image], return_tensors="pt")
+        else:
+            # Phi-3 Vision format
+            prompt = f"<|user|>\n<|image_1|>\n{text}<|end|>\n<|assistant|>\n"
+            inputs = self.processor(text=prompt, images=image, return_tensors="pt")
         
         return self._generate_response(inputs, prompt, module_name)
     

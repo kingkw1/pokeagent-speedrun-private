@@ -34,6 +34,115 @@ def load_jsonl(dataset_path: str) -> List[Dict[str, Any]]:
             data.append(json.loads(line))
     return data
 
+def _copy_processor_files(base_model_id: str, output_dir: str) -> None:
+    """
+    Copy processor files from the base model cache to all checkpoint directories.
+    
+    This ensures fine-tuned models have all necessary files for loading.
+    
+    Args:
+        base_model_id (str): The base model ID (e.g., "Qwen/Qwen2-VL-2B-Instruct")
+        output_dir (str): The output directory containing checkpoint subdirectories
+    """
+    import os
+    import shutil
+    import glob
+    from pathlib import Path
+    
+    print(f"Copying processor files from base model: {base_model_id}")
+    
+    # Find all checkpoint directories
+    checkpoint_dirs = glob.glob(os.path.join(output_dir, "checkpoint-*"))
+    
+    if not checkpoint_dirs:
+        print("⚠️  No checkpoint directories found. Processor files may need manual copying.")
+        return
+        
+    # Try to find the base model in HuggingFace cache
+    cache_root = Path.home() / ".cache" / "huggingface" / "hub"
+    model_cache_name = f"models--{base_model_id.replace('/', '--')}"
+    model_cache_dir = cache_root / model_cache_name
+    
+    if not model_cache_dir.exists():
+        print(f"⚠️  Base model cache not found at: {model_cache_dir}")
+        print("   You may need to manually copy processor files for model loading.")
+        return
+        
+    # Find the latest snapshot directory
+    snapshots_dir = model_cache_dir / "snapshots"
+    if not snapshots_dir.exists():
+        print("⚠️  No snapshots directory found in model cache.")
+        return
+        
+    # Get the most recent snapshot (by modification time)
+    snapshot_dirs = [d for d in snapshots_dir.iterdir() if d.is_dir()]
+    if not snapshot_dirs:
+        print("⚠️  No snapshot directories found.")
+        return
+        
+    latest_snapshot = max(snapshot_dirs, key=lambda x: x.stat().st_mtime)
+    print(f"Using snapshot: {latest_snapshot.name}")
+    
+    # Define files to copy for different model types
+    qwen_files = [
+        "preprocessor_config.json",
+        "tokenizer_config.json", 
+        "tokenizer.json",
+        "vocab.json",
+        "merges.txt",
+        "chat_template.json"
+    ]
+    
+    phi_files = [
+        "preprocessor_config.json",
+        "processor_config.json",
+        "tokenizer_config.json",
+        "tokenizer.json", 
+        "special_tokens_map.json",
+        "processing_phi3_v.py"
+    ]
+    
+    # Determine which files to copy based on model type
+    if "qwen" in base_model_id.lower():
+        files_to_copy = qwen_files
+        model_type = "Qwen2-VL"
+    else:
+        files_to_copy = phi_files  
+        model_type = "Phi-3-Vision"
+        
+    print(f"Detected model type: {model_type}")
+    
+    # Copy files to each checkpoint directory
+    copied_count = 0
+    for checkpoint_dir in checkpoint_dirs:
+        print(f"Processing checkpoint: {os.path.basename(checkpoint_dir)}")
+        
+        for filename in files_to_copy:
+            src_file = latest_snapshot / filename
+            dst_file = Path(checkpoint_dir) / filename
+            
+            if src_file.exists():
+                try:
+                    shutil.copy2(src_file, dst_file)
+                    copied_count += 1
+                    print(f"  ✅ Copied {filename}")
+                except Exception as e:
+                    print(f"  ❌ Failed to copy {filename}: {e}")
+            else:
+                print(f"  ⚠️  File not found: {filename}")
+    
+    print(f"\n✅ Successfully copied {copied_count} processor files.")
+    print("Fine-tuned model checkpoints are now ready for loading!")
+    
+    if copied_count == 0:
+        print("\n⚠️  WARNING: No processor files were copied!")
+        print("You may need to manually copy the following files from:")
+        print(f"   {latest_snapshot}")
+        print("To each checkpoint directory:")
+        for checkpoint_dir in checkpoint_dirs:
+            print(f"   {checkpoint_dir}")
+        print("Required files:", ", ".join(files_to_copy))
+
 # --- 2. Custom Dataset for VLM Fine-tuning ---
 
 class VLMInstructionDataset(Dataset):
@@ -85,15 +194,34 @@ class VLMInstructionDataset(Dataset):
 
         json_string_output = item['json_string']
 
-        # Format the prompt using the correct Phi-3 Vision chat template
-        prompt = (
-            f"<|user|>\n<|image_1|>\nBased on the visual frame, extract specific "
-            f"information into this JSON structure. Return ONLY the filled JSON object.<|end|>\n"
-            f"<|assistant|>\n{json_string_output}<|end|>"
-        )
-
-        # Process the text and image using the processor
-        inputs = self.processor(text=prompt, images=image, return_tensors="pt")
+        # Format the prompt based on model type
+        if hasattr(self.processor, 'tokenizer') and 'qwen2-vl' in getattr(self.processor.tokenizer, 'name_or_path', '').lower():
+            # Qwen2-VL format
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image},
+                        {"type": "text", "text": "Based on the visual frame, extract specific information into this JSON structure. Return ONLY the filled JSON object."}
+                    ]
+                },
+                {
+                    "role": "assistant", 
+                    "content": json_string_output
+                }
+            ]
+            prompt = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+            # Process with the formatted text and images
+            inputs = self.processor(text=prompt, images=[image], return_tensors="pt")
+        else:
+            # Phi-3 Vision format
+            prompt = (
+                f"<|user|>\n<|image_1|>\nBased on the visual frame, extract specific "
+                f"information into this JSON structure. Return ONLY the filled JSON object.<|end|>\n"
+                f"<|assistant|>\n{json_string_output}<|end|>"
+            )
+            # Process the text and image using the processor
+            inputs = self.processor(text=prompt, images=image, return_tensors="pt")
 
         # Create labels for training - mask everything except the assistant response
         labels = inputs["input_ids"].clone()
@@ -212,7 +340,7 @@ def main():
     # --- A: Parse Command-Line Arguments ---
     parser = argparse.ArgumentParser(description="Fine-tune a Vision-Language Model.")
     parser.add_argument("--dataset_path", type=str, required=True, help="Path to the .jsonl training data file.")
-    parser.add_argument("--model_id", type=str, default="microsoft/phi-3-vision-128k-instruct", help="The Hugging Face ID of the base model.")
+    parser.add_argument("--model_id", type=str, default="microsoft/Phi-3.5-vision-instruct", help="The Hugging Face ID of the base model.")
     parser.add_argument("--output_dir", type=str, required=True, help="Directory to save the fine-tuned model checkpoint.")
     args = parser.parse_args()
 
@@ -258,15 +386,28 @@ def main():
     # Load the model without quantization for fine-tuning
     print("Loading model without quantization for fine-tuning...")
     try:
-        model = AutoModelForCausalLM.from_pretrained(
-            args.model_id,
-            config=config,
-            trust_remote_code=True,
-            torch_dtype=torch.bfloat16,  # Use bfloat16 for memory efficiency
-            device_map="auto",
-            low_cpu_mem_usage=True,
-            max_memory={0: "28GiB"}  # Limit GPU memory usage to leave room for optimizer
-        )
+        # Handle different model types
+        if "qwen2-vl" in args.model_id.lower():
+            from transformers import Qwen2VLForConditionalGeneration
+            model = Qwen2VLForConditionalGeneration.from_pretrained(
+                args.model_id,
+                config=config,
+                trust_remote_code=True,
+                torch_dtype=torch.bfloat16,  # Use bfloat16 for memory efficiency
+                device_map="auto",
+                low_cpu_mem_usage=True,
+                max_memory={0: "28GiB"}  # Limit GPU memory usage to leave room for optimizer
+            )
+        else:
+            model = AutoModelForCausalLM.from_pretrained(
+                args.model_id,
+                config=config,
+                trust_remote_code=True,
+                torch_dtype=torch.bfloat16,  # Use bfloat16 for memory efficiency
+                device_map="auto",
+                low_cpu_mem_usage=True,
+                max_memory={0: "28GiB"}  # Limit GPU memory usage to leave room for optimizer
+            )
         print("✅ Model loaded successfully")
     except Exception as e:
         print(f"❌ Model loading failed: {e}")
@@ -348,6 +489,11 @@ def main():
     # --- E: Model is automatically saved due to save_strategy="epoch" ---
     print("\n--- Step E: Training Complete ---")
     print(f"Fine-tuned model saved to {args.output_dir}")
+    
+    # --- F: Copy processor files for complete model checkpoint ---
+    print("\n--- Step F: Copying Processor Files ---")
+    _copy_processor_files(args.model_id, args.output_dir)
+    
     print("\n--- VLM Fine-Tuning Finished ---")
 
 
