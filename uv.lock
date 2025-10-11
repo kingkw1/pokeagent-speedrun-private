@@ -751,6 +751,15 @@ wheels = [
 ]
 
 [[package]]
+name = "lark"
+version = "1.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1d/37/a13baf0135f348af608c667633cbe5d13aa2c5c15a56ae9ad3e6cba45ae3/lark-1.3.0.tar.gz", hash = "sha256:9a3839d0ca5e1faf7cfa3460e420e859b66bcbde05b634e73c369c8244c5fa48", size = 259551, upload-time = "2025-09-22T13:45:05.072Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a8/3e/1c6b43277de64fc3c0333b0e72ab7b52ddaaea205210d60d9b9f83c3d0c7/lark-1.3.0-py3-none-any.whl", hash = "sha256:80661f261fb2584a9828a097a2432efd575af27d20be0fd35d17f0fe37253831", size = 113002, upload-time = "2025-09-22T13:45:03.747Z" },
+]
+
+[[package]]
 name = "markupsafe"
 version = "3.0.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1149,6 +1158,7 @@ dependencies = [
     { name = "gevent-websocket" },
     { name = "google-generativeai" },
     { name = "grpcio" },
+    { name = "lark" },
     { name = "mgba" },
     { name = "more-itertools" },
     { name = "numpy" },
@@ -1204,6 +1214,7 @@ requires-dist = [
     { name = "gevent-websocket", specifier = "==0.10.1" },
     { name = "google-generativeai", specifier = ">=0.3.0" },
     { name = "grpcio", specifier = ">=1.48.2" },
+    { name = "lark", specifier = ">=1.3.0" },
     { name = "mgba", specifier = "==0.10.2" },
     { name = "more-itertools" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
