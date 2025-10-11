@@ -4,6 +4,8 @@
 
 This document describes the improvements made to handle multiple trained perception models and automate the fine-tuning process.
 
+**Current Configuration**: The system now defaults to using the base `Qwen/Qwen2-VL-2B-Instruct` model as it performs better than our current fine-tuned versions (2.3s vs 3.1s inference time). We plan to improve fine-tuning with larger datasets in the future.
+
 ## Key Improvements
 
 ### 1. Universal Model Type Detection (`utils/vlm.py`)
@@ -150,8 +152,8 @@ python scripts/fix_model_checkpoints.py --auto-fix
 | Model | Type | Load Time | Inference Time | Notes |
 |-------|------|-----------|----------------|-------|
 | `perception_v0.1/final_checkpoint` | Phi-3-Vision | ~5s | ~38s | Original model |
-| `perception_v0.2_qwen_final/checkpoint-3` | Qwen2-VL | ~3s | ~3s | **12x faster!** |
-| `Qwen/Qwen2-VL-2B-Instruct` | Qwen2-VL Base | ~3s | ~2.3s | **16x faster!** |
+| `perception_v0.2_qwen_final/checkpoint-3` | Qwen2-VL | ~3s | ~3s | Fine-tuned (slower than base) |
+| `Qwen/Qwen2-VL-2B-Instruct` | Qwen2-VL Base | ~3s | ~2.3s | **🎯 Current default - 16x faster!** |
 
 ## What You Need to Handle Manually
 

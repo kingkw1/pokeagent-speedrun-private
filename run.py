@@ -100,9 +100,9 @@ def main():
                        help="Load from checkpoint files")
     
     # Agent configuration
-    parser.add_argument("--backend", type=str, default="gemini", 
+    parser.add_argument("--backend", type=str, default="local", 
                        help="VLM backend (openai, gemini, local, openrouter)")
-    parser.add_argument("--model-name", type=str, default="gemini-2.5-flash", 
+    parser.add_argument("--model-name", type=str, default="Qwen/Qwen2-VL-2B-Instruct", 
                        help="Model name to use")
     parser.add_argument("--simple", action="store_true", 
                        help="Simple mode: direct frame->action without 4-module architecture")
