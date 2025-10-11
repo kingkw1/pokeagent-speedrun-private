@@ -208,22 +208,26 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     
     context_str = "\n".join(action_context)
     
-    action_prompt = f"""
-    You are playing Pokemon Emerald. Based on the current situation, choose your next action.
+    # Get the visual screen context to guide decision making
+    visual_context = "unknown"
+    if isinstance(latest_observation, dict) and 'visual_data' in latest_observation:
+        visual_context = latest_observation['visual_data'].get('screen_context', 'unknown')
     
-    Current situation: {format_observation_for_action(latest_observation)}
+    action_prompt = f"""
+    Playing Pokemon Emerald. Current screen: {visual_context}
+    
+    Situation: {format_observation_for_action(latest_observation)}
     
     {context_str}
     
-    Choose ONE of these actions: A, B, UP, DOWN, LEFT, RIGHT, START
+    What should I do?
+    - If text/dialogue visible: A
+    - If menu open: UP, DOWN, or A  
+    - If overworld with clear path: direction or short sequence like "RIGHT, RIGHT"
+    - If uncertain: single action
     
-    Quick decision rules:
-    - If you see dialogue/text: press A
-    - If you see a menu: use UP/DOWN to navigate, A to select
-    - If you're in the overworld: use UP/DOWN/LEFT/RIGHT to move
-    - If you're stuck: press B to go back
-    
-    Return ONLY ONE button name, nothing else.
+    Choose from: A, B, UP, DOWN, LEFT, RIGHT, START
+    Give me 1-3 actions maximum.
     """
     
     # Construct complete prompt for VLM
@@ -233,9 +237,9 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     
     valid_buttons = ['A', 'B', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT']
     
-    # Handle single action response or comma-separated
+    # Parse multi-action sequences (up to 3 actions for navigation efficiency)
     if ',' in action_response:
-        actions = [btn.strip() for btn in action_response.split(',') if btn.strip() in valid_buttons][:3]  # Max 3 actions
+        actions = [btn.strip() for btn in action_response.split(',') if btn.strip() in valid_buttons][:3]
     else:
         # Single action response
         action = action_response.strip()
