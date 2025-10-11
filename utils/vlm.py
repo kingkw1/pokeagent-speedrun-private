@@ -286,7 +286,18 @@ class LocalHuggingFaceBackend(VLMBackend):
             raise ImportError(f"Required packages not found. Install with: pip install torch transformers bitsandbytes accelerate. Error: {e}")
         
         self.model_name = model_name
-        self.device = device
+        
+        # Smart device selection - prefer GPU if available
+        if device == "auto":
+            if torch.cuda.is_available():
+                self.device = "cuda"
+                logger.info(f"CUDA available, using GPU: {torch.cuda.get_device_name(0)}")
+            else:
+                self.device = "cpu"
+                logger.info("CUDA not available, using CPU")
+        else:
+            self.device = device
+            
         self.torch = torch
         
         logger.info(f"Loading local VLM model: {model_name}")
@@ -325,11 +336,15 @@ class LocalHuggingFaceBackend(VLMBackend):
     def _generate_response(self, inputs: Dict[str, Any], text: str, module_name: str) -> str:
         """Generate response using the local model"""
         try:
+            import time
             
             # Log the prompt
             prompt_preview = text[:2000] + "..." if len(text) > 2000 else text
             logger.info(f"[{module_name}] LOCAL HF VLM QUERY:")
             logger.info(f"[{module_name}] PROMPT: {prompt_preview}")
+            
+            # Start timing
+            generation_start = time.time()
             
             with self.torch.no_grad():
                 # Ensure all inputs are on the correct device
@@ -348,9 +363,8 @@ class LocalHuggingFaceBackend(VLMBackend):
                 
                 generated_ids = self.model.generate(
                     **inputs_on_device,
-                    max_new_tokens=1024,
+                    max_new_tokens=256,  # Reduced for faster JSON generation
                     do_sample=False, # Use greedy decoding for deterministic output
-                    temperature=0.0, # No temperature for greedy
                     eos_token_id=eos_token_id,
                     pad_token_id=self.processor.tokenizer.pad_token_id
                 )
@@ -365,9 +379,14 @@ class LocalHuggingFaceBackend(VLMBackend):
                 # Clean up the output
                 result = generated_text.strip()
 
-            # Log the response
+            # End timing and log performance
+            generation_end = time.time()
+            generation_time = generation_end - generation_start
+            
+            # Log the response with timing
             result_preview = result[:1000] + "..." if len(result) > 1000 else result
             logger.info(f"[{module_name}] RESPONSE: {result_preview}")
+            logger.info(f"[{module_name}] ⏱️  GENERATION TIME: {generation_time:.3f} seconds")
             logger.info(f"[{module_name}] ---")
             
             return result

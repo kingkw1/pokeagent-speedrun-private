@@ -39,6 +39,9 @@ def perception_step(frame, state_data, vlm):
     
     ===============================================================================
     """
+    import time
+    perception_start = time.time()
+    
     # Get basic state info for analysis
     state_summary = format_state_summary(state_data)
     game_data = state_data.get('game', {})
@@ -47,6 +50,8 @@ def perception_step(frame, state_data, vlm):
     logger.info("[PERCEPTION] Starting hybrid VLM-based structured extraction")
     logger.info(f"[PERCEPTION] State: {state_summary}")
     
+    setup_time = time.time() - perception_start
+    
     # Determine if we should use VLM or fallback to programmatic analysis
     current_location = player_data.get('location', 'Unknown')
     game_state = game_data.get('state', 'unknown')
@@ -54,6 +59,12 @@ def perception_step(frame, state_data, vlm):
     
     # Try VLM-based structured extraction first
     visual_data = None
+    
+    # Import json and re at module level to avoid scoping issues
+    import json
+    import re
+    import signal
+    
     try:
         if frame is not None:
             logger.info("[PERCEPTION] Attempting VLM-based structured extraction...")
@@ -91,22 +102,16 @@ def perception_step(frame, state_data, vlm):
                 """
             
             # Make VLM call with timeout protection
-            import signal
-            
             def timeout_handler(signum, frame):
                 raise TimeoutError("VLM call timed out")
             
-            # Set up timeout (10 seconds max)
+            # Set up timeout (60 seconds for local model on GPU)
             signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(10)
+            signal.alarm(60)  # Increased timeout for local models on GPU
             
             try:
                 vlm_response = vlm.get_query(frame, system_prompt + extraction_prompt, "PERCEPTION-EXTRACT")
                 signal.alarm(0)  # Cancel timeout
-                
-                # Try to parse JSON response
-                import json
-                import re
                 
                 # Extract JSON from response (handle cases where VLM adds extra text)
                 json_match = re.search(r'\{.*\}', vlm_response, re.DOTALL)
@@ -143,7 +148,11 @@ def perception_step(frame, state_data, vlm):
     state_context = format_state_for_llm(state_data)
     observation["state_data"] = state_context
     
+    # Final timing
+    total_time = time.time() - perception_start
+    
     logger.info(f"[PERCEPTION] Extraction completed via {observation['extraction_method']} method")
+    logger.info(f"[PERCEPTION] ⏱️  TOTAL TIME: {total_time:.3f}s (setup: {setup_time:.3f}s)")
     return observation
 
 
