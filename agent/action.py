@@ -121,11 +121,46 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     
     ===============================================================================
     """
-    # TEMPORARY FIX: Hard-coded rule for title screen to bypass VLM
+    # ENHANCED FIX: Robust title/menu screen detection (adapted from simple agent)
     game_data = state_data.get('game', {})
-    if game_data.get('state') == 'title':
-        logger.info("[ACTION] Title screen detected - bypassing VLM and returning 'A'")
+    player_data = state_data.get('player', {})
+    
+    # Use same detection logic as simple agent for consistency
+    player_location = player_data.get("location", "")
+    game_state_value = game_data.get("game_state", "").lower()
+    player_name = player_data.get("name", "").strip()
+    
+    # Multiple robust conditions for title/menu screen detection
+    is_title_screen = (
+        # Direct title sequence detection
+        player_location == "TITLE_SEQUENCE" or
+        # Game state indicates title/intro
+        "title" in game_state_value or "intro" in game_state_value or
+        # Player name not set (indicates title sequence)
+        not player_name or player_name == "????????" or
+        # Check if no pokemon in party (common at game start)
+        game_data.get('party_count', 0) == 0 or
+        # Legacy checks for other menu indicators
+        player_location.lower() in ['title', 'menu', 'main_menu', '', 'unknown'] or
+        'new game' in player_location.lower() or
+        # Check if we have invalid player position (common in menus)
+        (player_data.get('position', {}).get('x', -1) <= 0 and 
+         player_data.get('position', {}).get('y', -1) <= 0)
+    )
+    
+    if is_title_screen:
+        logger.info(f"[ACTION] Title screen detected!")
+        logger.info(f"[ACTION] - player_location: '{player_location}'")
+        logger.info(f"[ACTION] - game_state: '{game_state_value}'")
+        logger.info(f"[ACTION] - player_name: '{player_name}'")
+        logger.info(f"[ACTION] - party_count: {game_data.get('party_count', 0)}")
+        logger.info(f"[ACTION] - position: {player_data.get('position', {})}")
+        logger.info("[ACTION] Using simple navigation: A to select NEW GAME")
         return ["A"]
+    
+    # Debug logging for state detection (only if not in title)
+    if not is_title_screen:
+        logger.info(f"[ACTION] Debug - game_state: '{game_state_value}', location: '{player_location}', position: {player_data.get('position', {})}")
     
     # Get formatted state context and useful summaries
     state_context = format_state_for_llm(state_data)
