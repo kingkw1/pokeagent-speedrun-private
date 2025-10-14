@@ -1,6 +1,8 @@
 import logging
 import random
 import sys
+import logging
+import random
 from agent.system_prompt import system_prompt
 from utils.state_formatter import format_state_for_llm, format_state_summary, get_movement_options, get_party_health_summary
 from utils.vlm import VLM
@@ -211,7 +213,15 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     
     # Recent actions context
     if recent_actions:
-        action_context.append(f"Recent Actions: {', '.join(list(recent_actions)[-5:])}")
+        try:
+            # Ensure recent_actions is a valid iterable
+            if recent_actions is not None:
+                recent_list = list(recent_actions) if recent_actions else []
+                if recent_list:
+                    action_context.append(f"Recent Actions: {', '.join(recent_list[-5:])}")
+        except Exception as e:
+            logger.warning(f"[ACTION] Error processing recent_actions: {e}")
+            # Continue without recent actions context
     
     # Visual perception context (new structured data)
     if isinstance(latest_observation, dict) and 'visual_data' in latest_observation:
@@ -268,7 +278,14 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     # Construct complete prompt for VLM
     complete_prompt = system_prompt + action_prompt
     
-    action_response = vlm.get_text_query(complete_prompt, "ACTION").strip().upper()
+    action_response = vlm.get_text_query(complete_prompt, "ACTION")
+    
+    # SAFETY CHECK: Handle None or empty VLM response
+    if action_response is None:
+        logger.warning("[ACTION] VLM returned None response, using fallback action")
+        action_response = "A"  # Safe fallback
+    else:
+        action_response = action_response.strip().upper()
     
     valid_buttons = ['A', 'B', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT']
     

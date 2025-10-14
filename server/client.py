@@ -179,6 +179,9 @@ def run_multiprocess_client(server_port=8000, args=None):
                                         'status': state_data.get('status', ''),
                                         'action_queue_length': state_data.get('action_queue_length', 0)
                                     }
+                                    
+                                    # Debug logging removed after successful fix of NoneType iteration bug
+                                    
                                     result = agent.step(game_state)
                                     if result and result.get('action'):
                                         # Convert action to buttons list format expected by server

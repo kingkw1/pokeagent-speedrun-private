@@ -125,6 +125,17 @@ class Agent:
                     state_data, 
                     self.vlm
                 )
+                
+                # SAFETY CHECK: Handle None perception output
+                if perception_output is None:
+                    logger.warning("[AGENT] Perception returned None, creating fallback")
+                    perception_output = {
+                        "visual_data": {"screen_context": "unknown"},
+                        "state_summary": "Unable to perceive state",
+                        "extraction_method": "fallback",
+                        "description": "Perception failed"
+                    }
+                
                 self.context['perception_output'] = perception_output
                 
                 # 2. Planning - decide strategy with robust programmatic check
@@ -194,11 +205,41 @@ class Agent:
                     self.vlm
                 )
                 
+                # SAFETY CHECK: Ensure action_output is valid
+                if action_output is None or not action_output:
+                    logger.warning("[AGENT] Action step returned None/empty, using fallback")
+                    action_output = ['A']  # Safe fallback action
+                
                 # Return in the expected format for the client
                 return {'action': action_output}
                 
             except Exception as e:
                 print(f"❌ Agent error: {e}")
+                # Add detailed error information for debugging
+                import traceback
+                full_traceback = traceback.format_exc()
+                print(f"❌ Full traceback: {full_traceback}")
+                
+                # Specific check for NoneType iteration error
+                if "'NoneType' object is not iterable" in str(e):
+                    print("🚨 CRITICAL: NoneType iteration error detected!")
+                    print("🔍 Checking state_data for None values...")
+                    
+                    # Debug state_data structure
+                    try:
+                        if state_data is None:
+                            print("   state_data is completely None!")
+                        else:
+                            for key, value in state_data.items():
+                                if value is None:
+                                    print(f"   state_data['{key}'] is None")
+                                elif isinstance(value, dict) and not value:
+                                    print(f"   state_data['{key}'] is empty dict")
+                                elif isinstance(value, list) and not value:
+                                    print(f"   state_data['{key}'] is empty list")
+                    except Exception as debug_e:
+                        print(f"   Error debugging state_data: {debug_e}")
+                
                 return None
 
 
