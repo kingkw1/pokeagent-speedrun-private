@@ -4,7 +4,7 @@ import sys
 import logging
 import random
 from agent.system_prompt import system_prompt
-from utils.state_formatter import format_state_for_llm, format_state_summary, get_movement_options, get_party_health_summary
+from utils.state_formatter import format_state_for_llm, format_state_summary, get_movement_options, get_party_health_summary, format_movement_preview_for_llm
 from utils.vlm import VLM
 
 # Set up module logging
@@ -258,22 +258,48 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     if isinstance(latest_observation, dict) and 'visual_data' in latest_observation:
         visual_context = latest_observation['visual_data'].get('screen_context', 'unknown')
     
-    action_prompt = f"""
-    Playing Pokemon Emerald. Current screen: {visual_context}
+    # Enhanced Goal-Conditioned Action Prompt (Day 9 Navigation Implementation)
+    # Strategic goal integration with tactical movement analysis
+    strategic_goal = ""
+    if current_plan and current_plan.strip():
+        strategic_goal = f"""
+=== YOUR STRATEGIC GOAL ===
+{current_plan.strip()}
+
+"""
     
-    Situation: {format_observation_for_action(latest_observation)}
+    # Get movement preview for pathfinding decisions
+    movement_preview_text = ""
+    if not game_data.get('in_battle', False):  # Only show movement options in overworld
+        try:
+            movement_preview_text = format_movement_preview_for_llm(state_data)
+            if movement_preview_text and movement_preview_text != "Movement preview: Not available":
+                movement_preview_text = f"\n{movement_preview_text}\n"
+        except Exception as e:
+            logger.warning(f"[ACTION] Error getting movement preview: {e}")
+            movement_preview_text = ""
     
-    {context_str}
-    
-    What should I do?
-    - If text/dialogue visible: A
-    - If menu open: UP, DOWN, or A  
-    - If overworld with clear path: direction or short sequence like "RIGHT, RIGHT"
-    - If uncertain: single action
-    
-    Choose from: A, B, UP, DOWN, LEFT, RIGHT, START
-    Give me 1-3 actions maximum.
-    """
+    action_prompt = f"""Playing Pokemon Emerald. Current screen: {visual_context}
+
+{strategic_goal}Situation: {format_observation_for_action(latest_observation)}
+
+{context_str}{movement_preview_text}
+
+=== DECISION LOGIC ===
+Based on your STRATEGIC GOAL and current situation:
+
+1. **If DIALOGUE/TEXT visible**: Press A to advance
+2. **If MENU open**: Use UP/DOWN to navigate, A to select
+3. **If BATTLE**: Use A to attack or select moves
+4. **If OVERWORLD with STRATEGIC GOAL**: 
+   - Analyze the MOVEMENT PREVIEW above
+   - Choose the single best direction (UP/DOWN/LEFT/RIGHT) that moves you closer to your goal
+   - Consider obstacles, doors, and terrain in your pathfinding
+5. **If uncertain or no clear goal**: Use A or explore with single direction
+
+Choose from: A, B, UP, DOWN, LEFT, RIGHT, START
+Return 1-3 actions maximum. Focus on the single best action for your strategic goal.
+"""
     
     # Construct complete prompt for VLM
     complete_prompt = system_prompt + action_prompt
