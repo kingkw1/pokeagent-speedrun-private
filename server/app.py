@@ -243,6 +243,7 @@ class ComprehensiveStateResponse(BaseModel):
     step_number: int
     status: str
     action_queue_length: int = 0
+    recent_actions: list = []  # Add recent actions list
 
 def periodic_milestone_updater():
     """Lightweight background thread that only updates milestones occasionally"""
@@ -1015,6 +1016,17 @@ async def get_comprehensive_state():
         # Include action queue info for multiprocess coordination
         queue_length = len(action_queue)  # Action queue access is atomic for len()
         
+        # Get recent actions for agent context
+        global recent_button_presses
+        recent_action_strings = []
+        if recent_button_presses:
+            # Convert recent button press objects to simple action strings
+            for btn_press in recent_button_presses[-25:]:  # Last 25 actions for better VLM context
+                if isinstance(btn_press, dict) and 'button' in btn_press:
+                    recent_action_strings.append(btn_press['button'])
+                elif isinstance(btn_press, str):
+                    recent_action_strings.append(btn_press)
+        
         return ComprehensiveStateResponse(
             visual=state["visual"],
             player=state["player"],
@@ -1024,7 +1036,8 @@ async def get_comprehensive_state():
             location_connections=state.get("location_connections", {}),
             step_number=current_step,
             status="running",
-            action_queue_length=queue_length
+            action_queue_length=queue_length,
+            recent_actions=recent_action_strings
         )
         
     except Exception as e:

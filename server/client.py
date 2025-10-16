@@ -177,7 +177,8 @@ def run_multiprocess_client(server_port=8000, args=None):
                                         'visual': state_data.get('visual', {}),
                                         'step_number': state_data.get('step_number', 0),
                                         'status': state_data.get('status', ''),
-                                        'action_queue_length': state_data.get('action_queue_length', 0)
+                                        'action_queue_length': state_data.get('action_queue_length', 0),
+                                        'recent_actions': state_data.get('recent_actions', [])
                                     }
                                     
                                     # Debug logging removed after successful fix of NoneType iteration bug
@@ -370,7 +371,8 @@ def run_multiprocess_client(server_port=8000, args=None):
                                             'visual': state_data.get('visual', {}),
                                             'step_number': state_data.get('step_number', 0),
                                             'status': state_data.get('status', ''),
-                                            'action_queue_length': state_data.get('action_queue_length', 0)
+                                            'action_queue_length': state_data.get('action_queue_length', 0),
+                                            'recent_actions': state_data.get('recent_actions', [])
                                         }
                                         
                                         result = agent.step(game_state)

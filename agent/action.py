@@ -422,21 +422,9 @@ Based on your STRATEGIC GOAL and current situation:
    - Consider obstacles, doors, and terrain in your pathfinding
 5. **If uncertain or no clear goal**: Use A or explore with single direction
 
-CRITICAL: Your response must be EXACTLY ONE button name. No explanations, no parentheses, no extra text.
+RESPOND WITH ONLY ONE BUTTON NAME: A, B, UP, DOWN, LEFT, RIGHT, START
 
-Valid responses: A, B, UP, DOWN, LEFT, RIGHT, START
-
-Correct examples:
-A
-UP
-RIGHT
-
-Incorrect examples (DO NOT DO THIS):
-A (to interact)
-UP (to move north)
-"Press A to continue"
-
-Response format: Just the button name, nothing else.
+NO explanations. NO extra text. NO repetition. Just one button name.
 """
     
     # Construct complete prompt for VLM
@@ -447,6 +435,14 @@ Response format: Just the button name, nothing else.
     actual_step = len(recent_actions) if recent_actions else 0
     print(f"📞 [VLM CALL] Step {actual_step} (calculated from {len(recent_actions) if recent_actions else 0} recent_actions) - About to call VLM")
     
+    # CRITICAL DEBUG: Why is recent_actions empty?
+    if recent_actions is None:
+        print(f"⚠️ [CRITICAL] recent_actions is None!")
+    elif len(recent_actions) == 0:
+        print(f"⚠️ [CRITICAL] recent_actions is empty list!")
+    else:
+        print(f"✅ [DEBUG] recent_actions has {len(recent_actions)} items: {recent_actions[-5:] if len(recent_actions) > 5 else recent_actions}")
+    
     # Safe visual context logging
     visual_preview = visual_context[:100] + "..." if visual_context and len(visual_context) > 100 else (visual_context or "None")
     strategic_preview = strategic_goal[:100] + "..." if strategic_goal and len(strategic_goal) > 100 else (strategic_goal or "None")
@@ -456,8 +452,23 @@ Response format: Just the button name, nothing else.
     
     action_response = vlm.get_text_query(complete_prompt, "ACTION")
     
+    # VLM RESPONSE VALIDATION: Detect and handle problematic responses
+    if action_response and len(action_response) > 500:
+        print(f"⚠️ [VLM WARNING] Response is suspiciously long ({len(action_response)} chars) - possible hallucination detected!")
+        # Truncate to first 200 characters to avoid processing garbage
+        action_response = action_response[:200]
+        print(f"   Truncated to: '{action_response}'")
+    
+    # Check for repetitive patterns that indicate hallucination
+    if action_response and len(action_response) > 50:
+        first_50 = action_response[:50].lower()
+        if "you are in battle mode" in first_50 and action_response.lower().count("you are in battle mode") > 3:
+            print(f"🚨 [VLM ERROR] Detected repetitive hallucination - forcing simple 'A' response")
+            action_response = "A"
+    
     # GUARANTEED DEBUG: Always show VLM response
-    print(f"🔍 [VLM RESPONSE] Step {actual_step} - Raw response: '{action_response}'")
+    response_preview = action_response[:200] + "..." if action_response and len(action_response) > 200 else action_response
+    print(f"🔍 [VLM RESPONSE] Step {actual_step} - Raw response: '{response_preview}'")
     
     # SAFETY CHECK: Handle None or empty VLM response
     if action_response is None:
@@ -528,6 +539,12 @@ Response format: Just the button name, nothing else.
         print(f"❌ No valid actions parsed from: '{action_response}' - using fallback default")
         print(f"   Valid buttons are: {valid_buttons}")
         print(f"   Response length: {len(str(action_response)) if action_response else 'None'}")
+        
+        # ANTI-HALLUCINATION: If VLM is producing garbage, force a simple action
+        if action_response and len(action_response) > 200:
+            print(f"🚨 [ANTI-HALLUCINATION] VLM response too long - forcing simple navigation")
+            actions = [random.choice(['UP', 'DOWN', 'LEFT', 'RIGHT', 'A'])]
+            print(f"   Anti-hallucination action: {actions}")
     else:
         print(f"✅ Successfully parsed {len(actions)} action(s): {actions}")
     print("-" * 80 + "\n")

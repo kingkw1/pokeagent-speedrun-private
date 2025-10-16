@@ -119,6 +119,9 @@ class Agent:
                     'action_queue_length': game_state.get('action_queue_length', 0)
                 }
                 
+                # Extract recent_actions from game_state
+                recent_actions = game_state.get('recent_actions', [])
+                
                 # 1. Perception - understand what's happening
                 perception_output = perception_step(
                     frame, 
@@ -201,7 +204,7 @@ class Agent:
                     perception_output,
                     frame,
                     state_data,
-                    [],  # recent_actions - empty for now
+                    recent_actions,  # Use actual recent_actions from server
                     self.vlm
                 )
                 
