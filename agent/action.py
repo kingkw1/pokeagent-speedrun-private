@@ -422,33 +422,42 @@ Based on your STRATEGIC GOAL and current situation:
    - Consider obstacles, doors, and terrain in your pathfinding
 5. **If uncertain or no clear goal**: Use A or explore with single direction
 
-IMPORTANT: Respond with ONLY a single button name from this list: A, B, UP, DOWN, LEFT, RIGHT, START
+CRITICAL: Your response must be EXACTLY ONE button name. No explanations, no parentheses, no extra text.
 
-Example responses:
-- A (to interact or confirm)
-- UP (to move north)
-- RIGHT (to move east)
+Valid responses: A, B, UP, DOWN, LEFT, RIGHT, START
 
-Your response should be exactly ONE button name, nothing else.
+Correct examples:
+A
+UP
+RIGHT
+
+Incorrect examples (DO NOT DO THIS):
+A (to interact)
+UP (to move north)
+"Press A to continue"
+
+Response format: Just the button name, nothing else.
 """
     
     # Construct complete prompt for VLM
     complete_prompt = system_prompt + action_prompt
     
     # GUARANTEED DEBUG: Always show VLM call and response
-    print(f"📞 [VLM CALL] Step {current_step} - About to call VLM")
+    # Double-check step calculation for VLM mode
+    actual_step = len(recent_actions) if recent_actions else 0
+    print(f"📞 [VLM CALL] Step {actual_step} (calculated from {len(recent_actions) if recent_actions else 0} recent_actions) - About to call VLM")
     
     # Safe visual context logging
     visual_preview = visual_context[:100] + "..." if visual_context and len(visual_context) > 100 else (visual_context or "None")
     strategic_preview = strategic_goal[:100] + "..." if strategic_goal and len(strategic_goal) > 100 else (strategic_goal or "None")
     
-    print(f"🔍 [VLM DEBUG] Step {current_step} - Calling VLM with visual_context: '{visual_preview}'")
+    print(f"🔍 [VLM DEBUG] Step {actual_step} - Calling VLM with visual_context: '{visual_preview}'")
     print(f"   Strategic goal: '{strategic_preview}'")
     
     action_response = vlm.get_text_query(complete_prompt, "ACTION")
     
     # GUARANTEED DEBUG: Always show VLM response
-    print(f"🔍 [VLM RESPONSE] Step {current_step} - Raw response: '{action_response}'")
+    print(f"🔍 [VLM RESPONSE] Step {actual_step} - Raw response: '{action_response}'")
     
     # SAFETY CHECK: Handle None or empty VLM response
     if action_response is None:
@@ -460,7 +469,7 @@ Your response should be exactly ONE button name, nothing else.
     valid_buttons = ['A', 'B', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT']
     
     # DEBUG: Show what we're about to parse
-    print(f"🔍 [PARSING] Step {current_step} - About to parse response: '{action_response}' (type: {type(action_response)})")
+    print(f"🔍 [PARSING] Step {actual_step} - About to parse response: '{action_response}' (type: {type(action_response)})")
     
     # ROBUST PARSING: Handle various VLM response formats
     actions = []
@@ -472,6 +481,13 @@ Your response should be exactly ONE button name, nothing else.
         first_line = response_str.split('\n')[0].strip().upper()
         if first_line in valid_buttons:
             actions = [first_line]
+        
+        # PRIORITY 1.5: Handle "A (explanation)" format by extracting just the button
+        elif '(' in first_line:
+            # Extract button before parentheses: "A (to attack)" -> "A"
+            button_part = first_line.split('(')[0].strip().upper()
+            if button_part in valid_buttons:
+                actions = [button_part]
         
         # PRIORITY 2: Try direct parsing (exact match)
         elif ',' in response_str:
@@ -535,5 +551,6 @@ Your response should be exactly ONE button name, nothing else.
             actions = [random.choice(['A', 'RIGHT', 'UP', 'DOWN', 'LEFT'])]  # Random exploration
     
     logger.info(f"[ACTION] Actions decided: {', '.join(actions)}")
-    print(f"🎮 [FINAL ACTION] Step {current_step} - Returning actions: {actions}")
+    final_step = len(recent_actions) if recent_actions else 0
+    print(f"🎮 [FINAL ACTION] Step {final_step} - Returning actions: {actions}")
     return actions 
