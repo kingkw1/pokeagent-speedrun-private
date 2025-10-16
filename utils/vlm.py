@@ -427,7 +427,9 @@ class LocalHuggingFaceBackend(VLMBackend):
                 generated_ids = self.model.generate(
                     **inputs_on_device,
                     max_new_tokens=256,  # Reduced for faster JSON generation
-                    do_sample=False, # Use greedy decoding for deterministic output
+                    do_sample=True, # Enable sampling for variety
+                    temperature=0.7, # Add some randomness
+                    top_p=0.9, # Nucleus sampling
                     eos_token_id=eos_token_id,
                     pad_token_id=self.processor.tokenizer.pad_token_id
                 )
