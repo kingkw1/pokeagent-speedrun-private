@@ -240,6 +240,8 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     
     # 3. Legacy mode: Only for early game before VLM navigation is active
     else:
+        print(f"🎯 [EARLY MODE] Step {current_step} - Legacy navigation active (name_set={milestones.get('PLAYER_NAME_SET', False)}, intro_complete={intro_complete})")
+        
         # DEBUG: Log when NOT in title screen (to catch transition)
         if not is_title_screen and len(recent_actions or []) < 5:
             logger.info(f"[ACTION] NOT title screen - using full navigation logic")
@@ -411,8 +413,13 @@ Return 1-3 actions maximum. Focus on the single best action for your strategic g
     
     # GUARANTEED DEBUG: Always show VLM call and response
     print(f"📞 [VLM CALL] Step {current_step} - About to call VLM")
-    print(f"🔍 [VLM DEBUG] Step {current_step} - Calling VLM with visual_context: '{visual_context[:100]}...'")
-    print(f"   Strategic goal: '{strategic_goal[:100]}...' ")
+    
+    # Safe visual context logging
+    visual_preview = visual_context[:100] + "..." if visual_context and len(visual_context) > 100 else (visual_context or "None")
+    strategic_preview = strategic_goal[:100] + "..." if strategic_goal and len(strategic_goal) > 100 else (strategic_goal or "None")
+    
+    print(f"🔍 [VLM DEBUG] Step {current_step} - Calling VLM with visual_context: '{visual_preview}'")
+    print(f"   Strategic goal: '{strategic_preview}'")
     
     action_response = vlm.get_text_query(complete_prompt, "ACTION")
     
@@ -437,39 +444,44 @@ Return 1-3 actions maximum. Focus on the single best action for your strategic g
     if action_response:
         response_str = str(action_response).strip()
         
-        # Try direct parsing first (exact match)
-        if ',' in response_str:
+        # PRIORITY 1: Check if response starts with a valid button (most common case)
+        first_line = response_str.split('\n')[0].strip().upper()
+        if first_line in valid_buttons:
+            actions = [first_line]
+        
+        # PRIORITY 2: Try direct parsing (exact match)
+        elif ',' in response_str:
             # Multi-action response
             raw_actions = [btn.strip().upper() for btn in response_str.split(',')]
             actions = [btn for btn in raw_actions if btn in valid_buttons][:3]
+        
+        # PRIORITY 3: Try exact match of whole response
+        elif response_str.upper() in valid_buttons:
+            actions = [response_str.upper()]
+        
+        # PRIORITY 4: Extract first valid button found anywhere in response
         else:
-            # Single action response - try exact match
-            action = response_str.upper()
-            if action in valid_buttons:
-                actions = [action]
-            else:
-                # Try to extract action from formatted response
-                # Look for button names in the response (case insensitive)
-                for button in valid_buttons:
-                    if button.lower() in response_str.lower():
-                        actions = [button]
-                        break
-                
-                # If still no match, try common patterns
-                if not actions:
-                    response_lower = response_str.lower()
-                    if 'up' in response_lower or 'north' in response_lower:
-                        actions = ['UP']
-                    elif 'down' in response_lower or 'south' in response_lower:
-                        actions = ['DOWN']
-                    elif 'left' in response_lower or 'west' in response_lower:
-                        actions = ['LEFT']
-                    elif 'right' in response_lower or 'east' in response_lower:
-                        actions = ['RIGHT']
-                    elif 'a' in response_lower or 'interact' in response_lower or 'confirm' in response_lower:
-                        actions = ['A']
-                    elif 'b' in response_lower or 'back' in response_lower or 'cancel' in response_lower:
-                        actions = ['B']
+            # Look for button names in order of preference (case insensitive)
+            for button in valid_buttons:
+                if button.lower() in response_str.lower():
+                    actions = [button]
+                    break
+            
+            # PRIORITY 5: Try common patterns if still no match
+            if not actions:
+                response_lower = response_str.lower()
+                if 'up' in response_lower or 'north' in response_lower:
+                    actions = ['UP']
+                elif 'down' in response_lower or 'south' in response_lower:
+                    actions = ['DOWN']
+                elif 'left' in response_lower or 'west' in response_lower:
+                    actions = ['LEFT']
+                elif 'right' in response_lower or 'east' in response_lower:
+                    actions = ['RIGHT']
+                elif 'interact' in response_lower or 'confirm' in response_lower or 'select' in response_lower:
+                    actions = ['A']
+                elif 'back' in response_lower or 'cancel' in response_lower or 'menu' in response_lower:
+                    actions = ['B']
     
     print(f"✅ Parsed actions: {actions}")
     if len(actions) == 0:
@@ -490,4 +502,5 @@ Return 1-3 actions maximum. Focus on the single best action for your strategic g
             actions = [random.choice(['A', 'RIGHT', 'UP', 'DOWN', 'LEFT'])]  # Random exploration
     
     logger.info(f"[ACTION] Actions decided: {', '.join(actions)}")
+    print(f"🎮 [FINAL ACTION] Step {current_step} - Returning actions: {actions}")
     return actions 
