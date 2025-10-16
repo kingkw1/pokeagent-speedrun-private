@@ -10,6 +10,9 @@ from utils.vlm import VLM
 # Set up module logging
 logger = logging.getLogger(__name__)
 
+# Global position history for stuck detection
+_position_history = []
+
 def format_observation_for_action(observation):
     """Format observation data for use in action prompts"""
     if isinstance(observation, dict) and 'visual_data' in observation:
@@ -286,79 +289,95 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         if current_step % 5 == 0 or current_step in [16, 21, 27] or advanced_location:
             print(f"🤖 [VLM MODE] Step {current_step} - VLM Navigation Active (intro_complete={intro_complete}, past_limit={current_step > override_step_limit}, moving_van={is_in_moving_van}, advanced_location={advanced_location})")
         
-        # EMERGENCY FIX: Route navigation override with movement preview
-        # If we're on a route and about to call VLM but recent actions show A-pressing or truly stuck movement, force movement
-        if 'ROUTE' in str(player_location).upper() and recent_actions:
+        # EMERGENCY FIX: Route navigation override with position-based stuck detection
+        global _position_history
+        
+        position_data = state_data.get('player', {}).get('position', {})
+        current_pos = (position_data.get('x'), position_data.get('y'))
+        
+        # Update position history
+        _position_history.append(current_pos)
+        if len(_position_history) > 6:  # Keep last 6 positions
+            _position_history.pop(0)
+        
+        # Check for true stuck patterns
+        is_truly_stuck = False
+        stuck_reason = ""
+        
+        if 'ROUTE' in str(player_location).upper() and len(_position_history) >= 4:
+            # Pattern 1: A-pressing (still always wrong on routes)
             recent_a_count = sum(1 for action in recent_actions[-2:] if action == 'A')
+            if recent_a_count >= 1:
+                is_truly_stuck = True
+                stuck_reason = "A-pressing detected on route"
             
-            # REAL stuck detection: Check if position hasn't changed despite movement attempts
-            position_data = state_data.get('player', {}).get('position', {})
-            current_pos = (position_data.get('x'), position_data.get('y'))
+            # Pattern 2: Oscillating between same 2-3 positions (horseshoe trap)
+            elif len(_position_history) >= 5:
+                recent_positions = _position_history[-5:]
+                unique_positions = set(recent_positions)
+                if len(unique_positions) <= 2 and len(set(recent_positions[-4:])) <= 2:
+                    # Stuck oscillating between 2 positions
+                    is_truly_stuck = True
+                    stuck_reason = f"Oscillating between positions: {list(unique_positions)}"
             
-            # Count recent movement attempts (not total movements, but attempts that should change position)
-            recent_movement_attempts = sum(1 for action in recent_actions[-3:] if action in ['UP', 'DOWN', 'LEFT', 'RIGHT'])
+            # Pattern 3: Same position for multiple steps despite movement attempts
+            elif len(set(_position_history[-3:])) == 1:
+                recent_movement_attempts = sum(1 for action in recent_actions[-3:] if action in ['UP', 'DOWN', 'LEFT', 'RIGHT'])
+                if recent_movement_attempts >= 2:
+                    is_truly_stuck = True  
+                    stuck_reason = f"Position not changing despite movement attempts: {current_pos}"
+        
+        if is_truly_stuck:
+            logger.warning(f"[ACTION] TRUE STUCK DETECTED on {player_location}! Reason: {stuck_reason}")
+            logger.warning(f"[ACTION] Position history: {_position_history[-5:]}")
+            logger.warning(f"[ACTION] Recent actions: {recent_actions[-5:]}")
             
-            # Check if we're ACTUALLY stuck: movement attempts but position tracking shows we're hitting barriers
-            # This requires checking if the last few movements resulted in position changes
-            is_position_stuck = False
-            if recent_movement_attempts >= 2:
-                # If we've tried movement recently, we should be able to see position changes
-                # The position_stuck detection would need historical position tracking
-                # For now, we'll rely on the movement preview to detect blocked directions
-                logger.info(f"[ACTION] Recent movement attempts: {recent_movement_attempts}, current_pos: {current_pos}")
+            # Get movement preview to find walkable directions
+            movement_preview_text = ""
+            try:
+                movement_preview_text = format_movement_preview_for_llm(state_data)
+                logger.info(f"[ACTION] Movement preview: {movement_preview_text}")
+            except Exception as e:
+                logger.warning(f"[ACTION] Error getting movement preview: {e}")
             
-            # Trigger emergency navigation for A-pressing (always wrong on routes) 
-            # but NOT for repeated directional movement (that's normal navigation)
-            if recent_a_count >= 1:  # Only A-pressing is always wrong on routes
-                logger.warning(f"[ACTION] A-pressing detected on {player_location}! recent_actions: {recent_actions[-5:]}")
-                logger.warning(f"[ACTION] Position: {current_pos}")
+            # Parse movement preview to find walkable directions
+            walkable_directions = []
+            if "MOVEMENT PREVIEW:" in movement_preview_text:
+                for line in movement_preview_text.split('\n'):
+                    if any(dir in line for dir in ['UP', 'DOWN', 'LEFT', 'RIGHT']):
+                        if 'WALKABLE' in line:
+                            direction = next((dir for dir in ['UP', 'DOWN', 'LEFT', 'RIGHT'] if dir in line), None)
+                            if direction:
+                                walkable_directions.append(direction)
+            
+            logger.warning(f"[ACTION] Walkable directions: {walkable_directions}")
+            
+            # Choose best direction based on route goals and walkability
+            # No more artificial direction avoidance - let the agent navigate naturally
+            if walkable_directions:
+                # For Route 101, prefer UP if walkable, otherwise try other directions  
+                if 'ROUTE 101' in str(player_location).upper():
+                    if 'UP' in walkable_directions:
+                        logger.warning(f"[ACTION] Route 101 - using UP (walkable)")
+                        return ["UP"]
+                    elif 'LEFT' in walkable_directions:
+                        logger.warning(f"[ACTION] Route 101 - using LEFT (UP blocked)")
+                        return ["LEFT"] 
+                    elif 'RIGHT' in walkable_directions:
+                        logger.warning(f"[ACTION] Route 101 - using RIGHT (UP blocked)")
+                        return ["RIGHT"]
+                    elif 'DOWN' in walkable_directions:
+                        logger.warning(f"[ACTION] Route 101 - using DOWN (other directions blocked)")
+                        return ["DOWN"]
                 
-                # Get movement preview to find walkable directions
-                movement_preview_text = ""
-                try:
-                    movement_preview_text = format_movement_preview_for_llm(state_data)
-                    logger.info(f"[ACTION] Movement preview: {movement_preview_text}")
-                except Exception as e:
-                    logger.warning(f"[ACTION] Error getting movement preview: {e}")
-                
-                # Parse movement preview to find walkable directions
-                walkable_directions = []
-                if "MOVEMENT PREVIEW:" in movement_preview_text:
-                    for line in movement_preview_text.split('\n'):
-                        if any(dir in line for dir in ['UP', 'DOWN', 'LEFT', 'RIGHT']):
-                            if 'WALKABLE' in line:
-                                direction = next((dir for dir in ['UP', 'DOWN', 'LEFT', 'RIGHT'] if dir in line), None)
-                                if direction:
-                                    walkable_directions.append(direction)
-                
-                logger.warning(f"[ACTION] Walkable directions: {walkable_directions}")
-                
-                # Choose best direction based on route goals and walkability
-                # No more artificial direction avoidance - let the agent navigate naturally
-                if walkable_directions:
-                    # For Route 101, prefer UP if walkable, otherwise try other directions  
-                    if 'ROUTE 101' in str(player_location).upper():
-                        if 'UP' in walkable_directions:
-                            logger.warning(f"[ACTION] Route 101 - using UP (walkable)")
-                            return ["UP"]
-                        elif 'LEFT' in walkable_directions:
-                            logger.warning(f"[ACTION] Route 101 - using LEFT (UP blocked)")
-                            return ["LEFT"] 
-                        elif 'RIGHT' in walkable_directions:
-                            logger.warning(f"[ACTION] Route 101 - using RIGHT (UP blocked)")
-                            return ["RIGHT"]
-                        elif 'DOWN' in walkable_directions:
-                            logger.warning(f"[ACTION] Route 101 - using DOWN (other directions blocked)")
-                            return ["DOWN"]
-                    
-                    # Generic route navigation - try first walkable direction
-                    chosen_direction = walkable_directions[0]
-                    logger.warning(f"[ACTION] Using first walkable direction: {chosen_direction}")
-                    return [chosen_direction]
-                else:
-                    # No walkable directions found, try different approach
-                    logger.warning(f"[ACTION] No walkable directions found! Trying RIGHT as fallback")
-                    return ["RIGHT"]
+                # Generic route navigation - try first walkable direction
+                chosen_direction = walkable_directions[0]
+                logger.warning(f"[ACTION] Using first walkable direction: {chosen_direction}")
+                return [chosen_direction]
+            else:
+                # No walkable directions found, try different approach
+                logger.warning(f"[ACTION] No walkable directions found! Trying RIGHT as fallback")
+                return ["RIGHT"]
         
         # JUMP directly to VLM call - skip all intermediate processing
         pass  # Continue to VLM logic below
