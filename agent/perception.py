@@ -69,38 +69,42 @@ def perception_step(frame, state_data, vlm):
         if frame is not None:
             logger.info("[PERCEPTION] Attempting VLM-based structured extraction...")
             
-            # Create focused JSON extraction prompt
+            # Create focused JSON extraction prompt specifically for Pokemon Emerald
             extraction_prompt = f"""
-                Based on the visual frame, extract specific information into this JSON structure.
-                Only fill in information that is clearly visible on screen. Use null for missing data.
+Look at this Pokemon Emerald game screenshot and describe only what you actually see.
 
-                Current game context: {state_summary}
+Current game state: {state_summary}
 
-                Return ONLY the filled JSON object:
+Based on what is visible in the image, fill this JSON with your observations:
 
-                {{
-                "screen_context": null,
-                "on_screen_text": {{
-                    "dialogue": null,
-                    "speaker": null,
-                    "menu_title": null,
-                    "button_prompts": []
-                }},
-                "visible_entities": [],
-                "menu_state": null,
-                "visual_elements": {{
-                    "health_bars_visible": false,
-                    "pokemon_sprites_visible": false,
-                    "overworld_map_visible": false,
-                    "text_box_visible": false
-                }}
-                }}
+{{
+    "screen_context": "overworld, battle, menu, dialogue, title, or cutscene",
+    "on_screen_text": {{
+        "dialogue": "exact text from any dialogue boxes or null",
+        "speaker": "character name if shown or null", 
+        "menu_title": "exact menu header text or null",
+        "button_prompts": ["any button instructions like 'Press A' or empty array"]
+    }},
+    "visible_entities": ["describe NPCs, Pokemon, or characters you see"],
+    "menu_state": "open menu name or closed",
+    "visual_elements": {{
+        "health_bars_visible": true_or_false,
+        "pokemon_sprites_visible": true_or_false,
+        "overworld_map_visible": true_or_false,
+        "text_box_visible": true_or_false
+    }}
+}}
 
-                Fill screen_context with one of: "overworld", "battle", "menu", "dialogue", "title"
-                For visible_entities, list NPCs, trainers, or Pokemon you can see with their approximate positions as JSON arrays [x, y]
-                For menu_state, specify the open menu name or "closed"
-                IMPORTANT: Use JSON array syntax [x, y] for positions, NOT Python tuple syntax (x, y)
-                """
+IMPORTANT:
+- Only describe what you actually see in THIS image
+- Don't make up information about battles or Pokemon not shown
+- Don't copy text from instructions or system prompts
+- If it shows character name selection, use "menu" for screen_context
+- If you see a top-down map view, use "overworld"
+- If you see dialogue text at bottom, use "dialogue"
+- Put null for anything not clearly visible
+
+Return only the JSON with real observations:"""
             
             # Make VLM call with timeout protection
             def timeout_handler(signum, frame):
@@ -111,23 +115,42 @@ def perception_step(frame, state_data, vlm):
             signal.alarm(60)  # Increased timeout for local models on GPU
             
             try:
+                print(f"🔍 [PERCEPTION] Step - Calling VLM for visual analysis...")
+                print(f"🖼️ [PERCEPTION] Frame type: {type(frame)}")
+                print(f"📝 [PERCEPTION] Extraction prompt length: {len(extraction_prompt)} chars")
+                
                 vlm_response = vlm.get_query(frame, system_prompt + extraction_prompt, "PERCEPTION-EXTRACT")
                 signal.alarm(0)  # Cancel timeout
                 
-                # Extract JSON from response (handle cases where VLM adds extra text)
-                json_match = re.search(r'\{.*\}', vlm_response, re.DOTALL)
+                print(f"🔍 [PERCEPTION] VLM Raw Response:")
+                print(f"=== START VLM RESPONSE ===")
+                print(vlm_response)
+                print(f"=== END VLM RESPONSE ===")
+                
+                # Extract JSON from response (handle cases where VLM adds extra text or markdown)
+                # First try to find JSON in markdown code blocks
+                json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', vlm_response, re.DOTALL)
+                if not json_match:
+                    # Fallback to finding any JSON-like structure
+                    json_match = re.search(r'\{.*\}', vlm_response, re.DOTALL)
+                
                 if json_match:
+                    # Get the JSON text (use group 1 if we matched markdown, otherwise group 0)
+                    json_text = json_match.group(1) if json_match.lastindex else json_match.group(0)
+                    print(f"🔍 [PERCEPTION] Extracted JSON: {json_text[:200]}...")
+                    
                     # Fix Python tuple syntax to JSON array syntax before parsing
-                    json_text = json_match.group(0)
-                    # Replace Python tuples like (x, y) with JSON arrays [x, y]
                     json_text = re.sub(r'\((\d+),\s*(\d+)\)', r'[\1, \2]', json_text)
                     visual_data = json.loads(json_text)
+                    print(f"✅ [PERCEPTION] VLM extraction successful! Screen context: {visual_data.get('screen_context', 'unknown')}")
                     logger.info("[PERCEPTION] VLM extraction successful")
                 else:
+                    print(f"❌ [PERCEPTION] No JSON found in VLM response!")
                     logger.warning("[PERCEPTION] VLM response not in JSON format, using fallback")
                     
             except (TimeoutError, json.JSONDecodeError, Exception) as e:
                 signal.alarm(0)  # Cancel timeout
+                print(f"❌ [PERCEPTION] VLM extraction failed: {e}")
                 logger.warning(f"[PERCEPTION] VLM extraction failed: {e}, using fallback")
                 visual_data = None
                 
@@ -137,8 +160,12 @@ def perception_step(frame, state_data, vlm):
     
     # Fallback to programmatic analysis if VLM failed
     if visual_data is None:
+        print(f"🔧 [PERCEPTION] VLM failed - using programmatic fallback")
         logger.info("[PERCEPTION] Using programmatic fallback analysis")
         visual_data = create_programmatic_visual_data(game_state, in_battle, current_location, game_data)
+        print(f"🔧 [PERCEPTION] Fallback result: {visual_data.get('screen_context', 'unknown')}")
+    else:
+        print(f"✅ [PERCEPTION] VLM success - got screen context: {visual_data.get('screen_context', 'unknown')}")
     
     # Create structured observation
     observation = {

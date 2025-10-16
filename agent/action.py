@@ -24,11 +24,32 @@ def format_observation_for_action(observation):
         if on_screen_text.get('menu_title'):
             summary += f" | Menu: {on_screen_text['menu_title']}"
             
-        # Add entity information  
+        # Add entity information - handle various entity formats
         entities = visual_data.get('visible_entities', [])
         if entities:
-            entity_names = [e.get('name', 'unnamed') for e in entities[:3]]
-            summary += f" | Entities: {', '.join(entity_names)}"
+            try:
+                entity_names = []
+                if isinstance(entities, list):
+                    for e in entities[:3]:  # Limit to first 3
+                        if isinstance(e, dict):
+                            entity_names.append(e.get('name', 'unnamed'))
+                        elif isinstance(e, str):
+                            entity_names.append(e)
+                        else:
+                            entity_names.append(str(e))
+                elif isinstance(entities, str):
+                    entity_names = [entities]
+                elif isinstance(entities, dict):
+                    # Handle case where entities is a dict with keys like NPC, Pokemon
+                    for key, value in entities.items():
+                        if value and value != "none" and value != "null":
+                            entity_names.append(f"{key}: {value}")
+                
+                if entity_names:
+                    summary += f" | Entities: {', '.join(entity_names[:3])}"  # Limit display
+            except Exception as e:
+                # Fallback if entity processing fails
+                summary += f" | Entities: {str(entities)[:50]}"
             
         return summary
     else:
@@ -197,30 +218,38 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         logger.info(f"[ACTION] Step {current_step} - Visual data keys: {list(visual_data.keys()) if visual_data else 'None'}")
         logger.info(f"[ACTION] Step {current_step} - On-screen text keys: {list(on_screen_text.keys()) if on_screen_text else 'None'}")
     
-    # Check if this looks like name selection screen OR if we're in the critical step range
+    # Check if this looks like name selection screen using multiple methods
     name_text_detected = ('YOUR NAME' in dialogue_text or 'NAME?' in dialogue_text or 
-                          'YOUR NAME' in menu_title or 'NAME?' in menu_title)
+                          'YOUR NAME' in menu_title or 'NAME?' in menu_title or
+                          'SELECT NAME' in menu_title or 'SELECT YOUR NAME' in menu_title)
     
-    # We know from your image that name selection happens around steps 33-40
-    # So let's add step-based detection as backup
-    in_name_step_range = (32 <= current_step <= 45 and not milestones.get('PLAYER_NAME_SET', False))
+    # Also check VLM perception for name selection context
+    vlm_context_name_selection = False
+    if isinstance(latest_observation, dict) and 'visual_data' in latest_observation:
+        vd = latest_observation['visual_data']
+        vlm_dialogue = vd.get('on_screen_text', {}).get('dialogue', '')
+        vlm_menu = vd.get('on_screen_text', {}).get('menu_title', '')
+        if vlm_dialogue and ('YOUR NAME' in vlm_dialogue or 'NAME?' in vlm_dialogue):
+            vlm_context_name_selection = True
+        if vlm_menu and ('SELECT' in vlm_menu and 'NAME' in vlm_menu):
+            vlm_context_name_selection = True
     
-    if (name_text_detected or in_name_step_range) and not milestones.get('PLAYER_NAME_SET', False):
+    # Expanded step range and VLM detection
+    in_name_step_range = (25 <= current_step <= 50 and not milestones.get('PLAYER_NAME_SET', False))
+    
+    if ((name_text_detected or vlm_context_name_selection or in_name_step_range) 
+        and not milestones.get('PLAYER_NAME_SET', False)):
         is_name_selection = True
         logger.info("[ACTION] Name selection screen detected!")
-        logger.info(f"[ACTION] - text_detected: {name_text_detected}, step_range: {in_name_step_range}")
+        logger.info(f"[ACTION] - text_detected: {name_text_detected}, vlm_detected: {vlm_context_name_selection}, step_range: {in_name_step_range}")
         logger.info(f"[ACTION] - dialogue: '{dialogue_text}', menu: '{menu_title}'")
         
-        # Simple name selection logic - just press A to accept default or navigate quickly
-        name_step = current_step - 32  # Normalize to name selection steps
-        if name_step < 2:  # First steps: make sure we're at A (default position)
-            logger.info("[ACTION] Positioning at 'A'")
+        # Simple name selection logic - press A to accept default name quickly
+        if current_step < 30:  # Early steps: position at default
+            logger.info("[ACTION] Positioning for name selection")
             return ["A"]
-        elif name_step < 4:  # Quick navigation to confirm
-            logger.info("[ACTION] Quick name entry")
-            return ["DOWN", "DOWN", "A"]  # Move to OK and confirm
-        else:  # Fallback: just keep pressing A to get through
-            logger.info("[ACTION] Pressing A to complete name selection")
+        else:  # Later steps: accept default name
+            logger.info("[ACTION] Accepting default name")
             return ["A"]
     
     # CRITICAL DEBUG: Override right after PLAYER_NAME_SET to avoid VLM confusion
@@ -233,15 +262,23 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     # NAVIGATION DECISION LOGIC: Clear hierarchy of what mode to use
     
     # 1. Post-name override: Only when name is set but intro cutscene isn't complete yet
-    if milestones.get('PLAYER_NAME_SET', False) and not intro_complete and current_step <= 50:
-        logger.info(f"[ACTION] Step {current_step} - Post-name override active")
-        print(f"🔧 [OVERRIDE] Step {current_step} - Post-name override: pressing A (intro_complete={intro_complete})")
+    # IMPROVED: Add multiple exit conditions to prevent infinite loops
+    player_location = player_data.get('location', '')
+    is_in_moving_van = "MOVING_VAN" in str(player_location).upper()
+    override_step_limit = 15  # Maximum steps to spend in override mode
+    
+    if (milestones.get('PLAYER_NAME_SET', False) and 
+        not intro_complete and 
+        current_step <= override_step_limit and 
+        not is_in_moving_van):
+        logger.info(f"[ACTION] Step {current_step} - Post-name override active (location: {player_location})")
+        print(f"🔧 [OVERRIDE] Step {current_step} - Post-name override: pressing A (intro_complete={intro_complete}, location={player_location})")
         return ["A"]
     
-    # 2. VLM Navigation Mode: When intro is complete OR we're past step 50 (safety fallback)
-    elif intro_complete or current_step > 50:
-        if current_step % 5 == 0 or current_step in [51, 61, 67]:
-            print(f"🤖 [VLM MODE] Step {current_step} - VLM Navigation Active (intro_complete={intro_complete})")
+    # 2. VLM Navigation Mode: When intro is complete OR we exceed override limits
+    elif intro_complete or current_step > override_step_limit or is_in_moving_van:
+        if current_step % 5 == 0 or current_step in [16, 21, 27]:
+            print(f"🤖 [VLM MODE] Step {current_step} - VLM Navigation Active (intro_complete={intro_complete}, past_limit={current_step > override_step_limit}, moving_van={is_in_moving_van})")
         
         # JUMP directly to VLM call - skip all intermediate processing
         pass  # Continue to VLM logic below
@@ -353,12 +390,30 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
             else:
                 action_context.append(f"Button Prompts: {str(button_prompts)}")
         
-        # Visible entities
+        # Visible entities - handle various formats from VLM
         entities = visual_data.get('visible_entities', [])
         if entities:
             action_context.append("Visible Entities:")
-            for entity in entities[:5]:  # Limit to 5 entities to avoid clutter
-                action_context.append(f"  - {entity.get('type', 'unknown')}: {entity.get('name', 'unnamed')} at {entity.get('position', 'unknown position')}")
+            # Handle different entity formats that VLM might return
+            try:
+                if isinstance(entities, list) and len(entities) > 0:
+                    for i, entity in enumerate(entities[:5]):  # Limit to 5 entities to avoid clutter
+                        if isinstance(entity, dict):
+                            # Entity is a dictionary with type/name/position
+                            action_context.append(f"  - {entity.get('type', 'unknown')}: {entity.get('name', 'unnamed')} at {entity.get('position', 'unknown position')}")
+                        elif isinstance(entity, str):
+                            # Entity is just a string description
+                            action_context.append(f"  - {entity}")
+                        else:
+                            # Entity is some other type
+                            action_context.append(f"  - {str(entity)}")
+                elif isinstance(entities, str):
+                    # Entities is a single string
+                    action_context.append(f"  - {entities}")
+            except Exception as e:
+                # Fallback if entity processing fails
+                action_context.append(f"  - Entities: {str(entities)[:100]}")
+                logger.warning(f"[ACTION] Error processing entities: {e}")
         
         # Visual elements status
         visual_elements = visual_data.get('visual_elements', {})
@@ -438,6 +493,20 @@ NO explanations. NO extra text. NO repetition. Just one button name.
     # Double-check step calculation for VLM mode
     actual_step = len(recent_actions) if recent_actions else 0
     print(f"📞 [VLM CALL] Step {actual_step} (calculated from {len(recent_actions) if recent_actions else 0} recent_actions) - About to call VLM")
+    
+    # PERCEPTION DEBUG: Show what visual context we received
+    print(f"👁️ [PERCEPTION DEBUG] Latest observation type: {type(latest_observation)}")
+    if isinstance(latest_observation, dict):
+        print(f"👁️ [PERCEPTION DEBUG] Observation keys: {list(latest_observation.keys())}")
+        if 'visual_data' in latest_observation:
+            vd = latest_observation['visual_data']
+            print(f"👁️ [PERCEPTION DEBUG] Visual data keys: {list(vd.keys()) if vd else 'None'}")
+            print(f"👁️ [PERCEPTION DEBUG] Screen context: '{vd.get('screen_context', 'missing')}' | Method: {latest_observation.get('extraction_method', 'unknown')}")
+            print(f"👁️ [PERCEPTION DEBUG] On-screen text: {vd.get('on_screen_text', {})}")
+        else:
+            print(f"👁️ [PERCEPTION DEBUG] No visual_data in observation!")
+    else:
+        print(f"👁️ [PERCEPTION DEBUG] Observation is not a dict: {latest_observation}")
     
     # CRITICAL DEBUG: Why is recent_actions empty?
     if recent_actions is None:
