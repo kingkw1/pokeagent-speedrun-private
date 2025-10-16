@@ -173,6 +173,15 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     menu_title = (on_screen_text.get('menu_title') or '').upper()
     current_step = len(recent_actions or [])
     
+    # DEBUG: Track our progress every few steps
+    if current_step % 10 == 0 and current_step >= 30:
+        print(f"🔍 [DEBUG] Step {current_step} reached - Milestone check in progress")
+    
+    # CRITICAL DEBUG: Force milestone status check at key steps
+    if current_step in [33, 34, 35, 40, 45, 50, 51]:
+        print(f"🚨 [CRITICAL] Step {current_step}: PLAYER_NAME_SET={milestones.get('PLAYER_NAME_SET', False)}, INTRO_COMPLETE={milestones.get('INTRO_CUTSCENE_COMPLETE', False)}")
+        print(f"   Navigation mode check: intro_complete={intro_complete}, current_step > 50: {current_step > 50}")
+    
     # DEBUG: Always log visual data for name selection detection around critical steps
     if current_step >= 30:  # Only log around critical transition
         logger.info(f"[ACTION] Step {current_step} - Name check: dialogue='{dialogue_text}', menu='{menu_title}', PLAYER_NAME_SET={milestones.get('PLAYER_NAME_SET', False)}")
@@ -206,30 +215,46 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
             return ["A"]
     
     # CRITICAL DEBUG: Override right after PLAYER_NAME_SET to avoid VLM confusion
-    if milestones.get('PLAYER_NAME_SET', False) and current_step <= 40:
-        # We're right after name selection - use simple navigation to get past any confusion
-        logger.info(f"[ACTION] Step {current_step} - PLAYER_NAME_SET detected, using simple post-name navigation")
-        
-        # Simple logic to get past any remaining name/intro screens
-        if current_step <= 36:
-            logger.info("[ACTION] Post-name: pressing A to continue")
-            return ["A"]
-        else:
-            logger.info("[ACTION] Post-name: pressing directional keys to clear screen") 
-            return ["DOWN", "A"]  # Try to navigate away from any stuck screen
+    # But only until INTRO_CUTSCENE_COMPLETE - then let VLM take over
+    intro_complete = milestones.get('INTRO_CUTSCENE_COMPLETE', False)
     
-    if not is_title_screen:
+    # DEBUG: Track milestone status at key steps
+    if current_step >= 40 and current_step % 5 == 0:  # Every 5th step after 40
+        print(f"🏆 [MILESTONE] Step {current_step}: PLAYER_NAME_SET={milestones.get('PLAYER_NAME_SET', False)}, INTRO_CUTSCENE_COMPLETE={intro_complete}")
+    
+    # NAVIGATION DECISION LOGIC: Clear hierarchy of what mode to use
+    
+    # 1. Post-name override: Only when name is set but intro cutscene isn't complete yet
+    if milestones.get('PLAYER_NAME_SET', False) and not intro_complete and current_step <= 50:
+        logger.info(f"[ACTION] Step {current_step} - Post-name override active")
+        print(f"🔧 [OVERRIDE] Step {current_step} - Post-name override: pressing A (intro_complete={intro_complete})")
+        return ["A"]
+    
+    # 2. VLM Navigation Mode: When intro is complete OR we're past step 50 (safety fallback)
+    elif intro_complete or current_step > 50:
+        if current_step % 5 == 0 or current_step in [51, 61, 67]:
+            print(f"🤖 [VLM MODE] Step {current_step} - VLM Navigation Active (intro_complete={intro_complete})")
+        
+        # JUMP directly to VLM call - skip all intermediate processing
+        pass  # Continue to VLM logic below
+    
+    # 3. Legacy mode: Only for early game before VLM navigation is active
+    else:
         # DEBUG: Log when NOT in title screen (to catch transition)
-        if len(recent_actions or []) < 5:  # Only log first few steps to avoid spam
+        if not is_title_screen and len(recent_actions or []) < 5:
             logger.info(f"[ACTION] NOT title screen - using full navigation logic")
             logger.info(f"[ACTION] - player_location: '{player_location}'")
             logger.info(f"[ACTION] - game_state: '{game_state_value}'")
             logger.info(f"[ACTION] - player_name: '{player_name}'")
             logger.info(f"[ACTION] - position: {player_data.get('position', {})}")
+        
+        # Debug logging for state detection (only if not in title)
+        if not is_title_screen:
+            logger.info(f"[ACTION] Debug - game_state: '{game_state_value}', location: '{player_location}', position: {player_data.get('position', {})}")
     
-    # Debug logging for state detection (only if not in title)
-    if not is_title_screen:
-        logger.info(f"[ACTION] Debug - game_state: '{game_state_value}', location: '{player_location}', position: {player_data.get('position', {})}")
+    # ============================================================================
+    # VLM NAVIGATION LOGIC: All paths above lead here for VLM-based decisions
+    # ============================================================================
     
     # Get formatted state context and useful summaries
     state_context = format_state_for_llm(state_data)
@@ -384,7 +409,15 @@ Return 1-3 actions maximum. Focus on the single best action for your strategic g
     # Construct complete prompt for VLM
     complete_prompt = system_prompt + action_prompt
     
+    # GUARANTEED DEBUG: Always show VLM call and response
+    print(f"📞 [VLM CALL] Step {current_step} - About to call VLM")
+    print(f"🔍 [VLM DEBUG] Step {current_step} - Calling VLM with visual_context: '{visual_context[:100]}...'")
+    print(f"   Strategic goal: '{strategic_goal[:100]}...' ")
+    
     action_response = vlm.get_text_query(complete_prompt, "ACTION")
+    
+    # GUARANTEED DEBUG: Always show VLM response
+    print(f"🔍 [VLM RESPONSE] Step {current_step} - Raw response: '{action_response}'")
     
     # SAFETY CHECK: Handle None or empty VLM response
     if action_response is None:
@@ -395,17 +428,24 @@ Return 1-3 actions maximum. Focus on the single best action for your strategic g
     
     valid_buttons = ['A', 'B', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT']
     
+    # DEBUG: Show what we're about to parse
+    print(f"🔍 [PARSING] Step {current_step} - About to parse response: '{action_response}' (type: {type(action_response)})")
+    
     # Parse multi-action sequences (up to 3 actions for navigation efficiency)
-    if ',' in action_response:
+    if action_response and ',' in action_response:
         actions = [btn.strip() for btn in action_response.split(',') if btn.strip() in valid_buttons][:3]
-    else:
+    elif action_response:
         # Single action response
         action = action_response.strip()
         actions = [action] if action in valid_buttons else []
+    else:
+        # Empty or None response
+        actions = []
     
     print(f"Parsed actions: {actions}")
     if len(actions) == 0:
-        print("❌ No valid actions parsed - using default 'A'")
+        print(f"❌ No valid actions parsed from: '{action_response}' - using default")
+        print(f"   Valid buttons are: {valid_buttons}")
     print("-" * 80 + "\n")
     
     # If no valid actions found, make intelligent default based on state
