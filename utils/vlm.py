@@ -470,7 +470,7 @@ class LocalHuggingFaceBackend(VLMBackend):
         
         # Handle different model formats using stored model type
         if self.model_type == "qwen2_vl":
-            # Qwen2-VL format
+            # Qwen2-VL format - must use chat template for image processing
             messages = [
                 {
                     "role": "user", 
@@ -483,7 +483,7 @@ class LocalHuggingFaceBackend(VLMBackend):
             prompt = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             inputs = self.processor(text=prompt, images=[image], return_tensors="pt")
         else:
-            # Phi-3 Vision format
+            # Phi-3 Vision format - keep existing format for compatibility
             prompt = f"<|user|>\n<|image_1|>\n{text}<|end|>\n<|assistant|>\n"
             inputs = self.processor(text=prompt, images=image, return_tensors="pt")
         
@@ -491,11 +491,22 @@ class LocalHuggingFaceBackend(VLMBackend):
     
     def get_text_query(self, text: str, module_name: str = "Unknown") -> str:
         """Process a text-only prompt using local HuggingFace model"""
-        # For text-only queries, use simple text format
-        prompt = f"<|user|>\n{text}<|end|>\n<|assistant|>\n"
-        inputs = self.processor(text=prompt, return_tensors="pt")
-        
-        return self._generate_response(inputs, prompt, module_name)
+        try:
+            # Use chat template format for consistency with image processing
+            messages = [{"role": "user", "content": text}]
+            prompt = self.processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            
+            # Process the prompt 
+            inputs = self.processor(text=prompt, return_tensors="pt")
+            
+            return self._generate_response(inputs, prompt, module_name)
+        except Exception as e:
+            # Fallback to direct text if chat template fails
+            logger.warning(f"Chat template failed for text query, falling back to direct text: {e}")
+            inputs = self.processor(text=text, return_tensors="pt")
+            return self._generate_response(inputs, text, module_name)
 
 class LegacyOllamaBackend(VLMBackend):
     """Legacy Ollama backend for backward compatibility"""

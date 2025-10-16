@@ -171,19 +171,24 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     is_name_selection = False
     dialogue_text = (on_screen_text.get('dialogue') or '').upper()
     menu_title = (on_screen_text.get('menu_title') or '').upper()
-    current_step = len(recent_actions or [])
+    
+    # FIX: Use actual step count from state_data instead of len(recent_actions)
+    # The recent_actions is capped at 25, so len(recent_actions) gets stuck at 25
+    current_step = state_data.get('step_number', len(recent_actions or []))
     
     # DEBUG: Verify step calculation is working
     if current_step >= 50:  # Only debug once we're in VLM mode
-        print(f"🔢 [STEP DEBUG] current_step={current_step}, recent_actions_len={len(recent_actions) if recent_actions else 0}")
+        print(f"🔢 [STEP DEBUG] current_step={current_step}, step_number={state_data.get('step_number', 'missing')}, recent_actions_len={len(recent_actions) if recent_actions else 0}")
     
     # DEBUG: Track our progress every few steps
     if current_step % 10 == 0 and current_step >= 30:
         print(f"🔍 [DEBUG] Step {current_step} reached - Milestone check in progress")
     
     # CRITICAL DEBUG: Force milestone status check at key steps
+    intro_complete = milestones.get('INTRO_CUTSCENE_COMPLETE', False)
+    
     if current_step in [33, 34, 35, 40, 45, 50, 51]:
-        print(f"🚨 [CRITICAL] Step {current_step}: PLAYER_NAME_SET={milestones.get('PLAYER_NAME_SET', False)}, INTRO_COMPLETE={milestones.get('INTRO_CUTSCENE_COMPLETE', False)}")
+        print(f"🚨 [CRITICAL] Step {current_step}: PLAYER_NAME_SET={milestones.get('PLAYER_NAME_SET', False)}, INTRO_COMPLETE={intro_complete}")
         print(f"   Navigation mode check: intro_complete={intro_complete}, current_step > 50: {current_step > 50}")
     
     # DEBUG: Always log visual data for name selection detection around critical steps
@@ -220,7 +225,6 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     
     # CRITICAL DEBUG: Override right after PLAYER_NAME_SET to avoid VLM confusion
     # But only until INTRO_CUTSCENE_COMPLETE - then let VLM take over
-    intro_complete = milestones.get('INTRO_CUTSCENE_COMPLETE', False)
     
     # DEBUG: Track milestone status at key steps
     if current_step >= 40 and current_step % 5 == 0:  # Every 5th step after 40
@@ -490,7 +494,15 @@ NO explanations. NO extra text. NO repetition. Just one button name.
         
         # PRIORITY 1: Check if response starts with a valid button (most common case)
         first_line = response_str.split('\n')[0].strip().upper()
-        if first_line in valid_buttons:
+        
+        # Clean up common VLM artifacts in the first line
+        cleaned_first_line = first_line
+        for artifact in ['</OUTPUT>', '</output>', '<|END|>', '<|end|>', '<|ASSISTANT|>', '<|assistant|>', '|user|']:
+            cleaned_first_line = cleaned_first_line.replace(artifact, '').strip()
+        
+        if cleaned_first_line in valid_buttons:
+            actions = [cleaned_first_line]
+        elif first_line in valid_buttons:
             actions = [first_line]
         
         # PRIORITY 1.5: Handle "A (explanation)" format by extracting just the button
@@ -506,12 +518,22 @@ NO explanations. NO extra text. NO repetition. Just one button name.
             raw_actions = [btn.strip().upper() for btn in response_str.split(',')]
             actions = [btn for btn in raw_actions if btn in valid_buttons][:3]
         
-        # PRIORITY 3: Try exact match of whole response
+        # PRIORITY 3: Try exact match of whole response (with cleanup)
         elif response_str.upper() in valid_buttons:
             actions = [response_str.upper()]
         
+        # PRIORITY 3.5: Try cleaned version of whole response
+        if not actions:
+            # Clean common VLM artifacts from the whole response
+            cleaned_response = response_str.upper()
+            for artifact in ['</OUTPUT>', '</output>', '<|END|>', '<|end|>', '<|ASSISTANT|>', '<|assistant|>', '|user|', '|assistant|']:
+                cleaned_response = cleaned_response.replace(artifact, '').strip()
+            
+            if cleaned_response in valid_buttons:
+                actions = [cleaned_response]
+        
         # PRIORITY 4: Extract first valid button found anywhere in response
-        else:
+        if not actions:
             # Look for button names in order of preference (case insensitive)
             for button in valid_buttons:
                 if button.lower() in response_str.lower():
