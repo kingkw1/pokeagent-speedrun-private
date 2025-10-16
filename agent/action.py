@@ -431,21 +431,53 @@ Return 1-3 actions maximum. Focus on the single best action for your strategic g
     # DEBUG: Show what we're about to parse
     print(f"🔍 [PARSING] Step {current_step} - About to parse response: '{action_response}' (type: {type(action_response)})")
     
-    # Parse multi-action sequences (up to 3 actions for navigation efficiency)
-    if action_response and ',' in action_response:
-        actions = [btn.strip() for btn in action_response.split(',') if btn.strip() in valid_buttons][:3]
-    elif action_response:
-        # Single action response
-        action = action_response.strip()
-        actions = [action] if action in valid_buttons else []
-    else:
-        # Empty or None response
-        actions = []
+    # ROBUST PARSING: Handle various VLM response formats
+    actions = []
     
-    print(f"Parsed actions: {actions}")
+    if action_response:
+        response_str = str(action_response).strip()
+        
+        # Try direct parsing first (exact match)
+        if ',' in response_str:
+            # Multi-action response
+            raw_actions = [btn.strip().upper() for btn in response_str.split(',')]
+            actions = [btn for btn in raw_actions if btn in valid_buttons][:3]
+        else:
+            # Single action response - try exact match
+            action = response_str.upper()
+            if action in valid_buttons:
+                actions = [action]
+            else:
+                # Try to extract action from formatted response
+                # Look for button names in the response (case insensitive)
+                for button in valid_buttons:
+                    if button.lower() in response_str.lower():
+                        actions = [button]
+                        break
+                
+                # If still no match, try common patterns
+                if not actions:
+                    response_lower = response_str.lower()
+                    if 'up' in response_lower or 'north' in response_lower:
+                        actions = ['UP']
+                    elif 'down' in response_lower or 'south' in response_lower:
+                        actions = ['DOWN']
+                    elif 'left' in response_lower or 'west' in response_lower:
+                        actions = ['LEFT']
+                    elif 'right' in response_lower or 'east' in response_lower:
+                        actions = ['RIGHT']
+                    elif 'a' in response_lower or 'interact' in response_lower or 'confirm' in response_lower:
+                        actions = ['A']
+                    elif 'b' in response_lower or 'back' in response_lower or 'cancel' in response_lower:
+                        actions = ['B']
+    
+    print(f"✅ Parsed actions: {actions}")
     if len(actions) == 0:
-        print(f"❌ No valid actions parsed from: '{action_response}' - using default")
+        print(f"❌ No valid actions parsed from: '{action_response}' - using fallback default")
         print(f"   Valid buttons are: {valid_buttons}")
+        print(f"   Response length: {len(str(action_response)) if action_response else 'None'}")
+    else:
+        print(f"✅ Successfully parsed {len(actions)} action(s): {actions}")
     print("-" * 80 + "\n")
     
     # If no valid actions found, make intelligent default based on state
