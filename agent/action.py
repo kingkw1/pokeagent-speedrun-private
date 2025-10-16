@@ -132,23 +132,25 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     game_state_value = game_data.get("game_state", "").lower()
     player_name = player_data.get("name", "").strip()
     
-    # Multiple robust conditions for title/menu screen detection
+    # FINAL FIX: Ultra-conservative title screen detection
+    # Only trigger for actual title screens, never during gameplay
     is_title_screen = (
-        # Direct title sequence detection
+        # Only for explicit title sequence or very early states
         player_location == "TITLE_SEQUENCE" or
-        # Game state indicates title/intro
-        "title" in game_state_value or "intro" in game_state_value or
-        # Player name not set (indicates title sequence)
-        not player_name or player_name == "????????" or
-        # Check if no pokemon in party (common at game start)
-        game_data.get('party_count', 0) == 0 or
-        # Legacy checks for other menu indicators
-        player_location.lower() in ['title', 'menu', 'main_menu', '', 'unknown'] or
-        'new game' in player_location.lower() or
-        # Check if we have invalid player position (common in menus)
-        (player_data.get('position', {}).get('x', -1) <= 0 and 
-         player_data.get('position', {}).get('y', -1) <= 0)
+        # Only if game state explicitly contains "title" 
+        game_state_value == "title" or
+        # Only if no player name AND at exact origin (0,0) - very strict
+        ((not player_name or player_name == "????????") and 
+         (player_data.get('position', {}).get('x', -1) == 0 and 
+          player_data.get('position', {}).get('y', -1) == 0) and
+         player_location.lower() in ['', 'unknown', 'title_sequence'])
     )
+    
+    # CRITICAL: Use milestones to override title detection
+    # If player name is set, we're past the title screen regardless of other conditions
+    milestones = state_data.get('milestones', {})
+    if milestones.get('PLAYER_NAME_SET', False) or milestones.get('INTRO_CUTSCENE_COMPLETE', False):
+        is_title_screen = False  # Force override - we're in gameplay now
     
     if is_title_screen:
         logger.info(f"[ACTION] Title screen detected!")
@@ -159,6 +161,14 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         logger.info(f"[ACTION] - position: {player_data.get('position', {})}")
         logger.info("[ACTION] Using simple navigation: A to select NEW GAME")
         return ["A"]
+    else:
+        # DEBUG: Log when NOT in title screen (to catch transition)
+        if len(recent_actions or []) < 5:  # Only log first few steps to avoid spam
+            logger.info(f"[ACTION] NOT title screen - using full navigation logic")
+            logger.info(f"[ACTION] - player_location: '{player_location}'")
+            logger.info(f"[ACTION] - game_state: '{game_state_value}'")
+            logger.info(f"[ACTION] - player_name: '{player_name}'")
+            logger.info(f"[ACTION] - position: {player_data.get('position', {})}")
     
     # Debug logging for state detection (only if not in title)
     if not is_title_screen:
@@ -236,7 +246,20 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         if on_screen_text.get('menu_title'):
             action_context.append(f"Menu: {on_screen_text['menu_title']}")
         if on_screen_text.get('button_prompts'):
-            action_context.append(f"Button Prompts: {', '.join(on_screen_text['button_prompts'])}")
+            # Handle button prompts that might be dictionaries or strings
+            button_prompts = on_screen_text['button_prompts']
+            if isinstance(button_prompts, list):
+                prompt_strs = []
+                for prompt in button_prompts:
+                    if isinstance(prompt, dict):
+                        # Extract text from dictionary format
+                        prompt_text = prompt.get('text', str(prompt))
+                        prompt_strs.append(prompt_text)
+                    else:
+                        prompt_strs.append(str(prompt))
+                action_context.append(f"Button Prompts: {', '.join(prompt_strs)}")
+            else:
+                action_context.append(f"Button Prompts: {str(button_prompts)}")
         
         # Visible entities
         entities = visual_data.get('visible_entities', [])
