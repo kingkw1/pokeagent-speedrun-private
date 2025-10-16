@@ -173,6 +173,10 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     menu_title = (on_screen_text.get('menu_title') or '').upper()
     current_step = len(recent_actions or [])
     
+    # DEBUG: Verify step calculation is working
+    if current_step >= 50:  # Only debug once we're in VLM mode
+        print(f"🔢 [STEP DEBUG] current_step={current_step}, recent_actions_len={len(recent_actions) if recent_actions else 0}")
+    
     # DEBUG: Track our progress every few steps
     if current_step % 10 == 0 and current_step >= 30:
         print(f"🔍 [DEBUG] Step {current_step} reached - Milestone check in progress")
@@ -364,6 +368,20 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     visual_context = "unknown"
     if isinstance(latest_observation, dict) and 'visual_data' in latest_observation:
         visual_context = latest_observation['visual_data'].get('screen_context', 'unknown')
+        if not visual_context:  # Handle None or empty string
+            visual_context = "unknown"
+    
+    # DEBUG: Check why visual context becomes None
+    if current_step >= 50 and (visual_context == "unknown" or visual_context is None):
+        print(f"⚠️ [VISUAL DEBUG] Step {current_step} - visual_context is '{visual_context}'")
+        if isinstance(latest_observation, dict):
+            print(f"   latest_observation keys: {list(latest_observation.keys())}")
+            if 'visual_data' in latest_observation:
+                visual_data = latest_observation['visual_data']
+                print(f"   visual_data keys: {list(visual_data.keys()) if visual_data else 'None'}")
+                print(f"   screen_context value: {visual_data.get('screen_context') if visual_data else 'N/A'}")
+        else:
+            print(f"   latest_observation type: {type(latest_observation)}")
     
     # Enhanced Goal-Conditioned Action Prompt (Day 9 Navigation Implementation)
     # Strategic goal integration with tactical movement analysis
@@ -404,8 +422,14 @@ Based on your STRATEGIC GOAL and current situation:
    - Consider obstacles, doors, and terrain in your pathfinding
 5. **If uncertain or no clear goal**: Use A or explore with single direction
 
-Choose from: A, B, UP, DOWN, LEFT, RIGHT, START
-Return 1-3 actions maximum. Focus on the single best action for your strategic goal.
+IMPORTANT: Respond with ONLY a single button name from this list: A, B, UP, DOWN, LEFT, RIGHT, START
+
+Example responses:
+- A (to interact or confirm)
+- UP (to move north)
+- RIGHT (to move east)
+
+Your response should be exactly ONE button name, nothing else.
 """
     
     # Construct complete prompt for VLM
@@ -491,6 +515,15 @@ Return 1-3 actions maximum. Focus on the single best action for your strategic g
     else:
         print(f"✅ Successfully parsed {len(actions)} action(s): {actions}")
     print("-" * 80 + "\n")
+    
+    # ANTI-LOOP LOGIC: Detect if we're stuck pressing A repeatedly and force exploration
+    if actions == ['A'] and recent_actions:
+        recent_a_count = sum(1 for action in recent_actions[-10:] if action == 'A')  # Count A presses in last 10 actions
+        if recent_a_count >= 8 and len(recent_actions) >= 10:  # If 8+ out of last 10 actions were A AND we have enough history
+            print(f"🔄 [ANTI-LOOP] Step {current_step} - Detected A-loop ({recent_a_count}/10 recent actions). Forcing exploration.")
+            exploration_options = ['UP', 'DOWN', 'LEFT', 'RIGHT']
+            actions = [random.choice(exploration_options)]
+            print(f"   Forcing exploration with: {actions}")
     
     # If no valid actions found, make intelligent default based on state
     if not actions:
