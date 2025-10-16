@@ -69,11 +69,44 @@ def perception_step(frame, state_data, vlm):
         if frame is not None:
             logger.info("[PERCEPTION] Attempting VLM-based structured extraction...")
             
+            # Get movement options for VLM context
+            from utils.state_formatter import get_movement_options
+            movement_options = get_movement_options(state_data)
+            
+            # Format movement options for VLM
+            movement_context = ""
+            if movement_options:
+                movement_context = "\n\nMovement Analysis Context:"
+                for direction, description in movement_options.items():
+                    movement_context += f"\n- {direction}: {description}"
+            
             # Create focused JSON extraction prompt specifically for Pokemon Emerald
             extraction_prompt = f"""
-Look at this Pokemon Emerald game screenshot and describe only what you actually see.
+Look at this Pokemon Emerald game screenshot and analyze what you see for navigation purposes.
 
-Current game state: {state_summary}
+Current game state: {state_summary}{movement_context}
+
+CRITICAL NAVIGATION ANALYSIS:
+You are looking at a Pokemon game screen. The player needs to NAVIGATE effectively.
+
+LOCATION CONTEXT: {state_summary}
+
+1. SCREEN TYPE DETECTION:
+   - If you see a top-down view of a character on paths/grass/routes = "overworld"
+   - If you see dialogue text at bottom of screen = "dialogue"
+   - If you see a battle interface with Pokemon = "battle"
+
+2. FOR OVERWORLD NAVIGATION:
+   - LOOK FOR PATHS: Light colored areas where player can walk (roads, paths, clearings)
+   - LOOK FOR GRASS: Green areas (may have wild Pokemon)
+   - LOOK FOR OBSTACLES: Trees, rocks, water, buildings that block movement
+   - LOOK FOR TRANSITIONS: Edges of map where player can move to new areas
+   - DESCRIBE EACH DIRECTION: What's visible UP/DOWN/LEFT/RIGHT from player?
+
+3. FOR INDOOR/ROOM NAVIGATION:
+   - LOOK FOR EXITS: Dark rectangles at edges = doors/exits
+   - LOOK FOR FURNITURE: Tables, beds, computers that block movement
+   - IDENTIFY INTERACTABLES: NPCs, computers, items to press A on
 
 Based on what is visible in the image, fill this JSON with your observations:
 
@@ -86,6 +119,17 @@ Based on what is visible in the image, fill this JSON with your observations:
         "button_prompts": ["any button instructions like 'Press A' or empty array"]
     }},
     "visible_entities": ["describe NPCs, Pokemon, or characters you see"],
+    "navigation_info": {{
+        "exits_visible": ["FOR ROUTES/OUTDOOR: 'path north', 'road south', 'map edge east'. FOR INDOOR: 'door at bottom', 'stairs up'"],
+        "interactable_objects": ["NPCs, trainers, items, computers - things that show dialogue when you press A"],
+        "movement_barriers": ["FOR ROUTES: 'trees', 'rocks', 'water'. FOR INDOOR: 'walls', 'furniture', 'beds'"],
+        "open_paths": ["CRITICAL: UP/DOWN/LEFT/RIGHT - describe what's in each direction. 'UP: grass path', 'DOWN: route continues', 'LEFT: trees blocking', 'RIGHT: town entrance'"]
+    }},
+    "spatial_layout": {{
+        "player_position": "where is the small player character sprite in the scene?",
+        "room_type": "indoor room, outdoor route, town, forest, etc.",
+        "notable_features": ["MOST IMPORTANT: paths, roads, exits, doors, town entrances, route connections"]
+    }},
     "menu_state": "open menu name or closed",
     "visual_elements": {{
         "health_bars_visible": true_or_false,
@@ -102,7 +146,13 @@ IMPORTANT:
 - If it shows character name selection, use "menu" for screen_context
 - If you see a top-down map view, use "overworld"
 - If you see dialogue text at bottom, use "dialogue"
-- Put null for anything not clearly visible
+
+NAVIGATION ANALYSIS GUIDE:
+- Look for doorways, stairs, passages leading to other areas
+- Identify NPCs, computers, boxes, or other objects you could interact with by pressing A
+- Notice walls, furniture, or other obstacles that would block movement
+- See which directions have clear floor/grass areas you could walk to
+- Use descriptive terms like "door to the south", "stairs leading up", "computer on the left"
 
 Return only the JSON with real observations:"""
             
@@ -141,6 +191,14 @@ Return only the JSON with real observations:"""
                     
                     # Fix Python tuple syntax to JSON array syntax before parsing
                     json_text = re.sub(r'\((\d+),\s*(\d+)\)', r'[\1, \2]', json_text)
+                    
+                    # Try to fix common JSON malformation issues
+                    # Add missing closing brace if needed
+                    brace_count = json_text.count('{') - json_text.count('}')
+                    if brace_count > 0:
+                        json_text += '}' * brace_count
+                        print(f"🔧 [PERCEPTION] Fixed missing closing braces: added {brace_count}")
+                    
                     visual_data = json.loads(json_text)
                     print(f"✅ [PERCEPTION] VLM extraction successful! Screen context: {visual_data.get('screen_context', 'unknown')}")
                     logger.info("[PERCEPTION] VLM extraction successful")
@@ -204,6 +262,17 @@ def create_programmatic_visual_data(game_state, in_battle, current_location, gam
                 "button_prompts": ["Press A to continue"]
             },
             "visible_entities": [],
+            "navigation_info": {
+                "exits_visible": [],
+                "interactable_objects": ["Title screen menu"],
+                "movement_barriers": [],
+                "open_paths": []
+            },
+            "spatial_layout": {
+                "player_position": "title screen",
+                "room_type": "menu",
+                "notable_features": ["Title screen interface"]
+            },
             "menu_state": "title_screen",
             "visual_elements": {
                 "health_bars_visible": False,
@@ -238,6 +307,17 @@ def create_programmatic_visual_data(game_state, in_battle, current_location, gam
                     "position": "top_right"
                 }
             ],
+            "navigation_info": {
+                "exits_visible": [],
+                "interactable_objects": ["Battle menu options"],
+                "movement_barriers": [],
+                "open_paths": []
+            },
+            "spatial_layout": {
+                "player_position": "battle screen",
+                "room_type": "battle",
+                "notable_features": ["Pokemon battle interface"]
+            },
             "menu_state": "battle_menu",
             "visual_elements": {
                 "health_bars_visible": True,
@@ -257,6 +337,17 @@ def create_programmatic_visual_data(game_state, in_battle, current_location, gam
                 "button_prompts": []
             },
             "visible_entities": [],
+            "navigation_info": {
+                "exits_visible": ["Check for exits in all directions"],
+                "interactable_objects": ["Look for NPCs, items, or interactive elements"],
+                "movement_barriers": ["Unknown - check programmatically"],
+                "open_paths": ["Movement depends on traversability data"]
+            },
+            "spatial_layout": {
+                "player_position": f"In {current_location}",
+                "room_type": "overworld",
+                "notable_features": ["Check for doors, exits, or stairs"]
+            },
             "menu_state": "closed",
             "visual_elements": {
                 "health_bars_visible": False,
@@ -276,6 +367,17 @@ def create_programmatic_visual_data(game_state, in_battle, current_location, gam
                 "button_prompts": []
             },
             "visible_entities": [],
+            "navigation_info": {
+                "exits_visible": [],
+                "interactable_objects": [],
+                "movement_barriers": [],
+                "open_paths": []
+            },
+            "spatial_layout": {
+                "player_position": "unknown",
+                "room_type": "unknown",
+                "notable_features": []
+            },
             "menu_state": "unknown",
             "visual_elements": {
                 "health_bars_visible": False,

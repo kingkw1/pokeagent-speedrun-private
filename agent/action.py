@@ -267,18 +267,98 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     is_in_moving_van = "MOVING_VAN" in str(player_location).upper()
     override_step_limit = 15  # Maximum steps to spend in override mode
     
+    # Check for advanced game states that should trigger VLM mode
+    on_route_101 = 'ROUTE 101' in str(player_location).upper()
+    has_pokemon = state_data.get('player', {}).get('party', [])
+    advanced_location = on_route_101 or 'ROUTE' in str(player_location).upper()
+    
     if (milestones.get('PLAYER_NAME_SET', False) and 
         not intro_complete and 
+        not advanced_location and  # Don't override if we're on routes
         current_step <= override_step_limit and 
         not is_in_moving_van):
         logger.info(f"[ACTION] Step {current_step} - Post-name override active (location: {player_location})")
         print(f"🔧 [OVERRIDE] Step {current_step} - Post-name override: pressing A (intro_complete={intro_complete}, location={player_location})")
         return ["A"]
     
-    # 2. VLM Navigation Mode: When intro is complete OR we exceed override limits
-    elif intro_complete or current_step > override_step_limit or is_in_moving_van:
-        if current_step % 5 == 0 or current_step in [16, 21, 27]:
-            print(f"🤖 [VLM MODE] Step {current_step} - VLM Navigation Active (intro_complete={intro_complete}, past_limit={current_step > override_step_limit}, moving_van={is_in_moving_van})")
+    # 2. VLM Navigation Mode: When intro is complete OR we exceed override limits OR advanced location
+    elif intro_complete or current_step > override_step_limit or is_in_moving_van or advanced_location:
+        if current_step % 5 == 0 or current_step in [16, 21, 27] or advanced_location:
+            print(f"🤖 [VLM MODE] Step {current_step} - VLM Navigation Active (intro_complete={intro_complete}, past_limit={current_step > override_step_limit}, moving_van={is_in_moving_van}, advanced_location={advanced_location})")
+        
+        # EMERGENCY FIX: Route navigation override with movement preview
+        # If we're on a route and about to call VLM but recent actions show A-pressing or truly stuck movement, force movement
+        if 'ROUTE' in str(player_location).upper() and recent_actions:
+            recent_a_count = sum(1 for action in recent_actions[-2:] if action == 'A')
+            
+            # REAL stuck detection: Check if position hasn't changed despite movement attempts
+            position_data = state_data.get('player', {}).get('position', {})
+            current_pos = (position_data.get('x'), position_data.get('y'))
+            
+            # Count recent movement attempts (not total movements, but attempts that should change position)
+            recent_movement_attempts = sum(1 for action in recent_actions[-3:] if action in ['UP', 'DOWN', 'LEFT', 'RIGHT'])
+            
+            # Check if we're ACTUALLY stuck: movement attempts but position tracking shows we're hitting barriers
+            # This requires checking if the last few movements resulted in position changes
+            is_position_stuck = False
+            if recent_movement_attempts >= 2:
+                # If we've tried movement recently, we should be able to see position changes
+                # The position_stuck detection would need historical position tracking
+                # For now, we'll rely on the movement preview to detect blocked directions
+                logger.info(f"[ACTION] Recent movement attempts: {recent_movement_attempts}, current_pos: {current_pos}")
+            
+            # Trigger emergency navigation for A-pressing (always wrong on routes) 
+            # but NOT for repeated directional movement (that's normal navigation)
+            if recent_a_count >= 1:  # Only A-pressing is always wrong on routes
+                logger.warning(f"[ACTION] A-pressing detected on {player_location}! recent_actions: {recent_actions[-5:]}")
+                logger.warning(f"[ACTION] Position: {current_pos}")
+                
+                # Get movement preview to find walkable directions
+                movement_preview_text = ""
+                try:
+                    movement_preview_text = format_movement_preview_for_llm(state_data)
+                    logger.info(f"[ACTION] Movement preview: {movement_preview_text}")
+                except Exception as e:
+                    logger.warning(f"[ACTION] Error getting movement preview: {e}")
+                
+                # Parse movement preview to find walkable directions
+                walkable_directions = []
+                if "MOVEMENT PREVIEW:" in movement_preview_text:
+                    for line in movement_preview_text.split('\n'):
+                        if any(dir in line for dir in ['UP', 'DOWN', 'LEFT', 'RIGHT']):
+                            if 'WALKABLE' in line:
+                                direction = next((dir for dir in ['UP', 'DOWN', 'LEFT', 'RIGHT'] if dir in line), None)
+                                if direction:
+                                    walkable_directions.append(direction)
+                
+                logger.warning(f"[ACTION] Walkable directions: {walkable_directions}")
+                
+                # Choose best direction based on route goals and walkability
+                # No more artificial direction avoidance - let the agent navigate naturally
+                if walkable_directions:
+                    # For Route 101, prefer UP if walkable, otherwise try other directions  
+                    if 'ROUTE 101' in str(player_location).upper():
+                        if 'UP' in walkable_directions:
+                            logger.warning(f"[ACTION] Route 101 - using UP (walkable)")
+                            return ["UP"]
+                        elif 'LEFT' in walkable_directions:
+                            logger.warning(f"[ACTION] Route 101 - using LEFT (UP blocked)")
+                            return ["LEFT"] 
+                        elif 'RIGHT' in walkable_directions:
+                            logger.warning(f"[ACTION] Route 101 - using RIGHT (UP blocked)")
+                            return ["RIGHT"]
+                        elif 'DOWN' in walkable_directions:
+                            logger.warning(f"[ACTION] Route 101 - using DOWN (other directions blocked)")
+                            return ["DOWN"]
+                    
+                    # Generic route navigation - try first walkable direction
+                    chosen_direction = walkable_directions[0]
+                    logger.warning(f"[ACTION] Using first walkable direction: {chosen_direction}")
+                    return [chosen_direction]
+                else:
+                    # No walkable directions found, try different approach
+                    logger.warning(f"[ACTION] No walkable directions found! Trying RIGHT as fallback")
+                    return ["RIGHT"]
         
         # JUMP directly to VLM call - skip all intermediate processing
         pass  # Continue to VLM logic below
@@ -420,6 +500,41 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         active_elements = [k.replace('_', ' ').title() for k, v in visual_elements.items() if v]
         if active_elements:
             action_context.append(f"Active Visual Elements: {', '.join(active_elements)}")
+        
+        # Navigation information from enhanced VLM perception
+        navigation_info = visual_data.get('navigation_info', {})
+        if navigation_info:
+            action_context.append("=== NAVIGATION ANALYSIS ===")
+            
+            exits = navigation_info.get('exits_visible', [])
+            if exits and any(exit for exit in exits if exit):
+                action_context.append(f"Exits Visible: {', '.join(str(e) for e in exits if e)}")
+            
+            interactables = navigation_info.get('interactable_objects', [])
+            if interactables and any(obj for obj in interactables if obj):
+                action_context.append(f"Interactable Objects: {', '.join(str(o) for o in interactables if o)}")
+            
+            barriers = navigation_info.get('movement_barriers', [])
+            if barriers and any(barrier for barrier in barriers if barrier):
+                action_context.append(f"Movement Barriers: {', '.join(str(b) for b in barriers if b)}")
+            
+            open_paths = navigation_info.get('open_paths', [])
+            if open_paths and any(path for path in open_paths if path):
+                action_context.append(f"Open Paths: {', '.join(str(p) for p in open_paths if p)}")
+        
+        # Spatial layout information
+        spatial_layout = visual_data.get('spatial_layout', {})
+        if spatial_layout:
+            room_type = spatial_layout.get('room_type')
+            player_pos = spatial_layout.get('player_position')
+            features = spatial_layout.get('notable_features', [])
+            
+            if room_type:
+                action_context.append(f"Room Type: {room_type}")
+            if player_pos:
+                action_context.append(f"Player Position: {player_pos}")
+            if features and any(feature for feature in features if feature):
+                action_context.append(f"Notable Features: {', '.join(str(f) for f in features if f)}")
     
     context_str = "\n".join(action_context)
     
@@ -452,6 +567,32 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
 
 """
     
+    # SMART NAVIGATION ANALYSIS: Check VLM navigation data for specific guidance
+    navigation_guidance = ""
+    if isinstance(latest_observation, dict) and 'visual_data' in latest_observation:
+        visual_data = latest_observation['visual_data']
+        nav_info = visual_data.get('navigation_info', {})
+        
+        # Check for exits that VLM identified
+        exits = nav_info.get('exits_visible', [])
+        open_paths = nav_info.get('open_paths', [])
+        notable_features = visual_data.get('spatial_layout', {}).get('notable_features', [])
+        
+        # Build specific navigation guidance based on VLM analysis
+        if any(exit for exit in exits if exit and exit != "none" and "door" in str(exit).lower()):
+            navigation_guidance += "\n🚪 VLM DETECTED EXITS: The VLM identified doors/exits. PRIORITIZE MOVEMENT toward these exits instead of pressing A.\n"
+        
+        if any(feature for feature in notable_features if feature and "door" in str(feature).lower()):
+            navigation_guidance += f"\n🎯 NOTABLE FEATURES: {notable_features} - Move toward these features.\n"
+        
+        if any(path for path in open_paths if path and path != "none"):
+            navigation_guidance += f"\n🛤️ OPEN PATHS: {open_paths} - Use these directions for movement.\n"
+        
+        # Special guidance for room navigation
+        room_type = visual_data.get('spatial_layout', {}).get('room_type', '')
+        if 'interior' in str(room_type).lower() or 'house' in str(room_type).lower():
+            navigation_guidance += "\n🏠 ROOM EXIT STRATEGY: You're in a room/house. Look for exits at screen edges. Try all directions (UP/DOWN/LEFT/RIGHT) to find the way out.\n"
+    
     # Get movement preview for pathfinding decisions
     movement_preview_text = ""
     if not game_data.get('in_battle', False):  # Only show movement options in overworld
@@ -467,7 +608,7 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
 
 {strategic_goal}Situation: {format_observation_for_action(latest_observation)}
 
-{context_str}{movement_preview_text}
+{context_str}{movement_preview_text}{navigation_guidance}
 
 === DECISION LOGIC ===
 Based on your STRATEGIC GOAL and current situation:
@@ -475,11 +616,15 @@ Based on your STRATEGIC GOAL and current situation:
 1. **If DIALOGUE/TEXT visible**: Press A to advance
 2. **If MENU open**: Use UP/DOWN to navigate, A to select
 3. **If BATTLE**: Use A to attack or select moves
-4. **If OVERWORLD with STRATEGIC GOAL**: 
-   - Analyze the MOVEMENT PREVIEW above
-   - Choose the single best direction (UP/DOWN/LEFT/RIGHT) that moves you closer to your goal
-   - Consider obstacles, doors, and terrain in your pathfinding
-5. **If uncertain or no clear goal**: Use A or explore with single direction
+4. **If OVERWORLD - Room Navigation**: 
+   - FIRST: Check NAVIGATION ANALYSIS above for exits and doors
+   - If VLM detected exits/doors, move toward them using UP/DOWN/LEFT/RIGHT
+   - If no clear exits visible, explore systematically (try each direction)
+   - AVOID repeatedly pressing A on objects unless they're clearly exits/doors
+5. **If OVERWORLD - Route/Town**: 
+   - Use MOVEMENT PREVIEW to navigate toward your STRATEGIC GOAL
+   - Choose direction that advances toward next objective
+6. **If uncertain**: Explore with UP/DOWN/LEFT/RIGHT (avoid A unless on clear interactables)
 
 RESPOND WITH ONLY ONE BUTTON NAME: A, B, UP, DOWN, LEFT, RIGHT, START
 
