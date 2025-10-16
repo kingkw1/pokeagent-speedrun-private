@@ -161,7 +161,64 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         logger.info(f"[ACTION] - position: {player_data.get('position', {})}")
         logger.info("[ACTION] Using simple navigation: A to select NEW GAME")
         return ["A"]
-    else:
+    
+    # ENHANCED FIX: Detect name selection screen after title screen
+    # Check for name selection context using visual data and milestones
+    visual_data = latest_observation.get('visual_data', {}) if isinstance(latest_observation, dict) else {}
+    on_screen_text = visual_data.get('on_screen_text', {})
+    
+    # Look for name selection indicators - but also check step count as backup
+    is_name_selection = False
+    dialogue_text = (on_screen_text.get('dialogue') or '').upper()
+    menu_title = (on_screen_text.get('menu_title') or '').upper()
+    current_step = len(recent_actions or [])
+    
+    # DEBUG: Always log visual data for name selection detection around critical steps
+    if current_step >= 30:  # Only log around critical transition
+        logger.info(f"[ACTION] Step {current_step} - Name check: dialogue='{dialogue_text}', menu='{menu_title}', PLAYER_NAME_SET={milestones.get('PLAYER_NAME_SET', False)}")
+        logger.info(f"[ACTION] Step {current_step} - Visual data keys: {list(visual_data.keys()) if visual_data else 'None'}")
+        logger.info(f"[ACTION] Step {current_step} - On-screen text keys: {list(on_screen_text.keys()) if on_screen_text else 'None'}")
+    
+    # Check if this looks like name selection screen OR if we're in the critical step range
+    name_text_detected = ('YOUR NAME' in dialogue_text or 'NAME?' in dialogue_text or 
+                          'YOUR NAME' in menu_title or 'NAME?' in menu_title)
+    
+    # We know from your image that name selection happens around steps 33-40
+    # So let's add step-based detection as backup
+    in_name_step_range = (32 <= current_step <= 45 and not milestones.get('PLAYER_NAME_SET', False))
+    
+    if (name_text_detected or in_name_step_range) and not milestones.get('PLAYER_NAME_SET', False):
+        is_name_selection = True
+        logger.info("[ACTION] Name selection screen detected!")
+        logger.info(f"[ACTION] - text_detected: {name_text_detected}, step_range: {in_name_step_range}")
+        logger.info(f"[ACTION] - dialogue: '{dialogue_text}', menu: '{menu_title}'")
+        
+        # Simple name selection logic - just press A to accept default or navigate quickly
+        name_step = current_step - 32  # Normalize to name selection steps
+        if name_step < 2:  # First steps: make sure we're at A (default position)
+            logger.info("[ACTION] Positioning at 'A'")
+            return ["A"]
+        elif name_step < 4:  # Quick navigation to confirm
+            logger.info("[ACTION] Quick name entry")
+            return ["DOWN", "DOWN", "A"]  # Move to OK and confirm
+        else:  # Fallback: just keep pressing A to get through
+            logger.info("[ACTION] Pressing A to complete name selection")
+            return ["A"]
+    
+    # CRITICAL DEBUG: Override right after PLAYER_NAME_SET to avoid VLM confusion
+    if milestones.get('PLAYER_NAME_SET', False) and current_step <= 40:
+        # We're right after name selection - use simple navigation to get past any confusion
+        logger.info(f"[ACTION] Step {current_step} - PLAYER_NAME_SET detected, using simple post-name navigation")
+        
+        # Simple logic to get past any remaining name/intro screens
+        if current_step <= 36:
+            logger.info("[ACTION] Post-name: pressing A to continue")
+            return ["A"]
+        else:
+            logger.info("[ACTION] Post-name: pressing directional keys to clear screen") 
+            return ["DOWN", "A"]  # Try to navigate away from any stuck screen
+    
+    if not is_title_screen:
         # DEBUG: Log when NOT in title screen (to catch transition)
         if len(recent_actions or []) < 5:  # Only log first few steps to avoid spam
             logger.info(f"[ACTION] NOT title screen - using full navigation logic")
