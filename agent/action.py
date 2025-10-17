@@ -347,6 +347,18 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
             for direction, description in movement_options.items():
                 action_context.append(f"  {direction}: {description}")
     
+    # Add comprehensive state context (includes map visualization)
+    if state_context and state_context.strip():
+        action_context.append("=== GAME STATE CONTEXT ===")
+        action_context.append(state_context.strip())
+        print(f"🗺️ [MAP DEBUG] Added state context to VLM prompt ({len(state_context)} chars)")
+        # Show a preview of the map data
+        if "MAP:" in state_context:
+            map_preview = state_context[state_context.find("MAP:"):state_context.find("MAP:") + 200] + "..."
+            print(f"🗺️ [MAP DEBUG] Map preview: {map_preview}")
+    else:
+        print(f"🗺️ [MAP DEBUG] No state context available for VLM prompt")
+    
     # Party health summary
     if party_health['total_count'] > 0:
         action_context.append("=== PARTY STATUS ===")
@@ -524,9 +536,15 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     if not game_data.get('in_battle', False):  # Only show movement options in overworld
         try:
             movement_preview_text = format_movement_preview_for_llm(state_data)
+            print(f"🗺️ [MOVEMENT DEBUG] Raw movement preview result: '{movement_preview_text}'")
             if movement_preview_text and movement_preview_text != "Movement preview: Not available":
                 movement_preview_text = f"\n{movement_preview_text}\n"
+                print(f"🗺️ [MOVEMENT DEBUG] Formatted movement preview: '{movement_preview_text}'")
+            else:
+                print(f"🗺️ [MOVEMENT DEBUG] Movement preview empty or not available")
+                movement_preview_text = ""
         except Exception as e:
+            print(f"🗺️ [MOVEMENT DEBUG] Error getting movement preview: {e}")
             logger.warning(f"[ACTION] Error getting movement preview: {e}")
             movement_preview_text = ""
     
@@ -536,25 +554,45 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
 
 {context_str}{movement_preview_text}{navigation_guidance}
 
-=== DECISION LOGIC ===
-Based on your STRATEGIC GOAL and current situation:
+🚨 CRITICAL NAVIGATION INSTRUCTIONS 🚨
 
-1. **If DIALOGUE/TEXT visible**: Press A to advance
-2. **If MENU open**: Use UP/DOWN to navigate, A to select
-3. **If BATTLE**: Use A to attack or select moves
-4. **If OVERWORLD - Room Navigation**: 
-   - FIRST: Check NAVIGATION ANALYSIS above for exits and doors
-   - If VLM detected exits/doors, move toward them using UP/DOWN/LEFT/RIGHT
-   - If no clear exits visible, explore systematically (try each direction)
-   - AVOID repeatedly pressing A on objects unless they're clearly exits/doors
-5. **If OVERWORLD - Route/Town**: 
-   - Use MOVEMENT PREVIEW to navigate toward your STRATEGIC GOAL
-   - Choose direction that advances toward next objective
-6. **If uncertain**: Explore with UP/DOWN/LEFT/RIGHT (avoid A unless on clear interactables)
+**YOU ARE ON A ROUTE - MOVE WITH DIRECTIONAL BUTTONS, NOT 'A'!**
+
+Look at the MOVEMENT PREVIEW above. It shows:
+- UP: WALKABLE means you can go UP
+- DOWN: WALKABLE means you can go DOWN  
+- LEFT: WALKABLE means you can go LEFT
+- RIGHT: WALKABLE means you can go RIGHT
+
+🎯 **YOUR JOB: CHOOSE A DIRECTION TO MOVE**
+
+✅ **CORRECT ACTIONS ON ROUTES:**
+- UP (when UP is WALKABLE in MOVEMENT PREVIEW)
+- DOWN (when DOWN is WALKABLE in MOVEMENT PREVIEW)
+- LEFT (when LEFT is WALKABLE in MOVEMENT PREVIEW)  
+- RIGHT (when RIGHT is WALKABLE in MOVEMENT PREVIEW)
+
+❌ **WRONG ACTIONS ON ROUTES:**
+- A (this does nothing useful on routes - stops movement!)
+- Pressing A repeatedly when you should be moving
+- Ignoring the MOVEMENT PREVIEW directions
+
+🎮 **DECISION RULES:**
+1. **If screen_context = "overworld" AND MOVEMENT PREVIEW shows WALKABLE directions:**
+   → Pick UP, DOWN, LEFT, or RIGHT based on your strategic goal
+   → DO NOT pick A unless there's dialogue on screen or you need to interact
+
+2. **If DIALOGUE visible on screen:** Press A to advance dialogue
+
+3. **If in a MENU:** Use UP/DOWN to navigate, A to select
+
+4. **If in BATTLE:** Use A for moves/attacks
+
+**CHOOSE THE DIRECTION THAT MOVES YOU TOWARD YOUR STRATEGIC GOAL**
 
 RESPOND WITH ONLY ONE BUTTON NAME: A, B, UP, DOWN, LEFT, RIGHT, START
 
-NO explanations. NO extra text. NO repetition. Just one button name.
+NO explanations. NO extra text. Just one direction that's WALKABLE in the MOVEMENT PREVIEW.
 """
     
     # Construct complete prompt for VLM
@@ -593,6 +631,24 @@ NO explanations. NO extra text. NO repetition. Just one button name.
     
     print(f"🔍 [VLM DEBUG] Step {actual_step} - Calling VLM with visual_context: '{visual_preview}'")
     print(f"   Strategic goal: '{strategic_preview}'")
+    
+    # DEBUG: Show the actual prompt being sent to VLM
+    print(f"🔍 [VLM PROMPT DEBUG] Complete prompt length: {len(complete_prompt)} chars")
+    
+    # Check if movement preview is in the prompt
+    if "MOVEMENT PREVIEW:" in complete_prompt:
+        print(f"✅ [VLM PROMPT DEBUG] Movement preview IS included in prompt")
+        # Find and show the movement preview section
+        mp_start = complete_prompt.find("MOVEMENT PREVIEW:")
+        mp_section = complete_prompt[mp_start:mp_start + 200] if mp_start != -1 else "Not found"
+        print(f"🗺️ [VLM PROMPT DEBUG] Movement preview section: '{mp_section}'")
+    else:
+        print(f"❌ [VLM PROMPT DEBUG] Movement preview is MISSING from prompt")
+    
+    print(f"🔍 [VLM PROMPT DEBUG] Last 500 chars of prompt:")
+    print("=" * 50)
+    print(complete_prompt[-500:])
+    print("=" * 50)
     
     action_response = vlm.get_text_query(complete_prompt, "ACTION")
     
