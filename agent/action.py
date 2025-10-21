@@ -380,6 +380,51 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     movement_options = get_movement_options(state_data)
     party_health = get_party_health_summary(state_data)
     
+    # PRIORITY 1 ENHANCEMENT: Generate extended map view from MapStitcher
+    extended_map_view = None
+    exploration_status = None
+    try:
+        map_stitcher = state_data.get('map', {}).get('_map_stitcher_instance')
+        if map_stitcher:
+            # Get current location info
+            location_name = state_data.get('player', {}).get('location', 'Unknown')
+            player_pos = (current_x, current_y) if isinstance(current_x, int) and isinstance(current_y, int) else None
+            
+            if location_name and location_name != 'Unknown' and player_pos:
+                # Generate extended map display (larger view from stitched data)
+                try:
+                    npcs = state_data.get('npcs', [])
+                    connections = map_stitcher.get_location_connections(location_name)
+                    extended_map_lines = map_stitcher.generate_location_map_display(
+                        location_name,
+                        player_pos,
+                        npcs=npcs,
+                        connections=connections
+                    )
+                    if extended_map_lines:
+                        extended_map_view = '\n'.join(extended_map_lines)
+                        print(f"🗺️ [EXTENDED MAP] Generated {len(extended_map_lines)} line extended view for {location_name}")
+                        
+                        # Get exploration stats
+                        map_id = map_stitcher.get_map_id(
+                            state_data.get('map', {}).get('bank', 0),
+                            state_data.get('map', {}).get('number', 0)
+                        )
+                        if map_id in map_stitcher.map_areas:
+                            area = map_stitcher.map_areas[map_id]
+                            bounds = getattr(area, 'explored_bounds', {})
+                            if bounds:
+                                width = bounds.get('max_x', 0) - bounds.get('min_x', 0) + 1
+                                height = bounds.get('max_y', 0) - bounds.get('min_y', 0) + 1
+                                visited_count = getattr(area, 'visited_count', 1)
+                                exploration_status = f"Explored area: {width}x{height} tiles | Visited: {visited_count}x"
+                                print(f"🗺️ [EXPLORATION] {exploration_status}")
+                except Exception as e:
+                    logger.warning(f"[EXTENDED MAP] Error generating extended map view: {e}")
+                    print(f"⚠️ [EXTENDED MAP] Failed to generate extended view: {e}")
+    except Exception as e:
+        logger.warning(f"[EXTENDED MAP] Error accessing map stitcher: {e}")
+    
     logger.info("[ACTION] Starting action decision")
     logger.info(f"[ACTION] State: {state_summary}")
     logger.info(f"[ACTION] Party health: {party_health['healthy_count']}/{party_health['total_count']} healthy")
@@ -406,9 +451,22 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     else:
         action_context.append("=== OVERWORLD MODE ===")
         
-        # Movement options from utility
+        # PRIORITY 1: Add extended map view from MapStitcher (GLOBAL CONTEXT)
+        if extended_map_view:
+            action_context.append("")
+            action_context.append("=== EXTENDED MAP VIEW (from exploration memory) ===")
+            if exploration_status:
+                action_context.append(exploration_status)
+            action_context.append("")
+            action_context.append(extended_map_view)
+            action_context.append("")
+            action_context.append("Legend: P=You, N=NPC, .=walkable, #=blocked, ~=grass, ≈=water, S=stairs/warp")
+            action_context.append("This is your COMPLETE explored map - use it to plan paths and avoid dead ends!")
+            action_context.append("")
+        
+        # Movement options from utility (LOCAL TACTICAL INFO)
         if movement_options:
-            action_context.append("Movement Options:")
+            action_context.append("=== IMMEDIATE MOVEMENT OPTIONS ===")
             for direction, description in movement_options.items():
                 action_context.append(f"  {direction}: {description}")
     
@@ -663,12 +721,26 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
 
 {strategic_goal}=== NAVIGATION TASK ===
 
-**Step 1: Look at the screenshot** to identify your visual goal (exit, door, stairs, NPC, etc.)
+**CRITICAL: You have access to your COMPLETE explored map (shown above in EXTENDED MAP VIEW if available).**
 
-**Step 2: Check the MOVEMENT PREVIEW** below - it shows which directions are safe to move:
+**Step 1: Check the EXTENDED MAP VIEW (if shown above)**
+- This shows the ENTIRE area you've explored, not just your immediate 15x15 view
+- You are marked as 'P' on the map
+- Use this to see paths, dead ends, and unexplored areas
+- Plan your route to avoid getting stuck in cul-de-sacs
+
+**Step 2: Check the MOVEMENT PREVIEW** below for immediate options:
 {movement_preview_text}
 
-**Step 3: Choose ONE WALKABLE direction** from the preview that moves you toward your goal.
+**Step 3: Choose ONE WALKABLE direction** that:
+- Avoids dead ends visible on the extended map
+- Moves toward your strategic goal
+- Is marked WALKABLE in the movement preview
+
+**PATHFINDING RULES:**
+- If the extended map shows a dead end ahead, DON'T GO THERE - backtrack
+- If you're stuck (no forward progress), check the extended map for alternate routes
+- NEVER repeatedly move into blocked tiles
 
 === DECISION RULES ===
 
@@ -676,9 +748,9 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
    → Press A to advance/close the dialogue
 
 🎯 **IF IN OVERWORLD** (no dialogue, no menu):
-   → Look at the screenshot to find your goal (exit, stairs, door)
-   → Choose a WALKABLE direction from MOVEMENT PREVIEW
-   → Move toward the visual goal you see in the screenshot
+   → First: Check EXTENDED MAP VIEW (above) to plan your route and avoid dead ends
+   → Second: Choose a WALKABLE direction from MOVEMENT PREVIEW
+   → Third: Move toward your goal while avoiding obstacles visible on the extended map
 
 📋 **IF IN MENU**:
    → Use UP/DOWN to navigate options
