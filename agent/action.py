@@ -122,7 +122,29 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     """
     Decide and perform the next action button(s) based on memory, plan, observation, and comprehensive state.
     Returns a list of action buttons as strings.
+    """
     
+    # 🚨 CRITICAL FIX: NEW GAME MENU DETECTION (HIGHEST PRIORITY)
+    # Must happen before ANY other logic to prevent override conflicts
+    if isinstance(latest_observation, dict) and 'visual_data' in latest_observation:
+        visual_data = latest_observation.get('visual_data', {})
+        on_screen_text = visual_data.get('on_screen_text', {})
+        dialogue_text = (on_screen_text.get('dialogue') or '').upper()
+        menu_title = (on_screen_text.get('menu_title') or '').upper()
+        
+        # Check milestones to ensure we haven't progressed past this screen
+        milestones = state_data.get('milestones', {})
+        player_name_milestone = milestones.get('PLAYER_NAME_SET', {})
+        player_name_set = player_name_milestone.get('completed', False) if isinstance(player_name_milestone, dict) else bool(player_name_milestone)
+        
+        if ('NEW GAME' in dialogue_text or 'NEW GAME' in menu_title) and not player_name_set:
+            logger.info(f"🎯 [NEW GAME FIX] NEW GAME menu detected! Bypassing all other logic.")
+            logger.info(f"🎯 [NEW GAME FIX] - dialogue: '{dialogue_text}'")
+            logger.info(f"🎯 [NEW GAME FIX] - menu_title: '{menu_title}'")
+            print(f"🎯 [NEW GAME FIX] Selecting NEW GAME with A")
+            return ["A"]
+    
+    """
     ===============================================================================
     🚨 EMERGENCY PATCH APPLIED - REVIEW BEFORE PRODUCTION 🚨
     ===============================================================================
@@ -188,6 +210,9 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     visual_data = latest_observation.get('visual_data', {}) if isinstance(latest_observation, dict) else {}
     on_screen_text = visual_data.get('on_screen_text', {})
     
+    dialogue_text = (on_screen_text.get('dialogue') or '').upper()
+    menu_title = (on_screen_text.get('menu_title') or '').upper()
+    
     # Look for name selection indicators - but also check step count as backup
     is_name_selection = False
     dialogue_text = (on_screen_text.get('dialogue') or '').upper()
@@ -252,6 +277,15 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
             logger.info("[ACTION] Accepting default name")
             return ["A"]
     
+    # NEW GAME MENU FIX: Detect "NEW GAME / OPTIONS" menu screen (HIGH PRIORITY)
+    # This must happen BEFORE other override systems to prevent conflicts
+    if ('NEW GAME' in dialogue_text or 'NEW GAME' in menu_title) and not milestones.get('PLAYER_NAME_SET', False):
+        logger.info(f"[ACTION] NEW GAME menu detected!")
+        logger.info(f"[ACTION] - dialogue: '{dialogue_text}'")
+        logger.info(f"[ACTION] - menu_title: '{menu_title}'")
+        logger.info("[ACTION] Selecting NEW GAME with A")
+        return ["A"]
+    
     # CRITICAL DEBUG: Override right after PLAYER_NAME_SET to avoid VLM confusion
     # But only until INTRO_CUTSCENE_COMPLETE - then let VLM take over
     
@@ -286,6 +320,17 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         if current_step % 5 == 0 or current_step in [16, 21, 27] or advanced_location:
             print(f"🤖 [VLM MODE] Step {current_step} - VLM Navigation Active (intro_complete={intro_complete}, past_limit={current_step > override_step_limit}, moving_van={is_in_moving_van}, advanced_location={advanced_location})")
         
+        # ========================================================================
+        # OVERRIDE STATUS CHECK - Show if any overrides are currently active
+        # ========================================================================
+        print(f"\n{'='*80}")
+        print(f"📊 OVERRIDE STATUS CHECK - Step {current_step}")
+        print(f"{'='*80}")
+        print(f"🔧 Post-name override: {'❌ INACTIVE' if intro_complete or advanced_location or current_step > override_step_limit or is_in_moving_van else '✅ ACTIVE (should not see VLM call)'}")
+        print(f"🎯 Title screen override: {'❌ INACTIVE' if not is_title_screen else '✅ ACTIVE (should not see VLM call)'}")
+        print(f"🤖 VLM Mode: ✅ ACTIVE - VLM will make decision")
+        print(f"{'='*80}\n")
+        
         # Direct VLM call - let the VLM handle all navigation decisions
         pass  # Continue to VLM logic below
     
@@ -309,6 +354,26 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     # VLM NAVIGATION LOGIC: All paths above lead here for VLM-based decisions
     # ============================================================================
     
+    # CRITICAL POSITION DEBUG: Track if agent is actually moving
+    player_data = state_data.get('player', {})
+    current_position = player_data.get('position', {})
+    current_x = current_position.get('x', 'unknown')
+    current_y = current_position.get('y', 'unknown')
+    current_map = current_position.get('map', 'unknown')
+    
+    print(f"🎯 [POSITION DEBUG] Step {len(recent_actions) if recent_actions else 0}: Player at ({current_x}, {current_y}) on map {current_map}")
+    
+    # Store position for comparison
+    if not hasattr(action_step, 'last_position'):
+        action_step.last_position = (current_x, current_y, current_map)
+    
+    last_x, last_y, last_map = action_step.last_position
+    if (current_x, current_y, current_map) != (last_x, last_y, last_map):
+        print(f"✅ [POSITION CHANGE] Moved from ({last_x}, {last_y}) to ({current_x}, {current_y}) on map {current_map}")
+        action_step.last_position = (current_x, current_y, current_map)
+    else:
+        print(f"⚠️ [POSITION STUCK] NO MOVEMENT - Still at ({current_x}, {current_y}) on map {current_map}")
+
     # Get formatted state context and useful summaries
     state_context = format_state_for_llm(state_data)
     state_summary = format_state_summary(state_data)
@@ -388,8 +453,13 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         
         # On-screen text information
         on_screen_text = visual_data.get('on_screen_text', {})
-        if on_screen_text.get('dialogue'):
-            action_context.append(f"Dialogue: \"{on_screen_text['dialogue']}\" - {on_screen_text.get('speaker', 'Unknown')}")
+        visual_elements = visual_data.get('visual_elements', {})
+        
+        # CRITICAL FIX: Check if dialogue box is actually visible, not just if dialogue text exists
+        text_box_visible = visual_elements.get('text_box_visible', False)
+        
+
+        
         if on_screen_text.get('menu_title'):
             action_context.append(f"Menu: {on_screen_text['menu_title']}")
         if on_screen_text.get('button_prompts'):
@@ -407,6 +477,50 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
                 action_context.append(f"Button Prompts: {', '.join(prompt_strs)}")
             else:
                 action_context.append(f"Button Prompts: {str(button_prompts)}")
+        
+        # Add dialogue box status for VLM clarity
+        action_context.append(f"Dialogue Box Status: {'VISIBLE' if text_box_visible else 'NOT VISIBLE'}")
+        
+        # ENHANCED DIALOGUE DEBUG: Critical detection troubleshooting
+        if on_screen_text.get('dialogue'):
+            print(f"🗨️ [DIALOGUE DEBUG] Dialogue detected: '{on_screen_text.get('dialogue')}'")
+            print(f"🗨️ [DIALOGUE DEBUG] - text_box_visible: {text_box_visible}")
+            print(f"🗨️ [DIALOGUE DEBUG] - visual_elements: {visual_elements}")
+            print(f"🗨️ [DIALOGUE DEBUG] - screen_context: {visual_data.get('screen_context', 'missing')}")
+            print(f"🗨️ [DIALOGUE DEBUG] - All visual_data keys: {list(visual_data.keys())}")
+            logger.info(f"[DIALOGUE DEBUG] Dialogue text: '{on_screen_text.get('dialogue')}', text_box_visible: {text_box_visible}, visual_elements: {visual_elements}")
+        else:
+            print(f"🗨️ [DIALOGUE DEBUG] NO dialogue detected in on_screen_text: {on_screen_text}")
+            
+        # CRITICAL: Check if we're actually in a dialogue state that should block movement
+        screen_context = visual_data.get('screen_context', 'unknown')
+        if screen_context == 'overworld' and on_screen_text.get('dialogue'):
+            print(f"🚨 [CRITICAL ERROR] VLM reports 'overworld' but dialogue exists! This may be misclassified!")
+            print(f"🚨 [CRITICAL ERROR] - dialogue: '{on_screen_text.get('dialogue')}'")
+            print(f"🚨 [CRITICAL ERROR] - This could be why movement commands aren't working!")
+            
+            # EMERGENCY DIALOGUE BOX OVERRIDE - If stuck with dialogue for multiple steps, force A
+            if (hasattr(action_step, 'last_position') and 
+                action_step.last_position == (current_x, current_y, current_map) and 
+                len(recent_actions) >= 5):
+                recent_up_count = sum(1 for action in recent_actions[-10:] if action == 'UP')
+                if recent_up_count >= 3:
+                    print(f"🚨 [EMERGENCY OVERRIDE] Agent stuck with dialogue + repeated UP commands!")
+                    print(f"🚨 [EMERGENCY OVERRIDE] Position stuck at ({current_x}, {current_y}), dialogue: '{on_screen_text.get('dialogue')}'")
+                    print(f"🚨 [EMERGENCY OVERRIDE] Forcing A to close dialogue box!")
+                    return ["A"]
+        
+        # Check if dialogue contains specific text that indicates we're reading a box/sign
+        dialogue_text_raw = on_screen_text.get('dialogue', '')
+        dialogue_text = dialogue_text_raw.lower() if dialogue_text_raw else ''
+        if 'pokémon' in dialogue_text and ('box' in dialogue_text or 'logo' in dialogue_text):
+            print(f"🎁 [BOX INTERACTION] Detected box/sign interaction dialogue: '{dialogue_text}'")
+            print(f"🎁 [BOX INTERACTION] This requires A to close dialogue before movement will work!")
+            action_context.append(f"📦 ACTIVE BOX DIALOGUE: \"{on_screen_text.get('dialogue')}\" - MUST PRESS A TO CLOSE")
+        elif on_screen_text.get('dialogue') and text_box_visible:
+            action_context.append(f"ACTIVE Dialogue: \"{on_screen_text['dialogue']}\" - {on_screen_text.get('speaker', 'Unknown')}")
+        elif on_screen_text.get('dialogue') and not text_box_visible:
+            action_context.append(f"Residual Text (NO dialogue box): \"{on_screen_text['dialogue']}\" - IGNORE THIS")
         
         # Visible entities - handle various formats from VLM
         entities = visual_data.get('visible_entities', [])
@@ -548,51 +662,49 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
             logger.warning(f"[ACTION] Error getting movement preview: {e}")
             movement_preview_text = ""
     
-    action_prompt = f"""Playing Pokemon Emerald. Current screen: {visual_context}
+    action_prompt = f"""Playing Pokemon Emerald. Screen: {visual_context}
 
-{strategic_goal}Situation: {format_observation_for_action(latest_observation)}
+{strategic_goal}=== NAVIGATION TASK ===
 
-{context_str}{movement_preview_text}{navigation_guidance}
+**Step 1: Look at the screenshot** to identify your visual goal (exit, door, stairs, NPC, etc.)
 
-🚨 CRITICAL NAVIGATION INSTRUCTIONS 🚨
+**Step 2: Check the MOVEMENT PREVIEW** below - it shows which directions are safe to move:
+{movement_preview_text}
 
-**YOU ARE ON A ROUTE - MOVE WITH DIRECTIONAL BUTTONS, NOT 'A'!**
+**Step 3: Choose ONE WALKABLE direction** from the preview that moves you toward your goal.
 
-Look at the MOVEMENT PREVIEW above. It shows:
-- UP: WALKABLE means you can go UP
-- DOWN: WALKABLE means you can go DOWN  
-- LEFT: WALKABLE means you can go LEFT
-- RIGHT: WALKABLE means you can go RIGHT
+=== DECISION RULES ===
 
-🎯 **YOUR JOB: CHOOSE A DIRECTION TO MOVE**
+🚨 **IF DIALOGUE BOX IS VISIBLE** (you see text at bottom of screen):
+   → Press A to advance/close the dialogue
 
-✅ **CORRECT ACTIONS ON ROUTES:**
-- UP (when UP is WALKABLE in MOVEMENT PREVIEW)
-- DOWN (when DOWN is WALKABLE in MOVEMENT PREVIEW)
-- LEFT (when LEFT is WALKABLE in MOVEMENT PREVIEW)  
-- RIGHT (when RIGHT is WALKABLE in MOVEMENT PREVIEW)
+🎯 **IF IN OVERWORLD** (no dialogue, no menu):
+   → Look at the screenshot to find your goal (exit, stairs, door)
+   → Choose a WALKABLE direction from MOVEMENT PREVIEW
+   → Move toward the visual goal you see in the screenshot
 
-❌ **WRONG ACTIONS ON ROUTES:**
-- A (this does nothing useful on routes - stops movement!)
-- Pressing A repeatedly when you should be moving
-- Ignoring the MOVEMENT PREVIEW directions
+📋 **IF IN MENU**:
+   → Use UP/DOWN to navigate options
+   → Press A to select
 
-🎮 **DECISION RULES:**
-1. **If screen_context = "overworld" AND MOVEMENT PREVIEW shows WALKABLE directions:**
-   → Pick UP, DOWN, LEFT, or RIGHT based on your strategic goal
-   → DO NOT pick A unless there's dialogue on screen or you need to interact
+⚔️ **IF IN BATTLE**:
+   → Press A for moves/attacks
 
-2. **If DIALOGUE visible on screen:** Press A to advance dialogue
+=== OUTPUT FORMAT - CRITICAL ===
+You MUST respond with this EXACT format:
 
-3. **If in a MENU:** Use UP/DOWN to navigate, A to select
+Line 1-2: Brief reasoning (what you see, what your goal is, why)
+Line 3: ONLY the button name - ONE of these exact words: A, B, UP, DOWN, LEFT, RIGHT, START
 
-4. **If in BATTLE:** Use A for moves/attacks
+Example 1:
+I see a door to the south. I need to reach it.
+DOWN
 
-**CHOOSE THE DIRECTION THAT MOVES YOU TOWARD YOUR STRATEGIC GOAL**
+Example 2:
+Dialogue box is visible with text. Need to close it.
+A
 
-RESPOND WITH ONLY ONE BUTTON NAME: A, B, UP, DOWN, LEFT, RIGHT, START
-
-NO explanations. NO extra text. Just one direction that's WALKABLE in the MOVEMENT PREVIEW.
+Now respond with your reasoning and then the button:
 """
     
     # Construct complete prompt for VLM
@@ -612,6 +724,28 @@ NO explanations. NO extra text. Just one direction that's WALKABLE in the MOVEME
             print(f"👁️ [PERCEPTION DEBUG] Visual data keys: {list(vd.keys()) if vd else 'None'}")
             print(f"👁️ [PERCEPTION DEBUG] Screen context: '{vd.get('screen_context', 'missing')}' | Method: {latest_observation.get('extraction_method', 'unknown')}")
             print(f"👁️ [PERCEPTION DEBUG] On-screen text: {vd.get('on_screen_text', {})}")
+            
+            # ENHANCED PERCEPTION ANALYSIS
+            screen_ctx = vd.get('screen_context', 'missing')
+            dialogue_data = vd.get('on_screen_text', {}).get('dialogue', '')
+            visual_elements = vd.get('visual_elements', {})
+            
+            print(f"👁️ [PERCEPTION ANALYSIS] Screen classification analysis:")
+            print(f"   - VLM classified as: '{screen_ctx}'")
+            print(f"   - Dialogue present: {bool(dialogue_data)}")
+            print(f"   - Dialogue content: '{dialogue_data}'")
+            print(f"   - Visual elements: {visual_elements}")
+            
+            # Check for dialogue box misclassification
+            if dialogue_data and screen_ctx == 'overworld':
+                print(f"🚨 [MISCLASSIFICATION] VLM says 'overworld' but dialogue exists!")
+                print(f"🚨 [MISCLASSIFICATION] This is likely a dialogue screen misclassified as overworld!")
+                
+            # Check for box interaction patterns
+            dialogue_data = vd.get('on_screen_text', {}).get('dialogue', '')  
+            if dialogue_data and 'pokémon' in dialogue_data.lower() and ('box' in dialogue_data.lower() or 'logo' in dialogue_data.lower()):
+                print(f"🎁 [BOX DETECTED] This appears to be box/sign dialogue that blocks movement!")
+                print(f"🎁 [BOX DETECTED] Player must press A to close dialogue before movement works!")
         else:
             print(f"👁️ [PERCEPTION DEBUG] No visual_data in observation!")
     else:
@@ -666,27 +800,50 @@ NO explanations. NO extra text. Just one direction that's WALKABLE in the MOVEME
             print(f"🚨 [VLM ERROR] Detected repetitive hallucination - forcing simple 'A' response")
             action_response = "A"
     
-    # GUARANTEED DEBUG: Always show VLM response
-    response_preview = action_response[:200] + "..." if action_response and len(action_response) > 200 else action_response
-    print(f"🔍 [VLM RESPONSE] Step {actual_step} - Raw response: '{response_preview}'")
+    # GUARANTEED DEBUG: Always show FULL VLM response including reasoning
+    print(f"🔍 [VLM RESPONSE] Step {actual_step} - FULL Response:")
+    print("=" * 80)
+    print(action_response)
+    print("=" * 80)
     
     # SAFETY CHECK: Handle None or empty VLM response
     if action_response is None:
         logger.warning("[ACTION] VLM returned None response, using fallback action")
         action_response = "A"  # Safe fallback
     else:
-        action_response = action_response.strip().upper()
+        action_response = action_response.strip()
     
     valid_buttons = ['A', 'B', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT']
     
     # DEBUG: Show what we're about to parse
-    print(f"🔍 [PARSING] Step {actual_step} - About to parse response: '{action_response}' (type: {type(action_response)})")
+    print(f"🔍 [PARSING] Step {actual_step} - About to parse response (type: {type(action_response)})")
     
     # ROBUST PARSING: Handle various VLM response formats
     actions = []
     
     if action_response:
-        response_str = str(action_response).strip()
+        # NEW FORMAT: Expect reasoning followed by action on last line
+        # Split by newlines and get the last non-empty line as the action
+        lines = [line.strip() for line in action_response.split('\n') if line.strip()]
+        
+        if len(lines) >= 2:
+            # Extract reasoning (all lines except last)
+            reasoning = '\n'.join(lines[:-1])
+            action_line = lines[-1].upper()
+            
+            print(f"🧠 [VLM REASONING] {reasoning}")
+            print(f"🎮 [VLM ACTION LINE] {action_line}")
+        elif len(lines) == 1:
+            # Only one line - treat as action without reasoning
+            action_line = lines[0].upper()
+            print(f"⚠️ [NO REASONING] VLM provided action without reasoning")
+            print(f"🎮 [VLM ACTION LINE] {action_line}")
+        else:
+            # Empty response
+            print(f"❌ [EMPTY RESPONSE] VLM returned empty response")
+            action_line = "A"  # Fallback
+        
+        response_str = action_line
         
         # PRIORITY 1: Check if response starts with a valid button (most common case)
         first_line = response_str.split('\n')[0].strip().upper()
@@ -765,6 +922,7 @@ NO explanations. NO extra text. Just one direction that's WALKABLE in the MOVEME
             print(f"   Anti-hallucination action: {actions}")
     else:
         print(f"✅ Successfully parsed {len(actions)} action(s): {actions}")
+    
     print("-" * 80 + "\n")
     
     # ANTI-LOOP LOGIC: Detect if we're stuck pressing A repeatedly and force exploration
