@@ -184,7 +184,7 @@
 
 ### **Week 4 (Nov 1 - Nov 7): The Push for Autonomy & Performance Tuning**
 
-**Primary Goal:** Replace hard-coded components with learned policies to improve the "Adjusted Performance" score by reducing the scaffolding penalty.
+**Primary Goal:** Optimize all systems for speed and reliability to **maximize Raw Performance** (milestone completion and efficiency). Showcase innovation for Judges' Choice awards.
 
 #### **Daily Breakdown:**
 
@@ -244,11 +244,11 @@
     *   **Daily Goal:** Run #1 is complete. Video and logs are saved and verified with performance analysis.
 
 *   [ ] **Day 32 (Sun, Nov 9): Championship Run #2 & Documentation**
-    *   **Task:** Start Run #2. While it's running, write the first draft of the Methodology Description, focusing on the scaffolding dimensions and VLM integration approach.
+    *   **Task:** Start Run #2. Write the first draft of the Methodology Description, focusing on the scaffolding dimensions **for Judges' Choice award eligibility**.
     *   **Daily Goal:** Run #2 is complete. A full draft of the methodology document highlighting minimal scaffolding and advanced autonomy.
 
 *   [ ] **Day 33 (Mon, Nov 10): Championship Run #3 & Documentation Finalization**
-    *   **Task:** Start the final official run. Review and finalize the methodology document, ensuring it accurately represents the advanced VLM-based architecture and minimal scaffolding approach.
+    *   **Task:** Start the final official run. Review and finalize the methodology document, ensuring it accurately represents the architecture and highlights innovations **for Judges' Choice consideration**.
     *   **Daily Goal:** Run #3 is complete. The methodology document is finalized emphasizing competitive advantages.
 
 *   [ ] **Day 34 (Tue, Nov 11): Final Packaging**

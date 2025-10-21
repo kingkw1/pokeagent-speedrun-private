@@ -16,23 +16,27 @@ Finally, the overall objective of "beating the game" possesses a natural hierarc
 A critical realization is that the game's state space is fundamentally multi-modal and only partially observable. A purely visual perception system, such as a standard Convolutional Neural Network (CNN), is insufficient because it treats all pixels with equal importance. In an RPG, a single pixel within a dialogue box containing a critical quest instruction holds far more semantic weight than a pixel of grass in the overworld. The true state is a composite of visual information (character positions, map layout), textual information (dialogue, item descriptions, menu options), and, crucially, latent variables that are not displayed on screen. These latent variables, such as internal quest flags or the status of a specific event trigger, must be inferred from the history of interactions. This necessitates a perception module capable of reading and comprehending text and a memory system that can track this history to build a complete model of the world state.
 
 
-### 1.2 Interpreting the Evaluation Metrics: Raw Performance vs. Scaffolding Penalty
+### 1.2 Interpreting the Evaluation Metrics: Raw Performance & Judges' Choice Awards
 
+Based on the competition framework (updated October 19th, 2025), submissions for Track 2 are evaluated primarily on **Raw Performance**, with separate consideration for **Judges' Choice awards** based on methodology.
 
-Based on the competition framework, submissions are evaluated on an **"Adjusted Performance"** metric. This metric is a function of two competing factors:
+**Primary Ranking: Raw Performance**
+The main leaderboard rank is determined solely by objective metrics:
+1.  **Milestone Completion:** Percentage of game milestones achieved.
+2.  **Completion Efficiency:** Time and action count required to reach milestones.
+3.  **Reproducibility:** Ability for organizers to verify the run.
 
-**Adjusted Performance = Raw Performance × λ(Scaffolding)**
-**Raw Performance** is a direct measure of speedrunning efficiency, including milestone completion, time, and action count. This component rewards agents that find and execute the most optimal path through the game.
+This metric rewards agents that find and execute the most efficient path through the game, prioritizing speed and progress above all else.
 
-**Scaffolding Penalty (λ)** penalizes reliance on human-provided knowledge or non-learned components across five key dimensions:
-- **State Information (S)**: Higher penalty for privileged information (e.g., direct RAM access)
-- **Tools (T)**: Penalty for real-time external tools like web search or calculators  
-- **Memory (M)**: Penalty for external memory structures like vector databases and knowledge graphs
-- **Feedback (F)**: Penalty for human-in-the-loop feedback during evaluation
-- **Fine-tuning (FT)**: Penalty for specialized model fine-tuning
+**Secondary Recognition: Judges' Choice Awards**
+Separate awards recognize innovative approaches, including those with minimal scaffolding, creative tool use, or novel architectures. To be eligible, teams must document their methodology, detailing the support structures used across five dimensions: State Information (S), Tools (T), Memory (M), Feedback (F), and Fine-tuning (Φ).
 
-The goal is to encourage truly autonomous agents that learn to solve the task themselves.
-This evaluation structure creates a fundamental design tension. The easiest way to achieve high raw performance is to heavily scaffold the agent with human knowledge. However, this would incur a high penalty. The challenge, therefore, is to design an agent that can discover and execute optimal strategies with maximal autonomy. The architecture proposed in this report is explicitly designed to address this tension by prioritizing learning at every level of the agent's cognitive hierarchy.
+**Our Strategic Alignment:**
+This evaluation structure requires a two-pronged approach:
+1.  **Maximize Raw Performance:** Our architecture must prioritize speed and milestone completion through efficient planning and execution.
+2.  **Showcase Innovation:** Our learning-based components should be highlighted in the methodology documentation to compete for Judges' Choice awards.
+
+The architecture proposed in this report is designed to excel at Raw Performance through its hierarchical structure and optimized components, while its learning-based elements position it well for the innovation awards.
 
 #### 1.2.1 Alignment with Competition Framework and Optimizing for Adjusted Performance
 
@@ -219,8 +223,7 @@ The MMA is a policy network that, at each significant time step, observes the cu
 - **RETRIEVE_SEMANTIC(query)**: Queries the knowledge graph for factual information relevant to the current context.
 - **NO_OP**: Takes no memory action.
 This agent is trained using policy gradient reinforcement learning (e.g., PPO, as in Memory-R1 18). The reward signal is derived from the overall task success. A sequence of memory operations is rewarded if it contributes to a trajectory that successfully completes a high-level subgoal. This training process teaches the MMA to make goal-oriented memory decisions. It learns to identify and retain answer-critical information (e.g., "An NPC told me I need the HM 'CUT' to get past this tree") while discarding irrelevant content (e.g., the details of the 50th wild Pidgey encounter). This transforms the agent's memory from a simple storage device into an active component of its reasoning process. It effectively allows the agent to process an arbitrarily long stream of information with linear computational complexity by learning to maintain a compressed, relevant state representation in its fixed-size working memory.17
-This approach recognizes that memory is not merely storage; it is an integral part of reasoning. A simple retrieval-augmented generation (RAG) system retrieves information based on superficial semantic similarity, which can fail to connect disparate but causally linked events. Solving a complex multi-step quest in an RPG often requires multi-hop reasoning. For example, an agent might need to recall: (a) seeing a thirsty guard in Saffron City, (b) an NPC in Celadon City mentioning a vending machine with Fresh Water, and (c) that the Celadon Department Store is where drinks can be purchased. By training the MMA with RL based on task success, the agent learns to perform goal-conditioned retrieval. It learns to ask not just "What is similar to my current situation?" but "What information from my entire history is relevant to achieving my current subgoal?" This is a far more sophisticated form of reasoning crucial for navigating the complex causal chains of an RPG.
-
+This approach recognizes that memory is not merely storage; it is an integral part of reasoning. By training the MMA with RL based on task success, the agent learns to perform goal-conditioned retrieval, asking "What information from my entire history is relevant to achieving my current subgoal?". While the removal of the scaffolding penalty from the main ranking reduces the *direct* scoring benefit of a learned memory system, the MMA remains a key innovation. [cite_start]It offers the potential for **superior long-term performance** compared to simpler retrieval methods by learning complex, multi-hop reasoning strategies[cite: 18]. Furthermore, its novelty makes it a strong candidate for the **Judges' Choice awards**. However, given the primary focus on Raw Performance, the implementation complexity of the MMA must be weighed against simpler, potentially faster memory augmentation techniques (e.g., direct RAG). A pragmatic approach might involve initially implementing direct RAG (Week 3) and pursuing the full MMA only if time permits and a clear performance benefit is demonstrable (Week 4).
 
 ## Section 5: System Integration and a Phased Training Protocol
 
@@ -287,14 +290,13 @@ The proposed agent's competitive edge stems from four key architectural innovati
 
 ### 6.2 Mapping Innovations to Competitive Metrics
 
+This architecture is explicitly designed to optimize for the competition's revised evaluation metrics:
 
-This architecture is explicitly designed to optimize for the competition's evaluation metrics:
+- **Maximizing Raw Performance**: The hierarchical planner, guided by game knowledge (potentially via a pre-computed skill graph or fine-tuning) and executed by an efficient low-level controller, aims to discover and follow near-optimal paths through the game's milestones. The focus on performance-tuned components like the Qwen VLM further supports rapid decision-making, directly contributing to faster completion times and higher milestone counts.
 
-- **Maximizing Raw Performance**: The hierarchical planner, guided by a pre-computed skill graph and fine-tuned with RL, is designed to discover and execute near-optimal sequences of subgoals. This strategic efficiency, combined with a proficient low-level controller, will directly translate to faster game completion times and thus a higher Raw Performance score.
+- **Competing for Judges' Choice Awards**: Our commitment to learning-based solutions—the VLM for perception, the potential RL-based MMA for memory, and the HRL structure—showcases the kind of innovation the Judges' Choice awards aim to recognize. Thorough documentation of these components will highlight their novelty and potential for advancing general AI capabilities.
 
-- **Minimizing Scaffolding Penalty**: The core philosophy of this architecture is to learn, rather than hard-code, every critical cognitive function. The planner, the controller, and even the memory manager are all trained via reinforcement learning to be adaptive components of the agent. While pre-trained models (VLM, LLM) are used as a foundation, they are fine-tuned on in-domain data and integrated into a learning loop. This deep commitment to autonomy should result in a minimal Scaffolding Penalty.
-
-- **Originality and Contribution**: The proposed synthesis of VLM-based perception, LLM-guided HRL, and RL-managed memory represents a novel and powerful agent architecture. It aligns with the competition's goal to foster innovative research that pushes the boundaries of autonomous systems, satisfying requirements for submission originality.
+- **Originality and Contribution**: The proposed synthesis of VLM-based perception, LLM-guided HRL, and potentially RL-managed memory represents a novel agent architecture that aligns with the competition's goal to foster innovative research, satisfying requirements for submission originality.
 
 
 ### 6.3 Final Recommendations and Future Work

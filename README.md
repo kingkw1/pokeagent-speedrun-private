@@ -1,6 +1,6 @@
 # AI Agent for the PokéAgent Speedrunning Challenge
 
-This repository contains the development of a sophisticated AI agent designed to compete in **Track 2 (RPG Speedrunning)** of the NeurIPS 2025 PokéAgent Challenge. Our goal is to build a highly autonomous agent that can complete Pokémon Emerald by optimizing for the competition's "Adjusted Performance" metric, which rewards both speed and minimal reliance on human-provided scaffolding.
+This repository contains the development of a sophisticated, hierarchical AI agent designed to compete in **Track 2 (RPG Speedrunning)** of the NeurIPS 2025 PokéAgent Challenge. Our goal is to build a high-performance agent that can complete Pokémon Emerald by optimizing for the competition's primary ranking metric: **Raw Performance** (milestone completion percentage, time, and action efficiency). Our innovative architecture also aims for the **Judges' Choice** awards by demonstrating novel AI capabilities.
 
 This project is built upon the official starter kit but features a custom, learning-driven architecture with advanced perception capabilities and intelligent action sequencing.
 
@@ -168,9 +168,19 @@ python tests/test_default_config.py
 
 ---
 
-## Competition Context
+## Competition Context & Strategy
 
-This agent is being developed for **Track 2 (RPG Speedrunning)** of the NeurIPS 2025 PokéAgent Challenge, focusing on completing Pokemon Emerald as efficiently as possible.
+This agent is being developed for **Track 2 (RPG Speedrunning)** of the NeurIPS 2025 PokéAgent Challenge. The primary goal is to achieve the highest **Raw Performance**, measured by milestone completion percentage and efficiency (time and actions).
+
+### New Ranking Criteria (Updated Oct 19th, 2025)
+The competition recently clarified that the main leaderboard rankings are determined **solely by objective Raw Performance metrics**. The previously mentioned scaffolding penalty (λ) has been removed from the main ranking calculation.
+
+### Our Strategy for Success
+Our architecture is designed to maximize Raw Performance while also showcasing innovation for the separate **Judges' Choice Awards**:
+
+1.  **Maximize Speed & Milestones:** Our hierarchical planning and RL-based control systems aim to find and execute the fastest possible routes through the game's milestones. The focus is on efficient decision-making and execution.
+2.  **Demonstrate Innovation:** While not directly impacting the main rank, our learning-based components (VLM Perception, potential RL Memory Management) showcase novel AI capabilities that align with the spirit of the Judges' Choice awards for innovative methods.
+3.  **Methodology Documentation:** We will still thoroughly document our approach, including scaffolding dimensions, to be eligible for the Judges' Choice awards.
 
 ### Evaluation Metrics
 
