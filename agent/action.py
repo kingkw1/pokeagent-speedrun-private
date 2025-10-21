@@ -494,21 +494,18 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
             
         # CRITICAL: Check if we're actually in a dialogue state that should block movement
         screen_context = visual_data.get('screen_context', 'unknown')
-        if screen_context == 'overworld' and on_screen_text.get('dialogue'):
-            print(f"🚨 [CRITICAL ERROR] VLM reports 'overworld' but dialogue exists! This may be misclassified!")
-            print(f"🚨 [CRITICAL ERROR] - dialogue: '{on_screen_text.get('dialogue')}'")
+        dialogue_text = on_screen_text.get('dialogue', '')
+        
+        # Filter out fake "dialogue" that's actually just game state info
+        # Real dialogue doesn't contain "Location:" or "Pos:" or "Money:" patterns
+        is_fake_dialogue = dialogue_text and any(marker in dialogue_text for marker in ['Location:', 'Pos:', 'Money:', 'HP:', 'Pokedex:'])
+        
+        if screen_context == 'overworld' and dialogue_text and not is_fake_dialogue:
+            print(f"🚨 [CRITICAL ERROR] VLM reports 'overworld' but REAL dialogue exists! This may be misclassified!")
+            print(f"🚨 [CRITICAL ERROR] - dialogue: '{dialogue_text}'")
             print(f"🚨 [CRITICAL ERROR] - This could be why movement commands aren't working!")
-            
-            # EMERGENCY DIALOGUE BOX OVERRIDE - If stuck with dialogue for multiple steps, force A
-            if (hasattr(action_step, 'last_position') and 
-                action_step.last_position == (current_x, current_y, current_map) and 
-                len(recent_actions) >= 5):
-                recent_up_count = sum(1 for action in recent_actions[-10:] if action == 'UP')
-                if recent_up_count >= 3:
-                    print(f"🚨 [EMERGENCY OVERRIDE] Agent stuck with dialogue + repeated UP commands!")
-                    print(f"🚨 [EMERGENCY OVERRIDE] Position stuck at ({current_x}, {current_y}), dialogue: '{on_screen_text.get('dialogue')}'")
-                    print(f"🚨 [EMERGENCY OVERRIDE] Forcing A to close dialogue box!")
-                    return ["A"]
+        elif is_fake_dialogue:
+            print(f"✅ [DIALOGUE FILTER] Ignoring fake 'dialogue' (actually game state info): '{dialogue_text[:50]}...')")
         
         # Check if dialogue contains specific text that indicates we're reading a box/sign
         dialogue_text_raw = on_screen_text.get('dialogue', '')
