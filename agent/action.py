@@ -296,7 +296,7 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     # NAVIGATION DECISION LOGIC: Clear hierarchy of what mode to use
     
     # 1. Post-name override: Only when name is set but intro cutscene isn't complete yet
-    # IMPROVED: Add multiple exit conditions to prevent infinite loops
+    # FIXED: Don't activate if player has already progressed beyond intro (has Pokemon on routes)
     player_location = player_data.get('location', '')
     is_in_moving_van = "MOVING_VAN" in str(player_location).upper()
     override_step_limit = 15  # Maximum steps to spend in override mode
@@ -306,13 +306,17 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     has_pokemon = state_data.get('player', {}).get('party', [])
     advanced_location = on_route_101 or 'ROUTE' in str(player_location).upper()
     
+    # CRITICAL FIX: If player already has Pokemon, they've completed intro - don't override!
+    player_has_pokemon = len(has_pokemon) > 0 if has_pokemon else False
+    
     if (milestones.get('PLAYER_NAME_SET', False) and 
         not intro_complete and 
         not advanced_location and  # Don't override if we're on routes
+        not player_has_pokemon and  # FIXED: Don't override if player has Pokemon
         current_step <= override_step_limit and 
         not is_in_moving_van):
         logger.info(f"[ACTION] Step {current_step} - Post-name override active (location: {player_location})")
-        print(f"🔧 [OVERRIDE] Step {current_step} - Post-name override: pressing A (intro_complete={intro_complete}, location={player_location})")
+        print(f"🔧 [OVERRIDE] Step {current_step} - Post-name override: pressing A (intro_complete={intro_complete}, location={player_location}, has_pokemon={player_has_pokemon})")
         return ["A"]
     
     # 2. VLM Navigation Mode: When intro is complete OR we exceed override limits OR advanced location
@@ -702,11 +706,33 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     
     # Get movement preview for pathfinding decisions
     movement_preview_text = ""
+    walkable_options = []  # NEW: Store walkable directions as multiple-choice options
+    
     if not game_data.get('in_battle', False):  # Only show movement options in overworld
         try:
             movement_preview_text = format_movement_preview_for_llm(state_data)
             print(f"🗺️ [MOVEMENT DEBUG] Raw movement preview result: '{movement_preview_text}'")
+            
+            # Extract WALKABLE directions for multiple-choice selection
             if movement_preview_text and movement_preview_text != "Movement preview: Not available":
+                for line in movement_preview_text.split('\n'):
+                    if 'WALKABLE' in line:
+                        # Extract direction from line like "  UP   : ( 10, 13) [.] WALKABLE"
+                        for direction in ['UP', 'DOWN', 'LEFT', 'RIGHT']:
+                            if line.strip().startswith(direction):
+                                # Extract coordinates and description
+                                parts = line.split(':')
+                                if len(parts) >= 2:
+                                    coords_and_desc = parts[1].strip()
+                                    walkable_options.append({
+                                        'direction': direction,
+                                        'details': coords_and_desc
+                                    })
+                                break
+                
+                print(f"🗺️ [MOVEMENT DEBUG] Extracted {len(walkable_options)} walkable options: {[opt['direction'] for opt in walkable_options]}")
+                
+                # Format movement preview with original full details
                 movement_preview_text = f"\n{movement_preview_text}\n"
                 print(f"🗺️ [MOVEMENT DEBUG] Formatted movement preview: '{movement_preview_text}'")
             else:
@@ -716,8 +742,116 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
             print(f"🗺️ [MOVEMENT DEBUG] Error getting movement preview: {e}")
             logger.warning(f"[ACTION] Error getting movement preview: {e}")
             movement_preview_text = ""
+            walkable_options = []
     
-    action_prompt = f"""Playing Pokemon Emerald. Screen: {visual_context}
+    # ANTI-STUCK LOGIC: Detect when agent is stuck on a ledge or blocked path
+    # If the agent has been pressing the same direction 5+ times and hasn't moved, override VLM
+    if recent_actions and len(recent_actions) >= 5:
+        last_5_actions = recent_actions[-5:]
+        # Check if all last 5 actions are the same movement direction
+        if all(action == last_5_actions[0] for action in last_5_actions) and last_5_actions[0] in ['UP', 'DOWN', 'LEFT', 'RIGHT']:
+            stuck_direction = last_5_actions[0]
+            print(f"🚨 [ANTI-STUCK] Agent pressed {stuck_direction} 5+ times in a row!")
+            
+            # Check if movement preview shows this direction is blocked
+            if movement_preview_text and "BLOCKED" in movement_preview_text:
+                if stuck_direction in movement_preview_text.split("BLOCKED")[0][-20:]:  # Check if stuck direction is near BLOCKED text
+                    print(f"🚨 [ANTI-STUCK] {stuck_direction} is BLOCKED (ledge or obstacle)!")
+                    print(f"🚨 [ANTI-STUCK] Choosing alternative walkable direction...")
+                    
+                    # Parse walkable directions from movement preview
+                    walkable_directions = []
+                    for direction in ['UP', 'DOWN', 'LEFT', 'RIGHT']:
+                        if direction in movement_preview_text:
+                            # Check if this direction is marked WALKABLE
+                            direction_line_start = movement_preview_text.find(direction)
+                            direction_line_end = movement_preview_text.find('\n', direction_line_start)
+                            direction_line = movement_preview_text[direction_line_start:direction_line_end]
+                            if 'WALKABLE' in direction_line:
+                                walkable_directions.append(direction)
+                    
+                    if walkable_directions:
+                        # Choose first walkable direction that isn't the stuck one
+                        alternative_direction = next((d for d in walkable_directions if d != stuck_direction), walkable_directions[0])
+                        print(f"✅ [ANTI-STUCK] Overriding VLM: choosing {alternative_direction} instead of {stuck_direction}")
+                        logger.info(f"[ACTION] Anti-stuck override: {alternative_direction} (was stuck on {stuck_direction})")
+                        return [alternative_direction]
+    
+    # Build action prompt with multiple-choice format if we have walkable options
+    if walkable_options and len(walkable_options) > 0:
+        # MULTIPLE-CHOICE FORMAT: Only present WALKABLE options
+        action_prompt = f"""Playing Pokemon Emerald. Screen: {visual_context}
+
+{strategic_goal}
+
+=== NAVIGATION TASK ===
+
+**CRITICAL: You have access to your COMPLETE explored map (shown above in EXTENDED MAP VIEW if available).**
+
+**Step 1: Check the EXTENDED MAP VIEW (if shown above)**
+- This shows the ENTIRE area you've explored, not just your immediate 15x15 view
+- You are marked as 'P' on the map
+- Use this to see paths, dead ends, and unexplored areas
+- Plan your route to avoid getting stuck in cul-de-sacs
+
+**Step 2: CHOOSE FROM AVAILABLE MOVEMENT OPTIONS:**
+
+"""
+        # Add numbered options for each walkable direction
+        for i, option in enumerate(walkable_options, 1):
+            action_prompt += f"{i}. {option['direction']} - {option['details']}\n"
+        
+        action_prompt += f"""
+**Step 3: Select the BEST option** that:
+- Moves toward your strategic goal
+- Avoids dead ends visible on the extended map
+- Makes forward progress
+
+=== DECISION RULES ===
+
+🚨 **IF DIALOGUE BOX IS VISIBLE** (you see text at bottom of screen):
+   → Respond with: "A" (to advance/close dialogue)
+
+🎯 **IF IN OVERWORLD** (no dialogue, no menu):
+   → Choose ONE option number from the list above
+   → Pick the direction that moves you toward your goal
+   → Avoid directions that lead to dead ends on the extended map
+
+📋 **IF IN MENU**:
+   → Respond with: "UP", "DOWN", or "A" for menu navigation
+
+⚔️ **IF IN BATTLE**:
+   → Respond with: "A" (for moves/attacks)
+
+=== OUTPUT FORMAT - CRITICAL ===
+You MUST respond with this EXACT format:
+
+Line 1-2: Brief reasoning about why you chose this option
+Line 3: ONLY the option NUMBER (1-{len(walkable_options)}) OR button name (A, B, START) if not choosing movement
+
+⚠️ CRITICAL INSTRUCTIONS:
+1. ANALYZE THIS SPECIFIC FRAME - don't repeat previous responses
+2. The options above are the ONLY walkable directions - you cannot choose blocked directions
+3. Choose the option number that best matches your strategic goal
+4. If you need to press A (dialogue/battle), respond with "A" instead of a number
+
+Example 1 - Movement Choice:
+I need to go north to reach Route 101. Option 1 is UP which moves north.
+1
+
+Example 2 - Dialogue:
+I see a dialogue box at the bottom with text. I need to close it.
+A
+
+Example 3 - Strategic Navigation:
+My goal is Littleroot Town to the south. Option 2 (DOWN) moves in that direction.
+2
+
+Now analyze THIS frame, review the {len(walkable_options)} movement options above, and respond with your reasoning and choice:
+"""
+    else:
+        # FALLBACK: Original free-form prompt when no movement options available
+        action_prompt = f"""Playing Pokemon Emerald. Screen: {visual_context}
 
 {strategic_goal}=== NAVIGATION TASK ===
 
@@ -762,18 +896,29 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
 === OUTPUT FORMAT - CRITICAL ===
 You MUST respond with this EXACT format:
 
-Line 1-2: Brief reasoning (what you see, what your goal is, why)
+Line 1-2: Brief reasoning about THIS SPECIFIC frame (what you actually see, your current goal, your chosen direction)
 Line 3: ONLY the button name - ONE of these exact words: A, B, UP, DOWN, LEFT, RIGHT, START
 
-Example 1:
-I see a door to the south. I need to reach it.
-DOWN
+⚠️ CRITICAL INSTRUCTIONS:
+1. ANALYZE THIS SPECIFIC FRAME
+2. Look at the MOVEMENT PREVIEW to see which directions are WALKABLE
+3. Choose a direction that matches your strategic goal
+4. DO NOT hallucinate doors or features not visible in the movement data
+5. If you're navigating to a location, pick the direction that gets you closer
 
-Example 2:
-Dialogue box is visible with text. Need to close it.
+Example 1 - Movement:
+I'm on Route 101. My goal is north. The movement preview shows UP is walkable.
+UP
+
+Example 2 - Dialogue:
+I see a dialogue box at the bottom with text. I need to close it.
 A
 
-Now respond with your reasoning and then the button:
+Example 3 - Navigation:
+I need to go to Littleroot Town which is south. DOWN is walkable according to preview.
+DOWN
+
+Now analyze THIS frame and respond with your reasoning and button:
 """
     
     # Construct complete prompt for VLM
@@ -848,6 +993,14 @@ Now respond with your reasoning and then the button:
     else:
         print(f"❌ [VLM PROMPT DEBUG] Movement preview is MISSING from prompt")
     
+    # Check if we're using multiple-choice mode
+    if walkable_options and len(walkable_options) > 0:
+        print(f"🎯 [MULTIPLE-CHOICE MODE] Presenting {len(walkable_options)} walkable options to VLM:")
+        for i, opt in enumerate(walkable_options, 1):
+            print(f"   {i}. {opt['direction']} - {opt['details']}")
+    else:
+        print(f"📝 [FREE-FORM MODE] Using traditional free-form action selection")
+    
     print(f"🔍 [VLM PROMPT DEBUG] Last 500 chars of prompt:")
     print("=" * 50)
     print(complete_prompt[-500:])
@@ -914,25 +1067,54 @@ Now respond with your reasoning and then the button:
         
         response_str = action_line
         
+        # PRIORITY 0: MULTIPLE-CHOICE PARSING (if we provided walkable options)
+        if walkable_options and len(walkable_options) > 0:
+            print(f"🎯 [MULTIPLE-CHOICE] Parsing response for {len(walkable_options)} options")
+            
+            # Try to extract a number from the response
+            import re
+            number_match = re.search(r'\b([1-9])\b', response_str)
+            
+            if number_match:
+                choice_num = int(number_match.group(1))
+                print(f"✅ [CHOICE DETECTED] VLM selected option {choice_num}")
+                
+                # Validate the choice is within range
+                if 1 <= choice_num <= len(walkable_options):
+                    selected_option = walkable_options[choice_num - 1]
+                    selected_direction = selected_option['direction']
+                    print(f"✅ [MULTIPLE-CHOICE] Option {choice_num} maps to: {selected_direction}")
+                    print(f"   Details: {selected_option['details']}")
+                    actions = [selected_direction]
+                else:
+                    print(f"❌ [INVALID CHOICE] Option {choice_num} out of range (1-{len(walkable_options)})")
+                    # Fallback to first option
+                    actions = [walkable_options[0]['direction']]
+                    print(f"   Using fallback: {actions[0]}")
+            else:
+                # No number found - check if VLM responded with button (like "A" for dialogue)
+                print(f"⚠️ [NO NUMBER] VLM didn't provide a number, checking for button names...")
+                # Will fall through to button parsing below
+        
         # PRIORITY 1: Check if response starts with a valid button (most common case)
-        first_line = response_str.split('\n')[0].strip().upper()
-        
-        # Clean up common VLM artifacts in the first line
-        cleaned_first_line = first_line
-        for artifact in ['</OUTPUT>', '</output>', '<|END|>', '<|end|>', '<|ASSISTANT|>', '<|assistant|>', '|user|']:
-            cleaned_first_line = cleaned_first_line.replace(artifact, '').strip()
-        
-        if cleaned_first_line in valid_buttons:
-            actions = [cleaned_first_line]
-        elif first_line in valid_buttons:
-            actions = [first_line]
-        
-        # PRIORITY 1.5: Handle "A (explanation)" format by extracting just the button
-        elif '(' in first_line:
-            # Extract button before parentheses: "A (to attack)" -> "A"
-            button_part = first_line.split('(')[0].strip().upper()
-            if button_part in valid_buttons:
-                actions = [button_part]
+        if not actions:  # Only parse as button if we didn't already get a direction from multiple-choice
+            first_line = response_str.split('\n')[0].strip().upper()
+            
+            # Clean up common VLM artifacts in the first line
+            cleaned_first_line = first_line
+            for artifact in ['</OUTPUT>', '</output>', '<|END|>', '<|end|>', '<|ASSISTANT|>', '<|assistant|>', '|user|']:
+                cleaned_first_line = cleaned_first_line.replace(artifact, '').strip()
+            
+            if cleaned_first_line in valid_buttons:
+                actions = [cleaned_first_line]
+            elif first_line in valid_buttons:
+                actions = [first_line]
+            # PRIORITY 1.5: Handle "A (explanation)" format by extracting just the button
+            elif '(' in first_line:
+                # Extract button before parentheses: "A (to attack)" -> "A"
+                button_part = first_line.split('(')[0].strip().upper()
+                if button_part in valid_buttons:
+                    actions = [button_part]
         
         # PRIORITY 2: Try direct parsing (exact match)
         elif ',' in response_str:

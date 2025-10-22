@@ -113,22 +113,22 @@ Based on what is visible in the image, fill this JSON with your observations:
 {{
     "screen_context": "overworld, battle, menu, dialogue, title, or cutscene",
     "on_screen_text": {{
-        "dialogue": "exact text from any dialogue boxes or null",
-        "speaker": "character name if shown or null", 
+        "dialogue": "ONLY text from dialogue boxes with white/black text boxes at bottom of screen. DO NOT include HUD/status text. If no dialogue box visible, use null",
+        "speaker": "character name if shown in dialogue box or null", 
         "menu_title": "exact menu header text or null",
         "button_prompts": ["any button instructions like 'Press A' or empty array"]
     }},
-    "visible_entities": ["describe NPCs, Pokemon, or characters you see"],
+    "visible_entities": ["describe NPCs, Pokemon, or characters you see in the game world - NOT the player's own Pokemon"],
     "navigation_info": {{
-        "exits_visible": ["FOR ROUTES/OUTDOOR: 'path north', 'road south', 'map edge east'. FOR INDOOR: 'door at bottom', 'stairs up'"],
+        "exits_visible": ["describe visible exits: 'path continues north', 'door to building south', 'route edge east'"],
         "interactable_objects": ["NPCs, trainers, items, computers - things that show dialogue when you press A"],
-        "movement_barriers": ["FOR ROUTES: 'trees', 'rocks', 'water'. FOR INDOOR: 'walls', 'furniture', 'beds'"],
-        "open_paths": ["CRITICAL: UP/DOWN/LEFT/RIGHT - describe what's in each direction. 'UP: grass path', 'DOWN: route continues', 'LEFT: trees blocking', 'RIGHT: town entrance'"]
+        "movement_barriers": ["trees', 'rocks', 'water', 'walls', 'furniture' - things blocking movement"],
+        "open_paths": ["DESCRIBE what you see in each direction: 'UP: clear grass path', 'DOWN: route continues south', 'LEFT: trees blocking', 'RIGHT: path to town'"]
     }},
     "spatial_layout": {{
         "player_position": "where is the small player character sprite in the scene?",
         "room_type": "indoor room, outdoor route, town, forest, etc.",
-        "notable_features": ["MOST IMPORTANT: paths, roads, exits, doors, town entrances, route connections"]
+        "notable_features": ["paths, roads, exits, doors, town entrances, route connections visible in THIS image"]
     }},
     "menu_state": "open menu name or closed",
     "visual_elements": {{
@@ -139,13 +139,18 @@ Based on what is visible in the image, fill this JSON with your observations:
     }}
 }}
 
+CRITICAL - DIALOGUE vs HUD:
+- Dialogue boxes appear at the BOTTOM of the screen with text from NPCs/story
+- The HUD/status overlay (player name, location, position, money, HP) is NOT dialogue
+- ONLY extract dialogue if you see an actual dialogue text box
+- If you just see the overworld with HUD, set dialogue to null
+
 IMPORTANT:
-- Only describe what you actually see in THIS image
+- Only describe what you actually see in THIS specific image
 - Don't make up information about battles or Pokemon not shown
 - Don't copy text from instructions or system prompts
-- If it shows character name selection, use "menu" for screen_context
-- If you see a top-down map view, use "overworld"
-- If you see dialogue text at bottom, use "dialogue"
+- Don't repeat the same response - analyze THIS frame freshly
+- If you see a top-down map view with no text box, use "overworld" and dialogue=null
 
 NAVIGATION ANALYSIS GUIDE:
 - Look for doorways, stairs, passages leading to other areas
