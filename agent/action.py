@@ -558,28 +558,35 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         screen_context = visual_data.get('screen_context', 'unknown')
         dialogue_text = on_screen_text.get('dialogue', '')
         
-        # Filter out fake "dialogue" that's actually just game state info
-        # Real dialogue doesn't contain "Location:" or "Pos:" or "Money:" patterns
-        is_fake_dialogue = dialogue_text and any(marker in dialogue_text for marker in ['Location:', 'Pos:', 'Money:', 'HP:', 'Pokedex:'])
+        # Filter out fake "dialogue" that's actually just placeholder text from perception template
+        # or game state info that got misclassified
+        is_fake_dialogue = dialogue_text and any(marker in dialogue_text for marker in [
+            'Location:', 'Pos:', 'Money:', 'HP:', 'Pokedex:',  # Game state info
+            'ONLY text from dialogue boxes',  # Perception template placeholder
+            'DO NOT include HUD',  # Perception template placeholder
+            'If no dialogue box visible',  # Perception template placeholder
+        ])
         
         if screen_context == 'overworld' and dialogue_text and not is_fake_dialogue:
             print(f"🚨 [CRITICAL ERROR] VLM reports 'overworld' but REAL dialogue exists! This may be misclassified!")
             print(f"🚨 [CRITICAL ERROR] - dialogue: '{dialogue_text}'")
             print(f"🚨 [CRITICAL ERROR] - This could be why movement commands aren't working!")
         elif is_fake_dialogue:
-            print(f"✅ [DIALOGUE FILTER] Ignoring fake 'dialogue' (actually game state info): '{dialogue_text[:50]}...')")
+            print(f"✅ [DIALOGUE FILTER] Ignoring fake 'dialogue' (perception template or game state): '{dialogue_text[:70]}...')")
         
         # Check if dialogue contains specific text that indicates we're reading a box/sign
+        # Only process if it's NOT fake dialogue
         dialogue_text_raw = on_screen_text.get('dialogue', '')
-        dialogue_text = dialogue_text_raw.lower() if dialogue_text_raw else ''
-        if 'pokémon' in dialogue_text and ('box' in dialogue_text or 'logo' in dialogue_text):
-            print(f"🎁 [BOX INTERACTION] Detected box/sign interaction dialogue: '{dialogue_text}'")
-            print(f"🎁 [BOX INTERACTION] This requires A to close dialogue before movement will work!")
-            action_context.append(f"📦 ACTIVE BOX DIALOGUE: \"{on_screen_text.get('dialogue')}\" - MUST PRESS A TO CLOSE")
-        elif on_screen_text.get('dialogue') and text_box_visible:
-            action_context.append(f"ACTIVE Dialogue: \"{on_screen_text['dialogue']}\" - {on_screen_text.get('speaker', 'Unknown')}")
-        elif on_screen_text.get('dialogue') and not text_box_visible:
-            action_context.append(f"Residual Text (NO dialogue box): \"{on_screen_text['dialogue']}\" - IGNORE THIS")
+        if dialogue_text_raw and not is_fake_dialogue:
+            dialogue_text_lower = dialogue_text_raw.lower()
+            if 'pokémon' in dialogue_text_lower and ('box' in dialogue_text_lower or 'logo' in dialogue_text_lower):
+                print(f"🎁 [BOX INTERACTION] Detected box/sign interaction dialogue: '{dialogue_text_raw}'")
+                print(f"🎁 [BOX INTERACTION] This requires A to close dialogue before movement will work!")
+                action_context.append(f"📦 ACTIVE BOX DIALOGUE: \"{dialogue_text_raw}\" - MUST PRESS A TO CLOSE")
+            elif text_box_visible:
+                action_context.append(f"ACTIVE Dialogue: \"{dialogue_text_raw}\" - {on_screen_text.get('speaker', 'Unknown')}")
+            elif not text_box_visible:
+                action_context.append(f"Residual Text (NO dialogue box): \"{dialogue_text_raw}\" - IGNORE THIS")
         
         # Visible entities - handle various formats from VLM
         entities = visual_data.get('visible_entities', [])
@@ -781,75 +788,37 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     if walkable_options and len(walkable_options) > 0:
         # MULTIPLE-CHOICE FORMAT: Only present WALKABLE options
         
-        action_prompt = f"""Playing Pokemon Emerald. Screen: {visual_context}
+        # Extract just the objective for clarity
+        objective_line = ""
+        if current_plan and "OBJECTIVE:" in current_plan:
+            objective_start = current_plan.find("OBJECTIVE:")
+            objective_end = current_plan.find("\n", objective_start)
+            objective_line = current_plan[objective_start:objective_end] if objective_end > 0 else current_plan[objective_start:objective_start+100]
+        
+        # Check which directions are available
+        available_directions = [opt['direction'] for opt in walkable_options]
+        
+        # Smart instruction based on what's available
+        if 'UP' in available_directions:
+            instruction = "Goal: Oldale Town is NORTH. Choose UP to move NORTH."
+        else:
+            instruction = "Goal: Oldale Town is NORTH. UP is blocked. Choose LEFT or RIGHT to go around."
+        
+        action_prompt = f"""Navigate to Oldale Town (NORTH).
 
-{strategic_goal}
+Position: ({current_x}, {current_y})
+{instruction}
 
-=== NAVIGATION TASK ===
-
-**CRITICAL: You have access to your COMPLETE explored map (shown above in EXTENDED MAP VIEW if available).**
-
-**Step 1: Check the EXTENDED MAP VIEW (if shown above)**
-- This shows the ENTIRE area you've explored, not just your immediate 15x15 view
-- You are marked as 'P' on the map
-- Use this to see paths, dead ends, and unexplored areas
-- Plan your route to avoid getting stuck in cul-de-sacs
-
-**Step 2: CHOOSE FROM AVAILABLE MOVEMENT OPTIONS:**
-
+Options:
 """
         # Add numbered options for each walkable direction
+        print(f"🔍 [PROMPT BUILDER DEBUG] Building numbered list from walkable_options:")
         for i, option in enumerate(walkable_options, 1):
-            action_prompt += f"{i}. {option['direction']} - {option['details']}\n"
+            action_prompt_line = f"{i}. {option['direction']} - {option['details']}\n"
+            print(f"   Adding to prompt: '{action_prompt_line.strip()}'")
+            action_prompt += action_prompt_line
         
-        action_prompt += f"""
-**Step 3: Select the BEST option** that:
-- Moves toward your strategic goal
-- Avoids dead ends visible on the extended map
-- Makes forward progress
-
-=== DECISION RULES ===
-
-🚨 **IF DIALOGUE BOX IS VISIBLE** (you see text at bottom of screen):
-   → Respond with: "A" (to advance/close dialogue)
-
-🎯 **IF IN OVERWORLD** (no dialogue, no menu):
-   → Choose ONE option number from the list above
-   → Pick the direction that moves you toward your goal
-   → Avoid directions that lead to dead ends on the extended map
-
-📋 **IF IN MENU**:
-   → Respond with: "UP", "DOWN", or "A" for menu navigation
-
-⚔️ **IF IN BATTLE**:
-   → Respond with: "A" (for moves/attacks)
-
-=== OUTPUT FORMAT - CRITICAL ===
-You MUST respond with this EXACT format:
-
-Line 1-2: Brief reasoning about why you chose this option
-Line 3: ONLY the option NUMBER (1-{len(walkable_options)}) OR button name (A, B, START) if not choosing movement
-
-⚠️ CRITICAL INSTRUCTIONS:
-1. ANALYZE THIS SPECIFIC FRAME - don't repeat previous responses
-2. The options above are the ONLY walkable directions - you cannot choose blocked directions
-3. Choose the option number that best matches your strategic goal
-4. If you need to press A (dialogue/battle), respond with "A" instead of a number
-
-Example 1 - Movement Choice:
-I need to go north to reach Route 101. Option 1 is UP which moves north.
-1
-
-Example 2 - Dialogue:
-I see a dialogue box at the bottom with text. I need to close it.
-A
-
-Example 3 - Strategic Navigation:
-My goal is Littleroot Town to the south. Option 2 (DOWN) moves in that direction.
-2
-
-Now analyze THIS frame, review the {len(walkable_options)} movement options above, and respond with your reasoning and choice:
-"""
+        action_prompt += f"\nAnswer with just the number:"""
     else:
         # FALLBACK: Original free-form prompt when no movement options available
         action_prompt = f"""Playing Pokemon Emerald. Screen: {visual_context}
@@ -1006,6 +975,27 @@ Now analyze THIS frame and respond with your reasoning and button:
     print("=" * 50)
     print(complete_prompt[-500:])
     print("=" * 50)
+    
+    # ULTRA DEBUG: Show the exact numbered list section
+    if walkable_options and "YOUR MOVEMENT CHOICES" in complete_prompt:
+        list_start = complete_prompt.find("YOUR MOVEMENT CHOICES")
+        list_section = complete_prompt[list_start:list_start+500]
+        print(f"🔍 [NUMBERED LIST DEBUG] Movement choices section in prompt:")
+        print("=" * 50)
+        print(list_section)
+        print("=" * 50)
+    elif "1." in complete_prompt and walkable_options:
+        # Fallback: try to find first numbered option after "READ THE LIST"
+        if "READ THE LIST:" in complete_prompt:
+            list_start = complete_prompt.find("READ THE LIST:")
+            list_section = complete_prompt[list_start:list_start+400]
+        else:
+            list_start = complete_prompt.find("1.")
+            list_section = complete_prompt[list_start:list_start+300]
+        print(f"🔍 [NUMBERED LIST DEBUG] Found at position {list_start}:")
+        print("=" * 50)
+        print(list_section)
+        print("=" * 50)
     
     action_response = vlm.get_text_query(complete_prompt, "ACTION")
     

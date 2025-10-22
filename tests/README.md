@@ -1,6 +1,22 @@
 # Pokemon Emerald Emulator Tests
 
-This directory contains tests for the Pokemon Emerald emulator FPS adjustment system.
+This directory contains tests for the Pokemon Emerald agent and emulator systems.
+
+## Test Categories
+
+### VLM Multiple-Choice Tests
+**Purpose**: Validate that the VLM can correctly choose from numbered options
+
+- `test_vlm_multiple_choice_isolation.py` - Progressive complexity test to isolate VLM capabilities
+  - Tests if VLM can pick numbers, match words, find directions, handle coordinates
+  - Useful for debugging when agent oscillates or makes wrong choices
+  - Run this first if you suspect the VLM model is too weak
+
+- `test_vlm_consistency.py` - Tests if VLM gives consistent responses when called repeatedly
+  - Helps identify if there's state bleeding between calls
+  - Useful for debugging degrading performance over time
+
+### FPS Adjustment Tests
 
 ## Directory Structure
 
@@ -12,6 +28,8 @@ tests/
 │   ├── dialog2.state         # Dialog state 2 (120 FPS - currently failing)
 │   ├── after_dialog.state    # After dialog state (30 FPS)
 │   └── torchic.state         # Additional test state
+├── test_vlm_multiple_choice_isolation.py  # VLM choice debugging
+├── test_vlm_consistency.py   # VLM consistency testing
 ├── test_fps_adjustment_pytest.py  # Main FPS adjustment tests
 ├── run_tests.py              # Test runner script
 └── README.md                 # This file
@@ -41,6 +59,15 @@ tests/
 - **Purpose**: Verify FPS reverts to normal after dialog timeout
 
 ## Running Tests
+
+### VLM Tests
+```bash
+# Test VLM multiple-choice capabilities (doesn't run the full agent)
+python tests/test_vlm_multiple_choice_isolation.py
+
+# Test VLM consistency
+python tests/test_vlm_consistency.py
+```
 
 ### Using pytest (Recommended)
 ```bash
