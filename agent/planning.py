@@ -97,41 +97,122 @@ def planning_step(memory_context, current_plan, slow_thinking_needed, state_data
         current_obj = objectives_summary['current_objective']
         logger.info(f"[PLANNING] Current objective: {current_obj['description']} (milestone: {current_obj['milestone_id']})")
     
-    # Use strategic plan if available, otherwise fallback to programmatic planning
-    if strategic_plan:
+    # SMART VLM TRIGGER: Only call VLM when strategic objective changes
+    # Track the last objective we planned for
+    if not hasattr(planning_step, 'last_objective_id'):
+        planning_step.last_objective_id = None
+        planning_step.last_detailed_plan = None
+    
+    current_objective = obj_manager.get_current_strategic_objective(state_data)
+    current_objective_id = current_objective.id if current_objective else None
+    
+    # Check if we need to generate a new detailed plan
+    objective_changed = (current_objective_id != planning_step.last_objective_id)
+    needs_new_plan = objective_changed or (planning_step.last_detailed_plan is None)
+    
+    if needs_new_plan and current_objective:
+        logger.info(f"[PLANNING] 🧠 SMART VLM TRIGGER ACTIVATED: Objective changed from '{planning_step.last_objective_id}' to '{current_objective_id}'")
+        logger.info(f"[PLANNING] Calling VLM to generate detailed plan for: {current_objective.description}")
+        
+        # Generate detailed plan using VLM
+        try:
+            state_context = format_state_for_llm(state_data)
+            
+            planning_prompt = f"""You are an AI agent playing Pokemon Emerald. You need to create a detailed, step-by-step plan to achieve your current objective.
+
+CURRENT OBJECTIVE: {current_objective.description}
+Objective Type: {current_objective.objective_type}
+Target: {current_objective.target_value}
+
+CURRENT GAME STATE:
+{state_context}
+
+MEMORY CONTEXT:
+{memory_context}
+
+Create a detailed, actionable plan with specific steps to achieve this objective. Your plan should:
+
+1. Break down the objective into 3-5 concrete steps
+2. Include specific navigation directions (e.g., "Go north to Route 101", "Enter the building on the left")
+3. Mention key interactions needed (e.g., "Talk to Professor Birch", "Press A to select starter")
+4. Account for obstacles or requirements (e.g., "Navigate through tall grass carefully")
+5. Be written as clear instructions the agent can follow
+
+Focus on efficiency and clarity. The agent will use this plan to guide its moment-to-moment decisions.
+
+Example format:
+"Step 1: Exit your house by going DOWN to the door and pressing A.
+Step 2: Navigate south through Littleroot Town toward Route 101.
+Step 3: Continue north on Route 101 until you encounter Professor Birch.
+Step 4: Press A to interact with Birch and trigger the starter selection event.
+Step 5: Choose your starter Pokemon using the menu."
+
+Now create your detailed plan:"""
+
+            detailed_plan = vlm.get_text_query(system_prompt + planning_prompt, "PLANNING-DETAILED")
+            
+            if detailed_plan and len(detailed_plan.strip()) > 20:
+                # VLM successfully generated a plan
+                planning_step.last_detailed_plan = detailed_plan
+                planning_step.last_objective_id = current_objective_id
+                current_plan = f"OBJECTIVE: {current_objective.description}\n\nDETAILED PLAN:\n{detailed_plan}"
+                logger.info(f"[PLANNING] ✅ VLM generated detailed plan ({len(detailed_plan)} chars)")
+                logger.info(f"[PLANNING] Plan preview: {detailed_plan[:200]}...")
+            else:
+                # VLM failed or returned empty plan - use strategic goal as fallback
+                logger.warning("[PLANNING] ⚠️ VLM plan generation failed or empty, using strategic goal")
+                current_plan = strategic_plan if strategic_plan else generate_fallback_plan(state_data, current_objective)
+                
+        except Exception as e:
+            logger.error(f"[PLANNING] ❌ VLM planning failed with error: {e}")
+            logger.info("[PLANNING] Falling back to strategic goal")
+            current_plan = strategic_plan if strategic_plan else generate_fallback_plan(state_data, current_objective)
+    
+    elif planning_step.last_detailed_plan:
+        # Use cached detailed plan for current objective
+        logger.info(f"[PLANNING] 📋 Using cached detailed plan for objective '{current_objective_id}'")
+        current_plan = f"OBJECTIVE: {current_objective.description}\n\nDETAILED PLAN:\n{planning_step.last_detailed_plan}"
+    
+    elif strategic_plan:
+        # No detailed plan available, use strategic goal
+        logger.info(f"[PLANNING] Using strategic milestone-driven goal (no detailed plan yet)")
         current_plan = strategic_plan
-        logger.info(f"[PLANNING] Using strategic milestone-driven plan")
+    
     else:
-        # Fallback to existing programmatic planning logic
-        current_location = player_data.get('location', 'Unknown')
-        game_state = game_data.get('state', 'unknown')
-        in_battle = game_data.get('in_battle', False)
+        # Final fallback to programmatic planning
+        logger.info("[PLANNING] No objective available, using programmatic fallback")
+        current_plan = generate_fallback_plan(state_data, None)
     
-        # Fallback programmatic planning (existing logic preserved)
-        if game_state == 'title':
-            current_plan = "Navigate through title screen and character creation to start the game."
-            logger.info("[PLANNING] Title screen fallback plan generated")
-        elif in_battle:
-            current_plan = "Focus on battle: attack with effective moves, heal if HP is low, switch Pokemon if needed."
-            logger.info("[PLANNING] Battle fallback plan generated")
-        elif 'POKEMON_CENTER' in current_location.upper():
-            current_plan = "Heal Pokemon at the Pokemon Center, then continue adventure."
-            logger.info("[PLANNING] Pokemon Center fallback plan generated")
-        elif current_location == 'Unknown' or not current_location:
-            current_plan = "Explore the current area, interact with NPCs, and progress the story."
-            logger.info("[PLANNING] Exploration fallback plan generated")
-        else:
-            # General overworld plan
-            current_plan = f"Navigate {current_location} efficiently. Talk to NPCs for story progression, battle trainers for experience, and head toward the next major objective."
-            logger.info(f"[PLANNING] Overworld fallback plan generated for {current_location}")
-    
-    # Add tactical context to any plan (strategic or fallback)
+    # Add tactical context to any plan
     tactical_context = get_tactical_context(state_data)
     if tactical_context:
-        current_plan = f"{current_plan} {tactical_context}"
+        current_plan = f"{current_plan}\n\nTACTICAL NOTES: {tactical_context}"
     
-    logger.info(f"[PLANNING] Final enhanced plan: {current_plan}")
+    logger.info(f"[PLANNING] Final enhanced plan: {current_plan[:300]}..." if len(current_plan) > 300 else f"[PLANNING] Final enhanced plan: {current_plan}")
     return current_plan
+
+
+def generate_fallback_plan(state_data, current_objective=None):
+    """Generate a simple fallback plan when VLM is unavailable"""
+    game_data = state_data.get('game', {})
+    player_data = state_data.get('player', {})
+    current_location = player_data.get('location', 'Unknown')
+    game_state = game_data.get('state', 'unknown')
+    in_battle = game_data.get('in_battle', False)
+    
+    if current_objective:
+        # Use objective info to create a basic plan
+        return f"Work toward: {current_objective.description}. Navigate carefully and interact with NPCs for guidance."
+    elif game_state == 'title':
+        return "Navigate through title screen and character creation to start the game."
+    elif in_battle:
+        return "Focus on battle: attack with effective moves, heal if HP is low, switch Pokemon if needed."
+    elif 'POKEMON_CENTER' in current_location.upper():
+        return "Heal Pokemon at the Pokemon Center, then continue adventure."
+    elif current_location == 'Unknown' or not current_location:
+        return "Explore the current area, interact with NPCs, and progress the story."
+    else:
+        return f"Navigate {current_location} efficiently. Talk to NPCs for story progression, battle trainers for experience, and head toward the next major objective."
 
 
 def get_tactical_context(state_data):
