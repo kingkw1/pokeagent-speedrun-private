@@ -184,16 +184,23 @@ class ObjectiveManager:
         
         # Get milestones from the game state (if available)
         milestones = state_data.get("milestones", {})
+        
         if not milestones:
             # No milestone data available, skip checking
             logger.debug("No milestone data available in state_data")
+            logger.debug(f"State data keys: {list(state_data.keys())}")
             return completed_ids
+        
+        logger.debug(f"Checking {len(milestones)} milestones: {list(milestones.keys())}")
             
         for obj in self.get_active_objectives():
             # Only check storyline objectives with milestone IDs
             if obj.storyline and obj.milestone_id and not obj.completed:
                 # Check if the corresponding emulator milestone is completed
-                milestone_completed = milestones.get(obj.milestone_id, {}).get("completed", False)
+                milestone_data = milestones.get(obj.milestone_id, {})
+                milestone_completed = milestone_data.get("completed", False) if isinstance(milestone_data, dict) else False
+                
+                logger.debug(f"Objective '{obj.id}' checking milestone '{obj.milestone_id}': {milestone_data}")
                 
                 if milestone_completed:
                     # Auto-complete the storyline objective
@@ -201,7 +208,7 @@ class ObjectiveManager:
                     obj.completed_at = datetime.now()
                     obj.progress_notes = f"Auto-completed by emulator milestone: {obj.milestone_id}"
                     completed_ids.append(obj.id)
-                    logger.info(f"Auto-completed storyline objective via milestone {obj.milestone_id}: {obj.description}")
+                    logger.info(f"✅ Auto-completed storyline objective via milestone {obj.milestone_id}: {obj.description}")
         
         return completed_ids
     

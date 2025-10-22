@@ -85,6 +85,15 @@ def planning_step(memory_context, current_plan, slow_thinking_needed, state_data
     if not hasattr(planning_step, 'objective_manager'):
         planning_step.objective_manager = ObjectiveManager()
         logger.info("[PLANNING] Initialized ObjectiveManager for strategic planning")
+        
+        # CRITICAL FIX: Check milestones immediately on first initialization
+        # This ensures we don't tell the agent to "go to Route 101" when already there!
+        logger.info("[PLANNING] Performing initial milestone check from save state...")
+        completed_on_init = planning_step.objective_manager.check_storyline_milestones(state_data)
+        if completed_on_init:
+            logger.info(f"[PLANNING] ✅ Auto-completed {len(completed_on_init)} objectives from save state milestones: {completed_on_init}")
+        else:
+            logger.info("[PLANNING] No objectives completed from initial milestone check")
     
     # Get milestone-driven strategic context
     obj_manager = planning_step.objective_manager
@@ -210,7 +219,7 @@ def generate_fallback_plan(state_data, current_objective=None):
     elif 'POKEMON_CENTER' in current_location.upper():
         return "Heal Pokemon at the Pokemon Center, then continue adventure."
     elif current_location == 'Unknown' or not current_location:
-        return "Explore the current area, interact with NPCs, and progress the story."
+        return f"Explore the current area, interact with NPCs, and progress the story."
     else:
         return f"Navigate {current_location} efficiently. Talk to NPCs for story progression, battle trainers for experience, and head toward the next major objective."
 

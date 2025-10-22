@@ -150,6 +150,34 @@ class Agent:
                     should_replan = True
                     logger.info("[PLANNING] Re-plan needed: No current plan exists")
                 
+                # STUCK DETECTION: Track position history to detect oscillation
+                if not hasattr(self, 'position_history'):
+                    self.position_history = []
+                
+                player_position = state_data.get('player', {}).get('position', {})
+                current_position = (
+                    player_position.get('x', 0),
+                    player_position.get('y', 0),
+                    state_data.get('player', {}).get('location', 'Unknown')
+                )
+                
+                self.position_history.append(current_position)
+                
+                # Keep only last 8 positions
+                if len(self.position_history) > 8:
+                    self.position_history = self.position_history[-8:]
+                
+                # Detect oscillation: check if we're bouncing between same 2-3 positions
+                if len(self.position_history) >= 6:
+                    # Check if last 6 positions contain only 2 unique positions
+                    recent_positions = self.position_history[-6:]
+                    unique_positions = set(recent_positions)
+                    if len(unique_positions) <= 2:
+                        logger.warning(f"[STUCK DETECTION] Agent oscillating between positions: {unique_positions}")
+                        logger.warning(f"[STUCK DETECTION] This may indicate outdated objectives or navigation issues")
+                        # Reset position history to avoid spam
+                        self.position_history = [current_position]
+                
                 # Check if location has changed from previous iteration
                 current_location = state_data.get('player', {}).get('location', 'Unknown')
                 previous_location = self.context.get('previous_location', None)

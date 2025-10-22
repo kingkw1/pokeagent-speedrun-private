@@ -780,6 +780,7 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     # Build action prompt with multiple-choice format if we have walkable options
     if walkable_options and len(walkable_options) > 0:
         # MULTIPLE-CHOICE FORMAT: Only present WALKABLE options
+        
         action_prompt = f"""Playing Pokemon Emerald. Screen: {visual_context}
 
 {strategic_goal}
