@@ -818,7 +818,8 @@ Options:
             print(f"   Adding to prompt: '{action_prompt_line.strip()}'")
             action_prompt += action_prompt_line
         
-        action_prompt += f"\nAnswer with just the number:"""
+        action_prompt += f"""
+Answer with just the number (1-{len(walkable_options)})."""
     else:
         # FALLBACK: Original free-form prompt when no movement options available
         action_prompt = f"""Playing Pokemon Emerald. Screen: {visual_context}
