@@ -786,7 +786,50 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     
     # Build action prompt with multiple-choice format if we have walkable options
     if walkable_options and len(walkable_options) > 0:
-        # MULTIPLE-CHOICE FORMAT: Only present WALKABLE options
+        # MULTIPLE-CHOICE FORMAT: Present WALKABLE options + INTERACT option if needed
+        
+        # Check if there are nearby NPCs or interactable objects
+        has_interactables = False
+        interactable_description = ""
+        
+        if isinstance(latest_observation, dict) and 'visual_data' in latest_observation:
+            visual_data = latest_observation['visual_data']
+            
+            # Check for visible entities (NPCs, Pokemon)
+            entities = visual_data.get('visible_entities', [])
+            if entities and any(e for e in entities if e and e not in ['none', 'null', '']):
+                has_interactables = True
+                entity_list = []
+                if isinstance(entities, list):
+                    for e in entities:
+                        if e and e not in ['none', 'null', '']:
+                            if isinstance(e, dict):
+                                entity_list.append(e.get('name', 'NPC'))
+                            else:
+                                entity_list.append(str(e))
+                interactable_description = f"NPCs: {', '.join(entity_list[:3])}" if entity_list else ""
+            
+            # Check for interactable objects
+            nav_info = visual_data.get('navigation_info', {})
+            interactables = nav_info.get('interactable_objects', [])
+            if interactables and any(obj for obj in interactables if obj and obj not in ['none', 'null', '']):
+                has_interactables = True
+                obj_list = [str(o) for o in interactables if o and o not in ['none', 'null', '']]
+                if interactable_description:
+                    interactable_description += f", Objects: {', '.join(obj_list[:3])}"
+                else:
+                    interactable_description = f"Objects: {', '.join(obj_list[:3])}"
+        
+        # Build the combined options list: movement + interact
+        all_options = walkable_options.copy()
+        
+        if has_interactables:
+            all_options.append({
+                'direction': 'INTERACT',
+                'details': f'Press A to interact ({interactable_description})',
+                'is_interact': True
+            })
+            print(f"🎯 [INTERACT MODE] Added INTERACT option - {interactable_description}")
         
         # Extract just the objective for clarity
         objective_line = ""
@@ -811,15 +854,18 @@ Position: ({current_x}, {current_y})
 
 Options:
 """
-        # Add numbered options for each walkable direction
-        print(f"🔍 [PROMPT BUILDER DEBUG] Building numbered list from walkable_options:")
-        for i, option in enumerate(walkable_options, 1):
+        # Add numbered options for all options (movement + interact)
+        print(f"🔍 [PROMPT BUILDER DEBUG] Building numbered list from {len(all_options)} options:")
+        for i, option in enumerate(all_options, 1):
             action_prompt_line = f"{i}. {option['direction']} - {option['details']}\n"
             print(f"   Adding to prompt: '{action_prompt_line.strip()}'")
             action_prompt += action_prompt_line
         
         action_prompt += f"""
-Answer with just the number (1-{len(walkable_options)})."""
+Answer with just the number (1-{len(all_options)})."""
+        
+        # Store all_options for parsing later
+        walkable_options = all_options
     else:
         # FALLBACK: Original free-form prompt when no movement options available
         action_prompt = f"""Playing Pokemon Emerald. Screen: {visual_context}
@@ -1077,7 +1123,13 @@ Now analyze THIS frame and respond with your reasoning and button:
                     selected_direction = selected_option['direction']
                     print(f"✅ [MULTIPLE-CHOICE] Option {choice_num} maps to: {selected_direction}")
                     print(f"   Details: {selected_option['details']}")
-                    actions = [selected_direction]
+                    
+                    # Handle INTERACT option - convert to A button press
+                    if selected_direction == 'INTERACT':
+                        actions = ['A']
+                        print(f"🎯 [INTERACT] Converting INTERACT to A button press")
+                    else:
+                        actions = [selected_direction]
                 else:
                     print(f"❌ [INVALID CHOICE] Option {choice_num} out of range (1-{len(walkable_options)})")
                     # Fallback to first option
