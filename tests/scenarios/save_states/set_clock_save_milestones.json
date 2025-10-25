@@ -1,0 +1,68 @@
+{
+  "milestones": {
+    "GAME_RUNNING": {
+      "completed": true,
+      "timestamp": 1757886482.900101,
+      "first_completed": 1757886482.900101
+    },
+    "HAS_PARTY": {
+      "completed": true,
+      "timestamp": 1757886482.9002628,
+      "first_completed": 1757886482.9002628
+    },
+    "STARTER_CHOSEN": {
+      "completed": true,
+      "timestamp": 1757886482.9003856,
+      "first_completed": 1757886482.9003856
+    },
+    "EARNED_1000_POKEDOLLARS": {
+      "completed": true,
+      "timestamp": 1757886482.9012508,
+      "first_completed": 1757886482.9012508
+    },
+    "LITTLEROOT_TOWN": {
+      "completed": true,
+      "timestamp": 1757465677.6881778,
+      "first_completed": 1757465677.6881778
+    },
+    "ROUTE_101": {
+      "completed": true,
+      "timestamp": 1757465677.6881778,
+      "first_completed": 1757465677.6881778
+    },
+    "OLDALE_TOWN": {
+      "completed": true,
+      "timestamp": 1757465677.6881778,
+      "first_completed": 1757465677.6881778
+    },
+    "PLAYER_NAME_SET": {
+      "completed": true,
+      "timestamp": 1761319880.6971745,
+      "first_completed": 1761319880.6971745,
+      "split_time": 3433397.7970736027,
+      "split_formatted": "953:43:17",
+      "total_time": 3433397.7970736027,
+      "total_formatted": "953:43:17"
+    },
+    "INTRO_CUTSCENE_COMPLETE": {
+      "completed": true,
+      "timestamp": 1761352989.9900506,
+      "first_completed": 1761352989.9900506,
+      "split_time": 33109.29287600517,
+      "split_formatted": "09:11:49",
+      "total_time": 3466507.089949608,
+      "total_formatted": "962:55:07"
+    },
+    "PLAYER_HOUSE_ENTERED": {
+      "completed": true,
+      "timestamp": 1761358123.947566,
+      "first_completed": 1761358123.947566,
+      "split_time": 3892446.2593882084,
+      "split_formatted": "1081:14:06",
+      "total_time": 3471641.047465086,
+      "total_formatted": "964:20:41"
+    }
+  },
+  "last_updated": 1761358136.1773446,
+  "version": "1.0"
+}

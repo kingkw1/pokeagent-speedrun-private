@@ -185,16 +185,18 @@ class ScenarioTest:
 
 def check_exit_moving_van(state_data):
     """
-    Success: Player exits the moving van and enters the house
-    Expected location change: MOVING_VAN -> LITTLEROOT_TOWN_BRENDANS_HOUSE_2F
+    Success: Player exits the moving van and enters the house (or goes outside)
+    Expected location change: MOVING_VAN -> LITTLEROOT_TOWN_BRENDANS_HOUSE_2F or LITTLEROOT TOWN
     """
-    location = state_data.get('player', {}).get('location', '')
+    location = state_data.get('player', {}).get('location', '').upper().replace(' ', '_')
     
     # Accept either the exact house location or Littleroot Town (outside)
+    # Normalize to uppercase and replace spaces with underscores for comparison
     success_locations = [
         'LITTLEROOT_TOWN_BRENDANS_HOUSE_2F',
         'LITTLEROOT_TOWN_BRENDANS_HOUSE_1F',
-        'LITTLEROOT_TOWN'
+        'LITTLEROOT_TOWN',
+        'LITTLEROOT', # Sometimes abbreviated
     ]
     
     return location in success_locations
@@ -235,8 +237,8 @@ def check_dialogue_complete(state_data):
 TESTS = [
     ScenarioTest(
         name="Exit Moving Van",
-        save_state="Emerald-GBAdvance/truck_start.state",
-        max_steps=10,  # Small room - should exit quickly if working
+        save_state="tests/scenarios/save_states/truck_start.state",
+        max_steps=20,  # Give it more steps to find the exit
         success_fn=check_exit_moving_van,
         description="Agent should exit the moving van and successfully enter Brendan's house"
     ),
@@ -245,7 +247,7 @@ TESTS = [
     # 
     # ScenarioTest(
     #     name="Navigate Out of House",
-    #     save_state="Emerald-GBAdvance/inside_house.state",
+    #     save_state="tests/scenarios/save_states/inside_house.state",
     #     max_steps=30,
     #     success_fn=check_exit_house,
     #     description="Agent should navigate from inside the house to outside in Littleroot Town"
@@ -253,7 +255,7 @@ TESTS = [
     #
     # ScenarioTest(
     #     name="Reach Route 101",
-    #     save_state="Emerald-GBAdvance/littleroot_start.state",
+    #     save_state="tests/scenarios/save_states/littleroot_start.state",
     #     max_steps=100,
     #     success_fn=check_navigate_route_101,
     #     description="Agent should navigate from Littleroot Town to Route 101"

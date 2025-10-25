@@ -788,6 +788,33 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     if walkable_options and len(walkable_options) > 0:
         # MULTIPLE-CHOICE FORMAT: Present WALKABLE options + INTERACT option if needed
         
+        # ANTI-OSCILLATION: Track recent positions to detect bouncing between 2-3 tiles
+        if not hasattr(action_step, 'position_history'):
+            action_step.position_history = []
+        
+        # Add current position to history (keep last 10)
+        current_pos_tuple = (current_x, current_y)
+        action_step.position_history.append(current_pos_tuple)
+        if len(action_step.position_history) > 10:
+            action_step.position_history.pop(0)
+        
+        # Check if oscillating between 2-3 positions
+        oscillation_warning = ""
+        if len(action_step.position_history) >= 6:
+            recent_positions = action_step.position_history[-6:]
+            unique_positions = set(recent_positions)
+            
+            if len(unique_positions) <= 2:
+                # Agent is bouncing between 1-2 positions - definitely stuck!
+                oscillation_warning = "⚠️ WARNING: You've been oscillating between the same positions! TRY A DIFFERENT DIRECTION you haven't tried recently."
+                print(f"🔄 [OSCILLATION DETECTED] Agent bouncing between {unique_positions} in last 6 steps!")
+            elif len(unique_positions) == 3 and len(recent_positions) >= 8:
+                # Check last 8 steps
+                recent_8 = action_step.position_history[-8:] if len(action_step.position_history) >= 8 else action_step.position_history
+                if len(set(recent_8)) <= 3:
+                    oscillation_warning = "⚠️ You're moving in a small loop. Explore in a NEW direction to find the exit."
+                    print(f"🔄 [SMALL LOOP] Agent stuck in small area: {set(recent_8)}")
+        
         # Check if there are nearby NPCs or interactable objects
         has_interactables = False
         interactable_description = ""
@@ -841,16 +868,39 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         # Check which directions are available
         available_directions = [opt['direction'] for opt in walkable_options]
         
-        # Smart instruction based on what's available
-        if 'UP' in available_directions:
-            instruction = "Goal: Oldale Town is NORTH. Choose UP to move NORTH."
-        else:
-            instruction = "Goal: Oldale Town is NORTH. UP is blocked. Choose LEFT or RIGHT to go around."
+        # Context-aware goal based on location
+        location = state_data.get('player', {}).get('location', '')
         
-        action_prompt = f"""Navigate to Oldale Town (NORTH).
+        if 'MOVING_VAN' in location.upper():
+            # In the moving van - goal is to find and exit through the door
+            goal = "Exit the moving van through the door"
+            if 'RIGHT' in available_directions:
+                instruction = "The door is to the RIGHT (EAST). Choose RIGHT to exit the van."
+            elif 'LEFT' in available_directions or 'UP' in available_directions or 'DOWN' in available_directions:
+                instruction = "Explore the van to find the door. Try different directions."
+            else:
+                instruction = "No clear path. Try moving to find the exit."
+        elif 'HOUSE' in location.upper() or 'ROOM' in location.upper():
+            # Inside a building - look for stairs or doors
+            goal = "Exit the building"
+            if 'DOWN' in available_directions:
+                instruction = "Stairs/exit might be DOWN. Try DOWN to exit."
+            else:
+                instruction = "Look for stairs or a door to exit. Explore the room."
+        else:
+            # Overworld - default to heading north toward Oldale Town
+            goal = "Navigate to Oldale Town (NORTH)"
+            if 'UP' in available_directions:
+                instruction = "Oldale Town is NORTH. Choose UP to move NORTH."
+            else:
+                instruction = "Oldale Town is NORTH. UP is blocked. Choose LEFT or RIGHT to go around."
+        
+        action_prompt = f"""{goal}
 
 Position: ({current_x}, {current_y})
 {instruction}
+
+{oscillation_warning}
 
 Options:
 """
