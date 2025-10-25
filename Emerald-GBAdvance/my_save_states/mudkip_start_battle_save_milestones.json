@@ -1,0 +1,93 @@
+{
+  "milestones": {
+    "GAME_RUNNING": {
+      "completed": true,
+      "timestamp": 1757465454.618093,
+      "first_completed": 1757465454.618093
+    },
+    "EARNED_1000_POKEDOLLARS": {
+      "completed": true,
+      "timestamp": 1757465626.2623758,
+      "first_completed": 1757465626.2623758
+    },
+    "LITTLEROOT_TOWN": {
+      "completed": true,
+      "timestamp": 1757465677.6881778,
+      "first_completed": 1757465677.6881778
+    },
+    "PLAYER_NAME_SET": {
+      "completed": true,
+      "timestamp": 1761318351.6310108,
+      "first_completed": 1761318351.6310108,
+      "split_time": 3852897.012917757,
+      "split_formatted": "1070:14:57",
+      "total_time": 3852897.012917757,
+      "total_formatted": "1070:14:57"
+    },
+    "PLAYER_HOUSE_ENTERED": {
+      "completed": true,
+      "timestamp": 1761318351.6312945,
+      "first_completed": 1761318351.6312945,
+      "split_time": 3852673.943116665,
+      "split_formatted": "1070:11:13",
+      "total_time": 3852897.013201475,
+      "total_formatted": "1070:14:57"
+    },
+    "INTRO_CUTSCENE_COMPLETE": {
+      "completed": true,
+      "timestamp": 1761318403.413216,
+      "first_completed": 1761318403.413216,
+      "split_time": 51.78220534324646,
+      "split_formatted": "00:00:51",
+      "total_time": 3852948.7951231003,
+      "total_formatted": "1070:15:48"
+    },
+    "PLAYER_BEDROOM": {
+      "completed": true,
+      "timestamp": 1761318425.5781424,
+      "first_completed": 1761318425.5781424,
+      "split_time": 73.94684791564941,
+      "split_formatted": "00:01:13",
+      "total_time": 3852970.960049391,
+      "total_formatted": "1070:16:10"
+    },
+    "RIVAL_HOUSE": {
+      "completed": true,
+      "timestamp": 1761319033.1219277,
+      "first_completed": 1761319033.1219277,
+      "split_time": 607.5437853336334,
+      "split_formatted": "00:10:07",
+      "total_time": 3853578.5038347244,
+      "total_formatted": "1070:26:18"
+    },
+    "RIVAL_BEDROOM": {
+      "completed": true,
+      "timestamp": 1761319043.8680503,
+      "first_completed": 1761319043.8680503,
+      "split_time": 10.746122598648071,
+      "split_formatted": "00:00:10",
+      "total_time": 3853589.249957323,
+      "total_formatted": "1070:26:29"
+    },
+    "STARTER_CHOSEN": {
+      "completed": true,
+      "timestamp": 1761319118.2702425,
+      "first_completed": 1761319118.2702425,
+      "split_time": 74.40219211578369,
+      "split_formatted": "00:01:14",
+      "total_time": 3853663.652149439,
+      "total_formatted": "1070:27:43"
+    },
+    "ROUTE_101": {
+      "completed": true,
+      "timestamp": 1761319123.4305408,
+      "first_completed": 1761319123.4305408,
+      "split_time": 79.56249046325684,
+      "split_formatted": "00:01:19",
+      "total_time": 3853668.8124477863,
+      "total_formatted": "1070:27:48"
+    }
+  },
+  "last_updated": 1761319130.3185966,
+  "version": "1.0"
+}
