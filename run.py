@@ -2,6 +2,9 @@
 """
 Main entry point for the Pokemon Agent.
 This is a streamlined version that focuses on multiprocess mode only.
+
+Example usage:
+    python run.py --agent-auto --load-state Emerald-GBAdvance/truck_start.state
 """
 
 import os

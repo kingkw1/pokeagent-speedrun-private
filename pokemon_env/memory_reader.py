@@ -2646,9 +2646,34 @@ class PokemonEmeraldReader:
         else:
             state["map"]["object_events"] = []
         
-        # Update map stitcher with current tiles
+        # Update map stitcher with current tiles - BUT ONLY IF PLAYER POSITION CHANGED
+        # This prevents the map from bloating when agent runs into walls repeatedly
         if tiles:
-            self._update_map_stitcher(tiles, state)
+            player_coords = self.read_coordinates()
+            if player_coords:
+                # Check if position changed since last update
+                if not hasattr(self, '_last_map_stitcher_pos'):
+                    self._last_map_stitcher_pos = None
+                
+                # Also track map ID to detect transitions
+                map_bank = self._read_u8(self.addresses.MAP_BANK)
+                map_number = self._read_u8(self.addresses.MAP_NUMBER)
+                current_map_id = (map_bank << 8) | map_number
+                
+                if not hasattr(self, '_last_map_stitcher_map'):
+                    self._last_map_stitcher_map = None
+                
+                # Update if position changed OR map changed
+                pos_changed = self._last_map_stitcher_pos != player_coords
+                map_changed = self._last_map_stitcher_map != current_map_id
+                
+                if pos_changed or map_changed:
+                    logger.info(f"🗺️ Map stitcher update triggered: pos_changed={pos_changed}, map_changed={map_changed}")
+                    self._update_map_stitcher(tiles, state)
+                    self._last_map_stitcher_pos = player_coords
+                    self._last_map_stitcher_map = current_map_id
+                else:
+                    logger.debug(f"⏭️ Skipping map stitcher update - player hasn't moved from {player_coords}")
         
         # Add stitched map information to state
         stitched_info = self.get_stitched_map_info()
