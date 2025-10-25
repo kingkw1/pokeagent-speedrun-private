@@ -1107,13 +1107,23 @@ def _format_game_state(game_data, state_data=None):
         dialog_text = game_data.get('dialog_text')
         dialogue_detected = game_data.get('dialogue_detected', {})
         
-        if dialog_text and dialogue_detected.get('has_dialogue', False):
-            # Only show dialogue if it's actually visible and active
-            context_parts.append(f"\n--- DIALOGUE ---")
-            if dialogue_detected.get('confidence') is not None:
-                context_parts.append(f"Detection confidence: {dialogue_detected['confidence']:.1%}")
-            context_parts.append(f"Text: {dialog_text}")
-            # Note: Residual/invisible dialogue text is completely hidden from agent
+        if dialog_text:
+            # Check if dialogue is actually visible
+            has_dialogue = dialogue_detected.get('has_dialogue', True)  # Default to True for backwards compatibility
+            
+            if has_dialogue:
+                # Dialogue is visible and active
+                context_parts.append(f"\n--- DIALOGUE ---")
+                if dialogue_detected.get('confidence') is not None:
+                    context_parts.append(f"Detection confidence: {dialogue_detected['confidence']:.1%}")
+                context_parts.append(f"Text: {dialog_text}")
+            elif dialogue_detected:  # We have detection info but it says dialogue is not visible
+                # Show residual text warning - this is memory from previous frame
+                context_parts.append(f"\n--- RESIDUAL TEXT (not visible) ---")
+                context_parts.append(f"Note: Dialog text exists in memory but dialogue box not visible on frame")
+                if dialogue_detected.get('confidence') is not None:
+                    context_parts.append(f"Detection confidence: {dialogue_detected['confidence']:.1%}")
+                context_parts.append(f"Residual text: {dialog_text}")
     
     # Check if we're in title sequence and override game state
     player_location = state_data.get('player', {}).get('location', '') if state_data else ''

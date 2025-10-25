@@ -13,13 +13,15 @@ class TestAgentDirectAPI:
     
     base_url = "http://localhost:8080"
     
+    @pytest.mark.skip(reason="Legacy Flask API architecture no longer used - agent refactored to be called directly")
     def test_imports_work(self):
         """Test that our imports are working"""
         import agent
         assert hasattr(agent, 'app')
         assert hasattr(agent, 'agent_mode')
         assert hasattr(agent, 'websocket_connections')
-        
+    
+    @pytest.mark.skip(reason="Legacy Flask API architecture no longer used - agent refactored to be called directly")
     def test_global_state_initialized(self):
         """Test that global state variables are properly initialized"""
         import agent
@@ -27,7 +29,8 @@ class TestAgentDirectAPI:
         assert agent.agent_auto_enabled == False  # Should start with auto disabled
         assert isinstance(agent.websocket_connections, set)
         assert len(agent.websocket_connections) == 0  # Should start empty
-        
+    
+    @pytest.mark.skip(reason="Legacy Flask API architecture no longer used - agent refactored to be called directly")
     def test_broadcast_function_exists(self):
         """Test that broadcast function exists and is callable"""
         import agent
