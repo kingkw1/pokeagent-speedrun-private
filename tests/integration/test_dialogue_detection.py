@@ -49,13 +49,13 @@ class TestDialogueDetection:
         self.agent_port = 8000
         assert self.detector is not None, "Could not create OCR detector"
         
-        # Kill any existing agent_direct processes
-        subprocess.run(["pkill", "-f", "agent_direct.py"], capture_output=True)
+        # Kill any existing server processes
+        subprocess.run(["pkill", "-f", "server.app"], capture_output=True)
         time.sleep(1)
     
     def teardown_method(self):
         """Cleanup after each test"""
-        subprocess.run(["pkill", "-f", "agent_direct.py"], capture_output=True)
+        subprocess.run(["pkill", "-f", "server.app"], capture_output=True)
         time.sleep(0.5)
     
     def _test_state_file(self, state_file, expected_dialogue, description=""):
@@ -64,16 +64,16 @@ class TestDialogueDetection:
         print(f"   Expected dialogue: {expected_dialogue}")
         print(f"   Description: {description}")
         
-        # Start agent_direct with this state
+        # Start server with this state
         cmd = [
             sys.executable,
-            "agent_direct.py",
+            "-m", "server.app",
             "--load-state", state_file,
-            "--backend", "gemini",
+            "--port", str(self.agent_port),
             "--manual"
         ]
         
-        # Start agent_direct
+        # Start server
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         
         try:
@@ -90,7 +90,7 @@ class TestDialogueDetection:
                 except:
                     time.sleep(1)
             else:
-                pytest.fail(f"Agent_direct failed to start for {state_file}")
+                pytest.fail(f"Server failed to start for {state_file}")
             
             # Get screenshot
             frame_response = requests.get(f"http://localhost:{self.agent_port}/api/frame", timeout=5)
