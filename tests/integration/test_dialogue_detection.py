@@ -1,6 +1,25 @@
 #!/usr/bin/env python3
 """
-Comprehensive pytest for dialogue detection system across all states
+Dialogue Detection Comprehensive Tests
+
+Purpose:
+    Validate OCR-based dialogue detection system across multiple game states.
+    Tests dialogue box detection and text extraction accuracy.
+
+Test Cases:
+    - Tests for various dialogue states using actual game screenshots
+    - Compares OCR text with memory-based dialogue reading
+    - Validates detection confidence scores
+
+Dependencies:
+    - Save states: Multiple dialogue states in tests/states/
+    - External services: Spawns temporary server (slow)
+
+Runtime:
+    ~3-5 seconds per state (server startup overhead)
+
+Note:
+    ⚠️ This test spawns servers - consider refactoring to use pre-saved screenshots
 """
 
 import pytest
@@ -15,8 +34,8 @@ import base64
 from pathlib import Path
 from PIL import Image
 
-# Add parent directory to path for imports
-sys.path.append(str(Path(__file__).parent.parent))
+# Add parent directory to path for imports (now at project root)
+sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from utils.ocr_dialogue import create_ocr_detector
 

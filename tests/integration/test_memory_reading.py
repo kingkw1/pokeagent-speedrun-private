@@ -1,3 +1,28 @@
+#!/usr/bin/env python3
+"""
+Memory Map Reading Integration Tests
+
+Purpose:
+    Validate emulator's ability to read map data directly from game memory.
+    Tests core functionality of the memory reader system.
+
+Test Cases:
+    - test_memory_map_basic: Basic 15x15 map reading from memory
+    - test_memory_map_different_location: Map changes with location
+    - test_player_position_in_map: Player always at center (7,7)
+    - test_map_traversability: Walkable vs blocked tile detection
+    - test_map_stability: Map data consistency across frames
+    - test_save_state_baseline: Validate multiple save states
+    - test_map_behaviors: MetatileBehavior enum validation
+
+Dependencies:
+    - Save states: simple_test.state, outside_1.state, route_101.state
+    - External services: Direct emulator (no server)
+
+Runtime:
+    ~5-10 seconds per test (emulator initialization)
+"""
+
 import os
 import pytest
 from pathlib import Path
@@ -110,13 +135,14 @@ def print_map_data(map_data, title="Map Data"):
     return formatted_map
 
 # Get the absolute path to the test states directory
-TEST_STATES_DIR = os.path.join(os.path.dirname(__file__), "states")
+# Test configuration
+TEST_STATES_DIR = os.path.join(os.path.dirname(__file__), "..", "states")
 
 @pytest.fixture
 def emulator():
     """Create and initialize an emulator instance"""
-    # Get path to ROM file
-    project_root = Path(__file__).parent.parent
+    # Get path to ROM file (now at project root, not tests/)
+    project_root = Path(__file__).parent.parent.parent
     rom_path = str(project_root / "Emerald-GBAdvance" / "rom.gba")
     
     # Initialize emulator

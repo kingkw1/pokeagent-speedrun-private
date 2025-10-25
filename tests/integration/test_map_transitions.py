@@ -1,14 +1,32 @@
 #!/usr/bin/env python3
 """
-Direct pytest for house to outside transition using emulator directly
-This bypasses server issues and tests the core map reading functionality
+House to Outside Transition Integration Tests
+
+Purpose:
+    Test map reading consistency during location transitions (house → outside).
+    Validates that map data remains accurate when player moves between areas.
+
+Test Cases:
+    - test_house_map_baseline: House interior map reads correctly
+    - test_walk_and_map_transition: Walking out of house updates map properly
+
+Dependencies:
+    - Save states: house.state
+    - External services: Direct emulator (no server)
+
+Runtime:
+    ~30-60 seconds per test (movement simulation)
 """
 
 import pytest
 import time
+import sys
 from pathlib import Path
 from pokemon_env.emulator import EmeraldEmulator
-from tests.test_memory_map import format_map_data
+
+# Import from integration directory
+sys.path.insert(0, str(Path(__file__).parent))
+from test_memory_reading import format_map_data
 
 class TestHouseToOutsideDirectTransition:
     

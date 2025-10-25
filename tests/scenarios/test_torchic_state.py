@@ -1,11 +1,26 @@
 #!/usr/bin/env python3
 """
-Test for torchic state and milestone reading
+Save State Validation Tests (Torchic State)
 
-This test verifies that:
-1. The torchic state loads correctly
-2. The state contains the expected data (player in Littleroot Town, has Torchic)
-3. The milestones are correctly detected and include Littleroot Town
+Purpose:
+    Validate that specific save states load correctly with expected game data.
+    Example test for save state validation pattern.
+
+Test Cases:
+    - test_torchic_state_loading: State loads and player has Torchic
+    - Validates location is Littleroot Town
+    - Validates milestones are correctly detected
+
+Dependencies:
+    - Save states: torchic.state
+    - External services: Spawns server
+
+Runtime:
+    ~5-8 seconds (server startup)
+
+Note:
+    This test demonstrates save state validation pattern.
+    Could be generalized to validate any save state.
 """
 
 import pytest

@@ -1,17 +1,25 @@
 #!/usr/bin/env python3
 """
-Pytest version of FPS adjustment system test for Pokemon Emerald emulator
+FPS Adjustment System Integration Tests
 
-This test verifies that the FPS adjustment system correctly:
-1. Runs at 30 FPS in normal overworld state
-2. Speeds up to 120 FPS (4x) when dialog is detected
-3. Reverts to 30 FPS when dialog ends
+Purpose:
+    Verify emulator FPS adjustment system works correctly:
+    - 30 FPS during normal gameplay
+    - 120 FPS (4x speed) during dialogue
+    - Automatic FPS reversion after dialogue ends
 
-Test States:
-- Base overworld: Emerald-GBAdvance/simple_test.state (expected: 30 FPS)
-- Dialog state: server/dialog.state (expected: 120 FPS)  
-- Dialog state 2: server/dialog2.state (expected: 120 FPS)
-- After dialog: server/after_dialog.state (expected: 30 FPS)
+Test Cases:
+    - Base overworld: simple_test.state → 30 FPS expected
+    - Dialog state: dialog.state → 120 FPS expected
+    - Dialog state 2: dialog2.state → 120 FPS expected
+    - After dialog: after_dialog.state → 30 FPS expected
+
+Dependencies:
+    - Save states: simple_test.state, dialog.state, dialog2.state, after_dialog.state
+    - External services: Spawns server for each state
+
+Runtime:
+    ~5-8 seconds per test case (server startup + FPS measurement)
 """
 
 import pytest
