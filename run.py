@@ -38,6 +38,14 @@ def start_server(args):
         else:
             print(f"⚠️ Checkpoint file not found: {checkpoint_state}")
     elif args.load_state:
+        # Validate that load_state ends with .state
+        if not args.load_state.endswith(".state"):
+            if os.path.exists(args.load_state + ".state"):
+                args.load_state += ".state"
+            else:   
+                print(f"❌ Error: State file must end with '.state', got: {args.load_state}")
+                raise ValueError("Invalid state file extension")
+        print("🔄 Server will load state:", args.load_state)
         server_cmd.extend(["--load-state", args.load_state])
     
     # Don't pass --manual to server - server should always run in server mode
