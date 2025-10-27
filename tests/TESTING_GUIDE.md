@@ -47,10 +47,10 @@ pytest --cov=agent --cov=pokemon_env
 ### Test Categories
 
 #### Dialogue Tests (`dialogue/`)
-- Detection: VLM-based text box detection
-- Completion: Dialogue progression and A-press handling
-- Integration: Full dialogue flow with agent
-- Debug scripts in `dialogue/debug/` for troubleshooting
+- **Unit tests**: Detection logic, multi-flag state system, OCR comparison
+- **Integration tests**: Agent dialogue handling, completion mechanics, VLM accuracy
+- **Debug scripts**: Located in `dialogue/debug/` for troubleshooting
+- See `dialogue/README.md` for comprehensive dialogue test documentation
 
 #### Navigation Tests (`navigation/`)
 - Pathfinding algorithms
