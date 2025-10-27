@@ -135,7 +135,7 @@ print("SUMMARY")
 print("="*80)
 
 memory_correct = sum(1 for r in results if r['memory_correct'])
-ocr_correct = sum(1 for r in results if r['ocr_correct'] is True)
+ocr_correct = sum(1 for r in results if r['ocr_correct'] == True)
 ocr_available = sum(1 for r in results if r['ocr_correct'] is not None)
 
 print(f"\nMemory-based detection: {memory_correct}/{len(results)} correct ({memory_correct/len(results)*100:.1f}%)")

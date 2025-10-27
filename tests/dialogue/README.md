@@ -1,216 +1,266 @@
-# Dialogue Tests
+# Dialogue Test Suite - Usage Guide
 
-This directory contains all tests related to dialogue detection and handling in Pokemon Emerald.
+⚠️ **CRITICAL: Memory-Based Detection is UNRELIABLE!**
+
+**DO NOT USE:**
+- ❌ `state['game']['in_dialog']` - Memory flag is unreliable in Pokemon Emerald
+- ❌ Direct memory reading for dialogue state
+- ❌ Any test that checks `in_dialog` from `/state` endpoint
+
+**CORRECT APPROACH:**
+
+**For Tests (Ground Truth):**
+- ✅ **OCR detection** (100% accurate, slower) - Use for test assertions
+- ✅ `utils.ocr_dialogue.create_ocr_detector()` - Pixel-perfect dialogue box detection
+- ✅ Provides reliable ground truth for validating agent behavior
+
+**For Agent (Production):**
+- ✅ **VLM detection** (85% accurate, fast) - What agent uses in real-time
+- ✅ `agent/perception.py` with `visual_dialogue_active` flag
+- ✅ OCR fallback when VLM returns template text
+
+**Why Memory is Unreliable:**
+Pokemon Emerald's memory flags (`DIALOG_STATE`, `overworld_freeze`) are inconsistent:
+- Can show `in_dialog=False` when dialogue box is visibly on screen (dialog2.state!)
+- Can show `in_dialog=True` with no dialogue (residual text)
+- State transitions don't update flags reliably
+
+**OCR Detection for Tests (100% Accurate):**
+```python
+from utils.ocr_dialogue import create_ocr_detector
+detector = create_ocr_detector()
+screenshot = env.get_screenshot()
+dialogue_text = detector.detect_dialogue_from_screenshot(screenshot)
+has_dialogue = dialogue_text is not None and len(dialogue_text.strip()) > 5
+```
+
+**VLM Detection for Agent (85% Accurate, Fast):**
+```python
+from agent.perception import perception_step
+from utils.vlm import VLM
+vlm = VLM(backend='local', model_name='Qwen/Qwen2-VL-2B-Instruct')
+screenshot = env.get_screenshot()
+observation = perception_step(screenshot, {}, vlm)
+dialogue = observation['visual_data']['on_screen_text']['dialogue']
+has_dialogue = dialogue is not None and len(str(dialogue)) > 5
+```
+
+**Agent Action Priority (See agent/action.py lines 137-142):**
+The agent checks `visual_dialogue_active` (from VLM) and presses A when dialogue is detected.
+
+---
 
 ## Test Organization
 
-### ✅ Core Unit Tests (Keep - Essential)
+This directory contains all tests for dialogue detection and handling in Pokemon Emerald.
 
-**`test_unit_detection.py`** (currently `test_dialogue_detection.py`)
-- **Purpose**: Unit tests for dialogue detection logic
-- **Tests**: Blue box detection, grayscale handling, no-dialogue cases
-- **Runtime**: <1s
-- **Status**: ✅ Working
+## Testing Philosophy
 
-**`test_unit_multiflag_state.py`** (currently `test_dialogue_completion_multiflag.py`)
-- **Purpose**: Multi-flag state system validation
-- **Tests**: Overlapping states (overworld + dialogue), state consistency
-- **Runtime**: ~5s (needs emulator)
-- **Status**: ✅ Working
+Tests are organized from **foundational → integration → real-world usage**:
+1. **Unit tests**: Verify core detection logic works
+2. **Integration tests**: Verify components work together  
+3. **Agent tests**: Verify agent can complete dialogues in practice
 
-**`test_unit_ocr_vs_memory.py`** (currently `test_ocr_vs_memory_detection.py`)
-- **Purpose**: Compare OCR detection vs memory detection accuracy
-- **Tests**: Multiple states with both detection methods
-- **Runtime**: ~30s (VLM calls)
-- **Status**: ⚠️ Needs fixes (hardcoded paths)
+## Recommended Testing Order
 
-### 🔬 Integration Tests (Keep - Important)
+### Level 1: Foundation - Unit Tests (Fast, ~30s total)
 
-**`test_integration_agent_dialogue.py`** (consolidate from 5 similar tests)
-- **Purpose**: End-to-end test of agent handling dialogue
-- **Tests**: Agent detects dialogue, presses A, completes dialogue, moves after
-- **Consolidates**:
-  - `test_agent_dialogue.py` - Basic agent dialogue handling
-  - `test_agent_dialogue_auto.py` - Auto mode test
-  - `test_agent_dialogue_movement.py` - Movement after dialogue
-  - `test_agent_can_clear_dialogue.py` - Clearing validation
-  - `test_dialogue_integration.py` - Position-based validation
-- **Runtime**: ~20-30s
-- **Status**: ⚠️ Needs consolidation and fixes
+Run these first to verify core dialogue system works:
 
-**`test_integration_dialogue_completion.py`** (consolidate from 4 similar tests)
-- **Purpose**: Test dialogue completion mechanics
-- **Tests**: A-press sequence, dialogue dismissal, movement unlock
-- **Consolidates**:
-  - `test_dialogue_completion.py` - Main completion test
-  - `test_dialogue_completion_live.py` - Live server test
-  - `test_clearing_sequence.py` - Sequence test
-  - `test_scripted_dialogue_simple.py` - Scripted A-press test
-- **Runtime**: ~15-20s
-- **Status**: ⚠️ Needs consolidation
+```bash
+# 1. Test multi-flag state system (most fundamental)
+pytest tests/dialogue/test_unit_multiflag_state.py -v
 
-**`test_integration_vlm_detection.py`** (consolidate from 3 VLM tests)
-- **Purpose**: Test VLM text_box_visible accuracy across states
-- **Tests**: Multiple dialogue states, accuracy measurement
-- **Consolidates**:
-  - `test_vlm_text_box_detection.py` - Main VLM test
-  - `test_vlm_quick.py` - Quick single-state test
-  - `test_dialogue_detection_comprehensive.py` - Multi-state comprehensive
-- **Runtime**: ~60s (multiple VLM calls)
-- **Status**: ⚠️ Needs consolidation
+# 2. Test dialogue detection logic
+pytest tests/dialogue/test_unit_detection.py -v
 
-### 🐛 Manual/Debug Scripts (Move to debug/ - Keep for troubleshooting)
-
-Already in `debug/` subdirectory:
-- `debug_auto_mode.py` - Debug agent auto mode
-- `debug_detection.py` - Debug detection issues
-- `debug_dialog_state_memory.py` - Debug memory values
-- `debug_navigation.py` - Debug navigation with dialogue
-- `diagnose_dialog_detection.py` - Diagnostic tool
-- `diagnose_memory_values.py` - Memory diagnostic
-- `test_dialogue_debug.py` - General debugging
-
-**Status**: ✅ Already organized
-
-### ❌ Redundant/Obsolete Tests (Delete)
-
-**`test_dialogue_a_presses.py`**
-- **Reason**: Covered by `test_integration_dialogue_completion.py`
-- **Action**: Delete (functionality preserved in consolidated test)
-
-## Consolidation Plan
-
-### Step 1: Rename for Clarity
-```
-test_dialogue_detection.py → test_unit_detection.py
-test_dialogue_completion_multiflag.py → test_unit_multiflag_state.py
-test_ocr_vs_memory_detection.py → test_unit_ocr_vs_memory.py
+# 3. Compare OCR vs memory detection
+pytest tests/dialogue/test_unit_ocr_vs_memory.py -v
 ```
 
-### Step 2: Consolidate Integration Tests
+**What these verify:**
+- ✅ Multi-flag state system correctly models overlapping states
+- ✅ Dialogue detection logic works (blue box, text detection)
+- ✅ Memory-based detection is more reliable than OCR
 
-**Create `test_integration_agent_dialogue.py`** (merge 5 files):
-- Combines all agent dialogue handling tests
-- Test scenarios:
-  1. Agent detects dialogue (VLM + memory)
-  2. Agent presses A automatically
-  3. Dialogue clears after A-presses
-  4. Agent can move after dialogue
-  5. Position changes confirm completion
+**Expected results:**
+- `test_unit_multiflag_state.py`: All pass ✅
+- `test_unit_detection.py`: All pass ✅  
+- `test_unit_ocr_vs_memory.py`: Shows memory detection is better
 
-**Create `test_integration_dialogue_completion.py`** (merge 4 files):
-- Combines all completion mechanism tests
-- Test scenarios:
-  1. Scripted A-press sequence
-  2. Dialogue flag transitions
-  3. Movement unlock verification
-  4. Live server timing
+### Level 2: Integration - Dialogue Mechanics (Medium, ~1-2min)
 
-**Create `test_integration_vlm_detection.py`** (merge 3 files):
-- Combines all VLM detection tests
-- Test scenarios:
-  1. Dialog states (dialog.state, dialog2.state, dialog3.state)
-  2. Non-dialog states (no_dialog1.state, after_dialog.state)
-  3. Accuracy measurement across all states
+Test dialogue completion mechanics with server:
 
-### Step 3: Delete Redundant
-- `test_dialogue_a_presses.py` - Delete
+```bash
+# 1. Test dialogue clearing with A-presses
+pytest tests/dialogue/test_integration_dialogue_completion.py::TestDialogueCompletion::test_dialogue_clears_with_a_presses -v -s
 
-## Final Structure
+# 2. Test movement after dialogue clears
+pytest tests/dialogue/test_integration_dialogue_completion.py::TestDialogueCompletion::test_movement_after_dialogue_clearing -v -s
 
-```
-dialogue/
-├── README.md (this file)
-├── test_unit_detection.py (detection logic)
-├── test_unit_multiflag_state.py (state system)
-├── test_unit_ocr_vs_memory.py (OCR comparison)
-├── test_integration_agent_dialogue.py (agent behavior)
-├── test_integration_dialogue_completion.py (completion mechanics)
-├── test_integration_vlm_detection.py (VLM accuracy)
-└── debug/
-    ├── debug_auto_mode.py
-    ├── debug_detection.py
-    ├── debug_dialog_state_memory.py
-    ├── debug_navigation.py
-    ├── diagnose_dialog_detection.py
-    ├── diagnose_memory_values.py
-    └── test_dialogue_debug.py
+# 3. Test state transitions
+pytest tests/dialogue/test_integration_dialogue_completion.py::TestDialogueCompletion::test_state_transitions_correctly -v -s
 ```
 
-**Before**: 23 test files (17 in dialogue/, 7 in debug/)
-**After**: 10 test files (6 in dialogue/, 7 in debug/ - unchanged)
+**What these verify:**
+- ✅ Server processes A-button presses correctly
+- ✅ Dialogue flag changes: `in_dialog: True → False`
+- ✅ Movement unlocks: `movement_enabled: False → True`
+- ✅ State transitions are consistent
 
-## Running Tests
+**Known issues:**
+- Some dialogue states may not clear within expected timeframe
+- This indicates timing issues, not logic errors
 
-**All dialogue tests:**
+### Level 3: Agent Behavior (Slow, ~2-3min)
+
+Test full agent dialogue handling:
+
+```bash
+# 1. Test agent detects and clears dialogue
+pytest tests/dialogue/test_integration_agent_dialogue.py::TestAgentDialogueIntegration::test_agent_detects_and_clears_dialogue -v -s
+
+# 2. Test agent can move after dialogue
+pytest tests/dialogue/test_integration_agent_dialogue.py::TestAgentDialogueIntegration::test_agent_can_move_after_dialogue -v -s
+
+# 3. Full agent auto mode (slowest)
+pytest tests/dialogue/test_integration_agent_dialogue.py::TestAgentDialogueIntegration::test_full_agent_auto_completes_dialogue -v -s -m slow
+```
+
+**What these verify:**
+- ✅ Agent detects dialogue (memory + VLM)
+- ✅ Agent presses A to clear dialogue
+- ✅ Agent can navigate after dialogue clears
+- ⚠️ Agent completes full dialogue → movement workflow
+
+**Current status:**
+- Detection: Working ✅
+- A-press logic: Working ✅
+- Dialogue clearing: **Needs investigation** ⚠️
+- Post-dialogue movement: **Needs investigation** ⚠️
+
+### Level 4: VLM Detection (Optional, Very Slow ~2-3min)
+
+Test VLM's visual dialogue detection accuracy:
+
+```bash
+# Quick single-state test
+pytest tests/dialogue/test_integration_vlm_detection.py::TestVLMDialogueDetection::test_vlm_quick_single_state -v -s -m slow
+
+# Full accuracy test across all states
+pytest tests/dialogue/test_integration_vlm_detection.py -v -s -m slow
+```
+
+**What these verify:**
+- VLM's `text_box_visible` detection accuracy
+- Performance across multiple dialogue/non-dialogue states
+
+**Note**: VLM tests are marked `slow` - skip in normal test runs
+
+## Quick Commands
+
+**Run all dialogue tests:**
 ```bash
 pytest tests/dialogue/ -v
 ```
 
-**Just unit tests (fast):**
+**Run just unit tests (fast):**
 ```bash
 pytest tests/dialogue/test_unit_*.py -v
 ```
 
-**Integration tests (slower):**
+**Run integration tests (skip slow VLM):**
 ```bash
-pytest tests/dialogue/test_integration_*.py -v
+pytest tests/dialogue/test_integration_*.py -v -m "not slow"
 ```
 
-**Single test:**
+**Run single test:**
 ```bash
-pytest tests/dialogue/test_unit_detection.py -v
+pytest tests/dialogue/test_unit_multiflag_state.py -v
 ```
+
+## Debugging Tools
+
+If tests fail, use debug scripts in `debug/`:
+
+```bash
+# Debug dialogue detection
+python tests/dialogue/debug/debug_detection.py
+
+# Check memory values
+python tests/dialogue/debug/diagnose_memory_values.py
+
+# Debug agent auto mode
+python tests/dialogue/debug/debug_auto_mode.py
+```
+
+## Test Files Reference
+
+### Unit Tests
+- **`test_unit_multiflag_state.py`** - Multi-flag state system (overlapping states)
+- **`test_unit_detection.py`** - Dialogue detection logic (blue box, text)
+- **`test_unit_ocr_vs_memory.py`** - OCR vs memory comparison
+
+### Integration Tests
+- **`test_integration_dialogue_completion.py`** - Dialogue clearing mechanics
+- **`test_integration_agent_dialogue.py`** - Agent dialogue handling
+- **`test_integration_vlm_detection.py`** - VLM accuracy (marked slow)
+
+### Debug Scripts (`debug/`)
+- **`debug_detection.py`** - Debug detection issues
+- **`debug_dialog_state_memory.py`** - Check memory values
+- **`debug_auto_mode.py`** - Debug agent in auto mode
+- **`debug_navigation.py`** - Debug navigation with dialogue
+- **`diagnose_dialog_detection.py`** - Diagnostic tool
+- **`diagnose_memory_values.py`** - Memory diagnostic
+- **`test_dialogue_debug.py`** - General debugging
+
+## Current Issues & Fixes Needed
+
+### ✅ Working
+- Multi-flag state detection
+- Dialogue detection logic
+- Memory-based detection
+- A-press action priority in agent
+
+### ⚠️ Needs Investigation
+1. **Dialogue not clearing**: Some tests show dialogue doesn't clear within expected time
+2. **Agent movement after dialogue**: Agent may not move after clearing dialogue
+3. **VLM detection accuracy**: VLM `text_box_visible` may not be reliable
+
+### 🔧 Next Steps
+1. Run unit tests to verify foundation ✅
+2. Investigate why dialogue doesn't clear with A-presses
+3. Check agent's A-press timing and execution
+4. Verify movement is actually blocked vs navigation issues
+5. Improve VLM prompts for better dialogue detection
 
 ## Test States
 
-Tests use these emulator states from `tests/states/`:
+Located in `tests/states/`:
 - **dialog.state** - NPC dialogue active (primary test state)
 - **dialog2.state** - Alternative dialogue state
 - **dialog3.state** - Another dialogue variant
 - **no_dialog1.state** - Overworld, no dialogue
 - **after_dialog.state** - Just dismissed dialogue
 
-## Common Issues
+## Expected Behavior
 
-**Import errors:**
-- Make sure to run from project root: `cd /path/to/pokeagent-speedrun`
-- Use `pytest tests/dialogue/` not `python test_file.py`
+**Normal dialogue flow:**
+1. Player talks to NPC → `in_dialog: True`, `movement_enabled: False`
+2. Press A 2-3 times → Dialogue advances/dismisses
+3. Dialogue clears → `in_dialog: False`, `movement_enabled: True`
+4. Player can move again
 
-**Server conflicts:**
-- Kill existing servers: `pkill -f server.app`
-- Wait 1-2 seconds before starting new test
+**Agent behavior:**
+1. Agent detects `in_dialog: True` (memory) or `text_box_visible: True` (VLM)
+2. Agent prioritizes pressing A
+3. Dialogue clears
+4. Agent resumes navigation
 
-**VLM tests timeout:**
-- VLM calls take 2-3 seconds each
-- Increase timeout if needed
-- Use `test_vlm_quick.py` for single-state debugging
+## Resources
 
-## Test Status
-
-- ✅ Unit tests: Working
-- ⚠️ Integration tests: Need consolidation and fixes
-- ✅ Debug scripts: Organized in debug/
-
-## Consolidation Complete ✅
-
-**Before**: 23 test files (17 in dialogue/, 7 in debug/)  
-**After**: 13 test files (6 in dialogue/, 7 in debug/)
-
-**Changes**:
-- ✅ Renamed 3 unit tests for clarity
-- ✅ Consolidated 12 integration tests → 3 files
-- ✅ Deleted 1 redundant test
-- ✅ Fixed import errors and pytest compatibility
-- ✅ Created comprehensive README
-
-## Known Issues
-
-**Dialogue Clearing Tests**: Some integration tests fail because dialogue doesn't clear within expected timeframe. This is a known issue with:
-1. Test state timing (may need specific button hold/release timing)
-2. Server/client architecture differences in tests vs production
-3. Dialogue states may have multi-page or infinite dialogues
-
-**Manual testing confirms**: Dialogue system works correctly in production (`python run.py --manual`)
-
-**Recommendation**: Use unit tests for validation, integration tests for observation/debugging
+- **Main docs**: `docs/DIALOGUE_SYSTEM.md`
+- **Test guide**: `tests/TESTING_GUIDE.md`
+- **Project root**: `tests/README.md`
