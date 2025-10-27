@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""
+Test OCR-based dialogue detection vs memory-based detection
+
+This will help us determine if we should switch to OCR for dialogue detection
+since memory values are so unreliable.
+"""
+
+import subprocess
+import time
+import requests
+import sys
+sys.path.append('/home/kevin/Documents/pokeagent-speedrun')
+
+from utils.ocr_dialogue import create_ocr_detector
+from PIL import Image
+import io
+import base64
+
+def test_state_with_ocr(state_file, expected_has_dialogue, name):
+    """Test both OCR and memory-based detection"""
+    
+    print(f"\n{'='*80}")
+    print(f"Testing: {name}")
+    print(f"Expected: {'DIALOGUE' if expected_has_dialogue else 'NO DIALOGUE'}")
+    print(f"{'='*80}")
+    
+    # Start server
+    cmd = ["python", "-m", "server.app", "--load-state", state_file]
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    
+    try:
+        time.sleep(10)
+        
+        # Get state (memory-based detection)
+        resp = requests.get("http://localhost:8000/state", timeout=2)
+        state = resp.json()
+        memory_in_dialog = state['game'].get('in_dialog', False)
+        
+        # Get screenshot for OCR
+        frame_resp = requests.get("http://localhost:8000/api/frame", timeout=5)
+        if frame_resp.status_code == 200:
+            frame_data = frame_resp.json()
+            if frame_data.get('frame'):
+                # Decode screenshot
+                image_data = base64.b64decode(frame_data['frame'])
+                screenshot = Image.open(io.BytesIO(image_data))
+                
+                # Create OCR detector and test
+                detector = create_ocr_detector()
+                if detector:
+                    ocr_box_detected = detector.is_dialogue_box_visible(screenshot)
+                    ocr_text = detector.detect_dialogue_from_screenshot(screenshot)
+                else:
+                    ocr_box_detected = None
+                    ocr_text = None
+            else:
+                ocr_box_detected = None
+                ocr_text = None
+        else:
+            ocr_box_detected = None
+            ocr_text = None
+        
+        # Test movement
+        pos = state["player"]["position"]
+        initial_pos = (pos["x"], pos["y"])
+        
+        resp = requests.post("http://localhost:8000/action", json={"buttons": ["UP"]}, timeout=2)
+        time.sleep(3)
+        
+        resp = requests.get("http://localhost:8000/state", timeout=2)
+        state2 = resp.json()
+        pos2 = state2["player"]["position"]
+        new_pos = (pos2["x"], pos2["y"])
+        
+        can_move = (initial_pos != new_pos)
+        
+        # Results
+        print(f"\n📊 Results:")
+        print(f"   Memory-based in_dialog: {memory_in_dialog}")
+        print(f"   OCR dialogue box:       {ocr_box_detected}")
+        print(f"   OCR text:               '{ocr_text[:40] if ocr_text else 'None'}...'")
+        print(f"   Can move:               {can_move}")
+        print(f"   Blocks movement:        {not can_move}")
+        
+        # Evaluate
+        memory_correct = (memory_in_dialog == expected_has_dialogue)
+        ocr_correct = (ocr_box_detected == expected_has_dialogue) if ocr_box_detected is not None else None
+        
+        print(f"\n✅/❌ Evaluation:")
+        print(f"   Memory detection: {'✅ CORRECT' if memory_correct else '❌ WRONG'}")
+        if ocr_correct is not None:
+            print(f"   OCR detection:    {'✅ CORRECT' if ocr_correct else '❌ WRONG'}")
+        else:
+            print(f"   OCR detection:    ⚠️  UNAVAILABLE")
+        
+        return {
+            'name': name,
+            'expected': expected_has_dialogue,
+            'memory': memory_in_dialog,
+            'ocr': ocr_box_detected,
+            'can_move': can_move,
+            'memory_correct': memory_correct,
+            'ocr_correct': ocr_correct
+        }
+        
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+        time.sleep(2)
+
+# Test all states
+print("="*80)
+print("OCR vs MEMORY-BASED DIALOGUE DETECTION COMPARISON")
+print("="*80)
+
+results = []
+
+# Dialog states (should have dialogue)
+results.append(test_state_with_ocr("tests/states/dialog.state", True, "dialog.state"))
+results.append(test_state_with_ocr("tests/states/dialog2.state", True, "dialog2.state"))
+results.append(test_state_with_ocr("tests/states/dialog3.state", True, "dialog3.state"))
+
+# No dialog states (should NOT have dialogue)
+results.append(test_state_with_ocr("tests/states/no_dialog1.state", False, "no_dialog1.state"))
+results.append(test_state_with_ocr("tests/states/no_dialog2.state", False, "no_dialog2.state"))
+results.append(test_state_with_ocr("tests/states/no_dialog3.state", False, "no_dialog3.state"))
+
+# After dialog (should NOT have dialogue)
+results.append(test_state_with_ocr("tests/states/after_dialog.state", False, "after_dialog.state"))
+
+# Summary
+print("\n" + "="*80)
+print("SUMMARY")
+print("="*80)
+
+memory_correct = sum(1 for r in results if r['memory_correct'])
+ocr_correct = sum(1 for r in results if r['ocr_correct'] is True)
+ocr_available = sum(1 for r in results if r['ocr_correct'] is not None)
+
+print(f"\nMemory-based detection: {memory_correct}/{len(results)} correct ({memory_correct/len(results)*100:.1f}%)")
+if ocr_available > 0:
+    print(f"OCR-based detection:    {ocr_correct}/{ocr_available} correct ({ocr_correct/ocr_available*100:.1f}%)")
+else:
+    print(f"OCR-based detection:    NOT AVAILABLE")
+
+print(f"\n{'State':<25} {'Expected':<10} {'Memory':<10} {'OCR':<10} {'Blocks':<10}")
+print("-"*80)
+for r in results:
+    exp_str = "Dialog" if r['expected'] else "No Dialog"
+    mem_str = "Dialog" if r['memory'] else "No Dialog"
+    ocr_str = "Dialog" if r['ocr'] else "No Dialog" if r['ocr'] is not None else "N/A"
+    blocks = "YES" if not r['can_move'] else "NO"
+    print(f"{r['name']:<25} {exp_str:<10} {mem_str:<10} {ocr_str:<10} {blocks:<10}")
+
+print("\n" + "="*80)
+print("RECOMMENDATION")
+print("="*80)
+
+if ocr_available > 0 and ocr_correct > memory_correct:
+    print("✅ OCR-based detection is MORE ACCURATE than memory-based detection")
+    print("   RECOMMENDATION: Switch to OCR for dialogue detection")
+elif ocr_available > 0 and ocr_correct == memory_correct:
+    print("⚖️  OCR and memory detection have EQUAL accuracy")
+    print("   RECOMMENDATION: Keep current memory-based approach (faster)")
+else:
+    print("❌ Memory-based detection is better (or OCR unavailable)")
+    print("   RECOMMENDATION: Fix memory-based detection or use hybrid approach")

@@ -559,9 +559,15 @@ class PokemonEmeraldReader:
             dialog_state = self._read_u8(self.addresses.DIALOG_STATE)
             overworld_freeze = self._read_u8(0x02022B4C)
             
-            # If both dialog flags are 0, we're definitely not in dialog (regardless of text)
-            if dialog_state == 0 and overworld_freeze == 0:
-                return False
+            # Validate dialog_state is in reasonable range (0-10)
+            # Values like 255 (0xFF) are persistent/corrupted markers, not active dialogue
+            # Based on pokeemerald, active dialogue states should be low values
+            if dialog_state > 10:
+                dialog_state = 0  # Treat as inactive
+            
+            # NOTE: We CANNOT use "if dialog_state == 0 and overworld_freeze == 0: return False"
+            # because Pokemon Emerald often has dialog_state=255 (treated as 0) and overworld_freeze=0
+            # even during ACTIVE dialogue! We must check text content.
             
             # Check for active dialog by reading dialog text
             dialog_text = self.read_dialog()
@@ -582,39 +588,24 @@ class PokemonEmeraldReader:
                     logger.debug(f"Original detection: Ignoring residual text: {dialog_text[:50]}...")
                     return False
                 
-                # Additional validation: check if dialog_state value is reasonable
-                # 0xFF (255) often indicates uninitialized/corrupted state
-                if dialog_state == 0xFF:
-                    logger.debug(f"Original detection: Ignoring corrupted dialog_state=0xFF")
-                    return False
-                
                 # Check if this is new dialog content (different from last time)
                 is_new_dialog = (self._last_dialog_content != dialog_text)
                 
-                # If we have meaningful text and dialog flags are set, this is active dialog
-                if dialog_state > 0 or overworld_freeze > 0:
-                    # If this is new dialog, start the FPS timer
-                    if is_new_dialog:
-                        self._dialog_fps_start_time = current_time
-                        self._last_dialog_content = dialog_text
-                        logger.debug(f"New dialog detected, starting 5s FPS boost: '{dialog_text[:50]}...'")
-                    
-                    # Check if we're still within the FPS boost window
-                    if (self._dialog_fps_start_time is not None and 
-                        current_time - self._dialog_fps_start_time < self._dialog_fps_duration):
-                        logger.debug(f"Dialog FPS active ({current_time - self._dialog_fps_start_time:.1f}s remaining): '{dialog_text[:50]}...'")
-                        return True
-                    else:
-                        # FPS boost window expired, but we still have dialog
-                        logger.debug(f"Dialog FPS expired, but dialog still present: '{dialog_text[:50]}...'")
-                        return False
-                else:
-                    # No dialog flags set - this is residual text, don't treat as dialog
-                    # But cache the content so we don't treat it as "new" next time
-                    if self._last_dialog_content is None:
-                        self._last_dialog_content = dialog_text
-                    logger.debug(f"Residual text detected (no dialog flags): dialog_state={dialog_state}, overworld_freeze={overworld_freeze}, text='{dialog_text[:50]}...'")
-                    return False
+                # SIMPLE APPROACH: If we have meaningful dialogue text, treat it as active dialogue
+                # Memory flags in Pokemon Emerald are unreliable (dialog_state=255, overworld_freeze=0 even during active dialogue)
+                # We accept false positives (residual text) because:
+                # 1. The agent pressing A on residual text is harmless (no-op)
+                # 2. Movement still works even with residual text present
+                # 3. False negatives (missing real dialogue) are far worse - agent gets stuck
+                
+                # Cache the text to track it
+                self._last_dialog_content = dialog_text
+                if is_new_dialog:
+                    self._dialog_fps_start_time = current_time
+                
+                # Return True - let the agent handle it
+                logger.debug(f"Dialogue text detected (is_new={is_new_dialog}): '{dialog_text[:50]}...'")
+                return True
             else:
                 # No meaningful text, but we might have dialog flags set
                 # This could be a transition state or residual flags
@@ -847,29 +838,18 @@ class PokemonEmeraldReader:
             # Enhanced validation: Only consider it dialog if script modes are reasonable values
             # Extremely high values (like 221) are likely corrupted/persistent state data
             if global_mode >= 1 and global_mode <= 10:  # Reasonable script mode range
-                logger.debug(f"Script dialog detected: global_mode={global_mode}")
+                logger.debug(f"Script dialog detected: global_mode={global_mode}, text='{dialog_text[:30] if dialog_text else ''}...'")
                 return True
             
             if immediate_mode >= 1 and immediate_mode <= 10:  # Reasonable script mode range
-                logger.debug(f"Script dialog detected: immediate_mode={immediate_mode}")
+                logger.debug(f"Script dialog detected: immediate_mode={immediate_mode}, text='{dialog_text[:30] if dialog_text else ''}...'")
                 return True
             
-            # Check message box state indicators with validation
-            try:
-                is_signpost = self._read_u8(self.addresses.MSG_IS_SIGNPOST)
-                box_cancelable = self._read_u8(self.addresses.MSG_BOX_CANCELABLE)
-                
-                # Only consider valid if values are reasonable (not 0xFF which indicates uninitialized)
-                if (is_signpost != 0 and is_signpost != 0xFF and is_signpost <= 10):
-                    logger.debug(f"Message box dialog detected: signpost={is_signpost}")
-                    return True
-                    
-                if (box_cancelable != 0 and box_cancelable != 0xFF and box_cancelable <= 10):
-                    logger.debug(f"Message box dialog detected: cancelable={box_cancelable}")
-                    return True
-            except Exception:
-                pass  # Message box checks are supplementary
-                
+            # Message box indicators (MSG_BOX_CANCELABLE, MSG_IS_SIGNPOST) are TOO UNRELIABLE
+            # They persist as residual state even after dialogue clears
+            # Relying on them causes false positives in states like no_dialog*.state
+            # The fallback detection in is_in_dialog() handles actual active dialogue better
+            
             return False
             
         except Exception as e:
@@ -1231,16 +1211,33 @@ class PokemonEmeraldReader:
             if menu_state != 0:
                 return "menu"
             
-            # Check for dialog but respect A button clearing
-            # Use cached dialogue state if available, otherwise fall back to detection
-            cached_active, _ = self.get_cached_dialogue_state()
-            if cached_active:
+            # FIXED: Check ACTUAL dialogue state from memory, not stale cache
+            # The cache can be outdated when player presses A to dismiss dialogue
+            # Trust is_in_dialog() which reads current memory state
+            if self._dialog_detection_enabled and self.is_in_dialog():
                 return "dialog"
             
             return "overworld"
         except Exception as e:
             logger.warning(f"Failed to determine game state: {e}")
             return "unknown"
+    
+    def _get_primary_game_state(self, at_title: bool, in_battle: bool, in_dialog: bool, in_menu: bool) -> str:
+        """
+        Determine primary game state for legacy compatibility.
+        Returns a single string representing the most dominant state.
+        
+        Priority order: title > battle > dialog > menu > overworld
+        """
+        if at_title:
+            return "title"
+        if in_battle:
+            return "battle"
+        if in_dialog:
+            return "dialog"
+        if in_menu:
+            return "menu"
+        return "overworld"
 
     def read_battle_details(self) -> Dict[str, Any]:
         """Read enhanced battle-specific information following pokeemerald guide"""
@@ -2453,11 +2450,37 @@ class PokemonEmeraldReader:
             # if facing:
             #     state["player"]["facing"] = facing
             
-            # Game information
+            # Game information - NEW MULTI-FLAG STATE SYSTEM
+            # Detect all state flags independently (they can overlap)
+            is_in_battle = self.is_in_battle()
+            is_in_dialog = self._dialog_detection_enabled and self.is_in_dialog()
+            is_at_title = self.is_in_title_sequence()
+            menu_state_value = self._read_u32(self.addresses.MENU_STATE)
+            is_in_menu = menu_state_value != 0
+            
+            # Overworld is visible when not in battle/title and no full-screen menu
+            overworld_visible = not is_in_battle and not is_at_title
+            
+            # Movement is blocked by dialogue, menus, cutscenes
+            movement_enabled = overworld_visible and not is_in_dialog and not is_in_menu
+            
             state["game"].update({
+                # Multi-flag state system (can overlap)
+                "overworld_visible": overworld_visible,
+                "in_dialog": is_in_dialog,
+                "in_battle": is_in_battle,
+                "in_menu": is_in_menu,
+                "at_title": is_at_title,
+                
+                # Input capability flags
+                "movement_enabled": movement_enabled,
+                "input_blocked": is_in_dialog or is_in_menu,
+                
+                # Legacy single-state field (for backwards compatibility)
+                "game_state": self._get_primary_game_state(is_at_title, is_in_battle, is_in_dialog, is_in_menu),
+                
+                # Other game data
                 "money": self.read_money(),
-                "game_state": self.get_game_state(),
-                "is_in_battle": self.is_in_battle(),
                 "time": self.read_game_time(),
                 "badges": self.read_badges(),
                 "items": self.read_items(),
@@ -2467,7 +2490,7 @@ class PokemonEmeraldReader:
             })
             
             # Battle details - use comprehensive battle info
-            if state["game"]["is_in_battle"]:
+            if is_in_battle:
                 battle_details = self.read_comprehensive_battle_info()
                 if battle_details:
                     state["game"]["battle_info"] = battle_details
@@ -2490,28 +2513,18 @@ class PokemonEmeraldReader:
                 # Update dialogue cache with current state
                 self._update_dialogue_cache(dialog_text if 'dialog_text' in locals() else None, dialogue_active)
                 
-                # Use cached dialogue state for additional validation
-                cached_active, cached_text = self.get_cached_dialogue_state()
+                state["game"]["dialogue_detected"] = {
+                    "has_dialogue": dialogue_active,
+                    "confidence": 1.0 if dialogue_active else 0.0,
+                    "reason": "memory-based dialogue detection"
+                }
+                logger.debug(f"Dialogue detection: {dialogue_active}")
             else:
-                dialogue_active = False
-                cached_active = False
-                cached_text = ""
-            
-            # Final dialogue state combines detection and cache validation
-            final_dialogue_active = dialogue_active and cached_active
-            
-            state["game"]["dialogue_detected"] = {
-                "has_dialogue": final_dialogue_active,
-                "confidence": 1.0 if final_dialogue_active else 0.0,
-                "reason": "enhanced pokeemerald detection with cache validation"
-            }
-            logger.debug(f"Dialogue detection: {dialogue_active}, cached: {cached_active}, final: {final_dialogue_active}")
-            
-            # Update game_state to reflect the current dialogue cache state
-            # This ensures game_state is 'overworld' when dialogue is dismissed by A button
-            if not final_dialogue_active and state["game"]["game_state"] == "dialog":
-                state["game"]["game_state"] = "overworld"
-                logger.debug("Updated game_state from 'dialog' to 'overworld' after dialogue cache validation")
+                state["game"]["dialogue_detected"] = {
+                    "has_dialogue": False,
+                    "confidence": 0.0,
+                    "reason": "dialogue detection disabled"
+                }
             
             # Game progress context
             progress_context = self.get_game_progress_context()

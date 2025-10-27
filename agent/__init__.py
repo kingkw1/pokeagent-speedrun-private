@@ -141,6 +141,26 @@ class Agent:
                 
                 self.context['perception_output'] = perception_output
                 
+                # 1.5. Extract visual dialogue detection from VLM perception
+                # This replaces unreliable memory-based detection (42.9% accurate)
+                # with VLM's visual text_box_visible (85.7% accurate, no extra time cost)
+                visual_dialogue_active = False
+                if perception_output:
+                    visual_data = perception_output.get('visual_data', {})
+                    visual_elements = visual_data.get('visual_elements', {})
+                    text_box_visible = visual_elements.get('text_box_visible', None)
+                    
+                    # Primary: Trust VLM's text_box_visible flag
+                    if text_box_visible is not None:
+                        visual_dialogue_active = text_box_visible
+                    else:
+                        # Fallback: Check screen_context as backup indicator
+                        screen_context = visual_data.get('screen_context', '')
+                        visual_dialogue_active = (screen_context == 'dialogue')
+                
+                self.context['visual_dialogue_active'] = visual_dialogue_active
+                logger.info(f"[AGENT] Visual dialogue detection: {visual_dialogue_active}")
+                
                 # 2. Planning - decide strategy with robust programmatic check
                 should_replan = False
                 current_plan = self.context.get('planning_output', None)
@@ -233,7 +253,8 @@ class Agent:
                     frame,
                     state_data,
                     recent_actions,  # Use actual recent_actions from server
-                    self.vlm
+                    self.vlm,
+                    self.context.get('visual_dialogue_active', False)  # Pass VLM dialogue detection
                 )
                 
                 # SAFETY CHECK: Ensure action_output is valid

@@ -843,14 +843,28 @@ async def get_comprehensive_state():
         # This avoids expensive operations on rapid requests
         state = env.get_comprehensive_state()
         
-        # Ensure game state is consistent with cached dialog state
-        # Use the same cached dialog state as the status endpoint
-        is_dialog = env._cached_dialog_state if env else False
-        if is_dialog:
-            state["game"]["game_state"] = "dialog"
-        else:
-            # Force overworld if not in dialog (respect 5-second timeout)
-            state["game"]["game_state"] = "overworld"
+        # CORRECTED: Trust the memory reader's dialogue detection
+        # The memory reader CORRECTLY detects dialogue by reading game memory
+        # Don't override with broken OCR or stale caches
+        # The get_comprehensive_state() already includes proper game_state from memory
+        
+        # Only force game_state if it's completely missing (shouldn't happen)
+        if "game" not in state:
+            state["game"] = {}
+        if "game_state" not in state.get("game", {}):
+            # Fallback: check memory reader NOW for current state
+            if env.memory_reader:
+                is_in_battle = env.memory_reader.is_in_battle()
+                is_in_dialog = env.memory_reader.is_in_dialog()
+                
+                if is_in_battle:
+                    state["game"]["game_state"] = "battle"
+                elif is_in_dialog:
+                    state["game"]["game_state"] = "dialog"
+                else:
+                    state["game"]["game_state"] = "overworld"
+            else:
+                state["game"]["game_state"] = "unknown"
         
         # Include milestones for storyline objective auto-completion
         if env.milestone_tracker:

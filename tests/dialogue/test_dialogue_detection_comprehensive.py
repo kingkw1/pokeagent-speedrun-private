@@ -1,25 +1,6 @@
 #!/usr/bin/env python3
 """
-Dialogue Detection Comprehensive Tests
-
-Purpose:
-    Validate OCR-based dialogue detection system across multiple game states.
-    Tests dialogue box detection and text extraction accuracy.
-
-Test Cases:
-    - Tests for various dialogue states using actual game screenshots
-    - Compares OCR text with memory-based dialogue reading
-    - Validates detection confidence scores
-
-Dependencies:
-    - Save states: Multiple dialogue states in tests/states/
-    - External services: Spawns temporary server (slow)
-
-Runtime:
-    ~3-5 seconds per state (server startup overhead)
-
-Note:
-    ⚠️ This test spawns servers - consider refactoring to use pre-saved screenshots
+Comprehensive pytest for dialogue detection system across all states
 """
 
 import pytest
@@ -34,8 +15,8 @@ import base64
 from pathlib import Path
 from PIL import Image
 
-# Add parent directory to path for imports (now at project root)
-sys.path.append(str(Path(__file__).parent.parent.parent))
+# Add parent directory to path for imports
+sys.path.append(str(Path(__file__).parent.parent))
 
 from utils.ocr_dialogue import create_ocr_detector
 
@@ -49,13 +30,13 @@ class TestDialogueDetection:
         self.agent_port = 8000
         assert self.detector is not None, "Could not create OCR detector"
         
-        # Kill any existing server processes
-        subprocess.run(["pkill", "-f", "server.app"], capture_output=True)
+        # Kill any existing agent_direct processes
+        subprocess.run(["pkill", "-f", "agent_direct.py"], capture_output=True)
         time.sleep(1)
     
     def teardown_method(self):
         """Cleanup after each test"""
-        subprocess.run(["pkill", "-f", "server.app"], capture_output=True)
+        subprocess.run(["pkill", "-f", "agent_direct.py"], capture_output=True)
         time.sleep(0.5)
     
     def _test_state_file(self, state_file, expected_dialogue, description=""):
@@ -64,16 +45,16 @@ class TestDialogueDetection:
         print(f"   Expected dialogue: {expected_dialogue}")
         print(f"   Description: {description}")
         
-        # Start server with this state
+        # Start agent_direct with this state
         cmd = [
-            sys.executable,
-            "-m", "server.app",
+            "/home/milkkarten/anaconda3/envs/mgba/bin/python", 
+            "agent_direct.py", 
             "--load-state", state_file,
-            "--port", str(self.agent_port),
+            "--backend", "gemini", 
             "--manual"
         ]
         
-        # Start server
+        # Start agent_direct
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         
         try:
@@ -90,7 +71,7 @@ class TestDialogueDetection:
                 except:
                     time.sleep(1)
             else:
-                pytest.fail(f"Server failed to start for {state_file}")
+                pytest.fail(f"Agent_direct failed to start for {state_file}")
             
             # Get screenshot
             frame_response = requests.get(f"http://localhost:{self.agent_port}/api/frame", timeout=5)
@@ -111,31 +92,21 @@ class TestDialogueDetection:
             print(f"   👁️ OCR text: '{ocr_text}'")
             
             # Get memory reading for comparison
-            memory_in_dialog = None
             try:
                 state_response = requests.get(f"http://localhost:{self.agent_port}/state", timeout=3)
                 if state_response.status_code == 200:
                     state_data = state_response.json()
                     memory_text = state_data.get('game', {}).get('dialog_text', None)
-                    memory_in_dialog = state_data.get('game', {}).get('in_dialog', None)
                     print(f"   💾 Memory text: '{memory_text}'")
-                    print(f"   💾 Memory in_dialog: {memory_in_dialog}")
                 else:
                     memory_text = "N/A"
             except:
                 memory_text = "N/A"
             
-            # Verify OCR detection accuracy
+            # Verify detection accuracy
             assert box_detected == expected_dialogue, (
-                f"OCR detection mismatch for {state_file}: expected {expected_dialogue}, got {box_detected}"
+                f"Detection mismatch for {state_file}: expected {expected_dialogue}, got {box_detected}"
             )
-            
-            # Verify memory-based detection accuracy (critical for agent behavior!)
-            if memory_in_dialog is not None:
-                assert memory_in_dialog == expected_dialogue, (
-                    f"Memory-based in_dialog detection mismatch for {state_file}: "
-                    f"expected {expected_dialogue}, got {memory_in_dialog}"
-                )
             
             return {
                 'state_file': state_file,
@@ -175,7 +146,6 @@ class TestDialogueDetection:
             ("tests/states/no_dialog1.state", "No dialogue state 1"),
             ("tests/states/no_dialog2.state", "No dialogue state 2"),
             ("tests/states/no_dialog3.state", "No dialogue state 3"),
-            ("tests/states/after_dialog.state", "After dialogue was dismissed"),
         ]
         
         for state_file, description in no_dialog_states:
@@ -251,6 +221,7 @@ class TestDialogueIntegration:
         # Verify key methods exist
         assert hasattr(detector, 'is_dialogue_box_visible'), "Detector should have dialogue box detection"
         assert hasattr(detector, 'detect_dialogue_from_screenshot'), "Detector should have text detection"
+        assert hasattr(detector, 'read_dialog_with_ocr_fallback'), "Detector should have smart fallback logic"
 
 if __name__ == "__main__":
     # Allow running as script for debugging

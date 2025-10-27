@@ -10,6 +10,29 @@ from agent.system_prompt import system_prompt
 # Set up module logging
 logger = logging.getLogger(__name__)
 
+# Template phrases that indicate VLM returned instructions instead of actual game content
+TEMPLATE_PHRASES = [
+    "ONLY text from dialogue boxes",
+    "DO NOT include HUD/status text",
+    "character name if shown in dialogue box",
+    "exact menu header text or null",
+    "any button instructions like",
+    "describe NPCs, Pokemon, or characters",
+]
+
+def is_template_text(text):
+    """
+    Check if text is template instructions rather than actual game dialogue.
+    
+    The VLM sometimes returns the JSON template/instructions verbatim instead
+    of analyzing the actual image. This function detects that case.
+    """
+    if not text or not isinstance(text, str):
+        return False
+    text_lower = text.lower()
+    return any(phrase.lower() in text_lower for phrase in TEMPLATE_PHRASES)
+
+
 def perception_step(frame, state_data, vlm):
     """
     Extract structured visual information from the game frame using VLM-based analysis.
@@ -207,6 +230,30 @@ Return only the JSON with real observations:"""
                     visual_data = json.loads(json_text)
                     print(f"✅ [PERCEPTION] VLM extraction successful! Screen context: {visual_data.get('screen_context', 'unknown')}")
                     logger.info("[PERCEPTION] VLM extraction successful")
+                    
+                    # CRITICAL FIX: Check if VLM returned template text instead of real dialogue
+                    # If so, use OCR as fallback to detect actual dialogue
+                    dialogue_text = visual_data.get('on_screen_text', {}).get('dialogue', '')
+                    if dialogue_text and is_template_text(dialogue_text):
+                        print(f"⚠️ [PERCEPTION] VLM returned template text, using OCR fallback for dialogue detection")
+                        try:
+                            from utils.ocr_dialogue import create_ocr_detector
+                            detector = create_ocr_detector()
+                            ocr_dialogue = detector.detect_dialogue_from_screenshot(frame)
+                            
+                            if ocr_dialogue and ocr_dialogue.strip():
+                                print(f"✅ [OCR FALLBACK] Detected dialogue: '{ocr_dialogue}'")
+                                visual_data['on_screen_text']['dialogue'] = ocr_dialogue
+                                visual_data['screen_context'] = 'dialogue'
+                                visual_data['visual_elements']['text_box_visible'] = True
+                            else:
+                                print(f"ℹ️  [OCR FALLBACK] No dialogue detected")
+                                visual_data['on_screen_text']['dialogue'] = None
+                        except Exception as ocr_error:
+                            print(f"❌ [OCR FALLBACK] Failed: {ocr_error}")
+                            # Clear template text even if OCR fails
+                            visual_data['on_screen_text']['dialogue'] = None
+                    
                 else:
                     print(f"❌ [PERCEPTION] No JSON found in VLM response!")
                     logger.warning("[PERCEPTION] VLM response not in JSON format, using fallback")
