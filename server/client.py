@@ -125,7 +125,6 @@ def run_multiprocess_client(server_port=8000, args=None):
                         print("=" * 80)
                         print("📊 COMPREHENSIVE STATE (LLM View)")
                         print("=" * 80)
-                        from utils.state_formatter import format_state_for_llm
                         formatted_state = format_state_for_llm(state_data)
                         print(formatted_state)
                         print("=" * 80)

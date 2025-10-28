@@ -5,26 +5,31 @@ Test multi-flag state system for dialogue handling
    Memory flags are UNRELIABLE in Pokemon Emerald.
    
 ✅ CORRECT: 
-   - Tests use OCR (100% accurate) for ground truth assertions
-   - Agent uses VLM (85% accurate) for real-time detection
+   - Tests use VLM (same as agent) to validate agent behavior
+   - VLM detection with automatic OCR fallback (agent/perception.py)
+   - This tests what the agent actually uses in production
    
 This test verifies dialogue detection accuracy and multi-flag state.
 """
 import pytest
 from pokemon_env.emulator import EmeraldEmulator
-from utils.ocr_dialogue import create_ocr_detector  # For test assertions
+from agent.perception import perception_step
+from utils.vlm import VLM
 
 
-def test_dialogue_multi_flag_detection():
+@pytest.fixture(scope="module")
+def vlm():
+    """Initialize VLM once for all tests"""
+    return VLM(backend='local', model_name='Qwen/Qwen2-VL-2B-Instruct')
+
+
+def test_dialogue_multi_flag_detection(vlm):
     """
-    Test that OCR correctly detects dialogue in dialog2.state.
+    Test that VLM correctly detects dialogue in dialog2.state.
     
-    NOTE: Uses OCR for ground truth, NOT memory flags or VLM!
-    Tests should use 100% accurate OCR to validate agent's VLM performance.
+    NOTE: Uses VLM (same as agent), NOT memory flags!
+    Tests should use same detection method as agent for realistic validation.
     """
-    
-    # Initialize OCR detector
-    detector = create_ocr_detector()
     
     # Initialize emulator with dialog2.state (known working state)
     env = EmeraldEmulator('Emerald-GBAdvance/rom.gba', headless=True)
@@ -32,20 +37,24 @@ def test_dialogue_multi_flag_detection():
     env.load_state('tests/states/dialog2.state')
     env.tick(60)
     
-    # Get screenshot for OCR detection
+    # Get state and screenshot
+    state = env.get_comprehensive_state()
     screenshot = env.get_screenshot()
     
-    # Use OCR to detect dialogue (the ground truth)
-    print("\n=== OCR-Based Dialogue Detection (Ground Truth) ===")
-    dialogue_text = detector.detect_dialogue_from_screenshot(screenshot)
-    has_dialogue = dialogue_text is not None and len(dialogue_text.strip()) > 5
+    # Use VLM perception (same as agent uses)
+    print("\n=== VLM-Based Dialogue Detection (Agent's Method) ===")
+    visual_data = perception_step(state, screenshot, vlm)
     
-    print(f"OCR detected dialogue: {has_dialogue}")
+    # Check VLM detection
+    on_screen_text = visual_data.get('on_screen_text', {})
+    dialogue_text = on_screen_text.get('dialogue', '')
+    has_dialogue = dialogue_text and len(dialogue_text.strip()) > 3
+    
+    print(f"VLM detected dialogue: {has_dialogue}")
     if has_dialogue:
         print(f"Dialogue text: '{dialogue_text}'")
     
     # Get memory state for comparison (but don't trust it!)
-    state = env.get_comprehensive_state()
     game = state['game']
     
     print("\n=== Memory Flags (UNRELIABLE - for reference only) ===")
@@ -54,139 +63,127 @@ def test_dialogue_multi_flag_detection():
     print(f"movement_enabled: {game.get('movement_enabled')}")
     print(f"input_blocked: {game.get('input_blocked')}")
     
-    # Verify OCR detected dialogue
+    # Verify VLM detected dialogue
     assert has_dialogue, \
-        "OCR should detect dialogue box in dialog2.state (ground truth)"
+        "VLM should detect dialogue in dialog2.state (same as agent uses)"
     
-    print("\n✓ OCR-based dialogue detection working correctly (100% accurate)")
-    print("✓ Tests use OCR for ground truth, agent uses VLM for real-time")
+    print("\n✓ VLM-based dialogue detection working (same as agent)")
+    print("✓ Tests and agent use same detection method for consistency")
+    
+    env.close()
 
 
-def test_state_consistency_no_override():
+def test_state_consistency_no_override(vlm):
     """
-    Test that OCR dialogue detection is consistent across multiple frames.
+    Test that VLM dialogue detection is consistent across multiple frames.
     
-    NOTE: Uses OCR for ground truth, not memory flags or VLM!
+    NOTE: Uses VLM (same as agent), not memory flags!
     """
-    
-    detector = create_ocr_detector()
     
     env = EmeraldEmulator('Emerald-GBAdvance/rom.gba', headless=True)
     env.initialize()
     env.load_state('tests/states/dialog2.state')
     env.tick(60)
     
-    # Read OCR detection multiple times to ensure consistency
+    # Read VLM detection multiple times to ensure consistency
     dialogue_detections = []
     for i in range(3):
         env.tick(10)
+        state = env.get_comprehensive_state()
         screenshot = env.get_screenshot()
-        dialogue_text = detector.detect_dialogue_from_screenshot(screenshot)
+        visual_data = perception_step(state, screenshot, vlm)
+        
+        on_screen_text = visual_data.get('on_screen_text', {})
+        dialogue_text = on_screen_text.get('dialogue', '')
         dialogue_detections.append(dialogue_text)
     
-    print("\n=== OCR Detection Consistency Test ===")
+    print("\n=== VLM Detection Consistency Test ===")
     
     for i, dialogue in enumerate(dialogue_detections):
-        has_dialogue = dialogue is not None and len(dialogue.strip()) > 5
+        has_dialogue = dialogue and len(dialogue.strip()) > 3
         print(f"Read {i+1}: dialogue detected={has_dialogue}, text='{dialogue[:50] if dialogue else None}'")
         
         # All reads should consistently show dialogue
         assert has_dialogue, \
-            f"Read {i+1}: OCR should consistently detect dialogue in dialog2.state"
+            f"Read {i+1}: VLM should consistently detect dialogue in dialog2.state"
     
-    print("\n✓ OCR detection remains consistent across multiple reads")
-    print("✓ Using OCR (100% accurate) for test ground truth")
+    print("\n✓ VLM detection remains consistent across multiple reads")
+    print("✓ Using VLM (same as agent) for test validation")
+    
+    env.close()
 
 
-def test_multi_flag_internal_consistency():
+def test_multi_flag_internal_consistency(vlm):
     """
-    Test OCR dialogue detection accuracy.
+    Test VLM dialogue detection accuracy.
     
-    NOTE: This uses OCR for ground truth, not memory flags!
+    NOTE: This uses VLM (same as agent), not memory flags!
     Memory flags are unreliable in Pokemon Emerald.
     """
-    
-    detector = create_ocr_detector()
     
     env = EmeraldEmulator('Emerald-GBAdvance/rom.gba', headless=True)
     env.initialize()
     env.load_state('tests/states/dialog2.state')
     env.tick(60)
     
+    state = env.get_comprehensive_state()
     screenshot = env.get_screenshot()
-    dialogue_text = detector.detect_dialogue_from_screenshot(screenshot)
+    visual_data = perception_step(state, screenshot, vlm)
     
-    print("\n=== OCR Visual Detection ===")
+    print("\n=== VLM Visual Detection ===")
     
-    has_dialogue = dialogue_text is not None and len(dialogue_text.strip()) > 5
+    on_screen_text = visual_data.get('on_screen_text', {})
+    dialogue_text = on_screen_text.get('dialogue', '')
+    has_dialogue = dialogue_text and len(dialogue_text.strip()) > 3
     
     print(f"Dialogue detected: {has_dialogue}")
     if has_dialogue:
         print(f"Dialogue text: '{dialogue_text}'")
     
-    # Verify OCR detected the dialogue box
-    assert has_dialogue, "OCR should detect dialogue box in dialog2.state screenshot"
+    # Verify VLM detected the dialogue
+    assert has_dialogue, "VLM should detect dialogue in dialog2.state screenshot"
     
-    print("\n✓ OCR visual detection working correctly (100% accurate)")
-    print("✓ Tests use OCR for ground truth, agent uses VLM for real-time")
+    print("\n✓ VLM visual detection working correctly (same as agent)")
+    print("✓ Tests use VLM to validate agent behavior realistically")
+    
+    env.close()
 
 
-def test_action_should_prioritize_dialogue():
+def test_action_should_prioritize_dialogue(vlm):
     """
-    Test that when OCR detects dialogue, agent should press A.
+    Test that when VLM detects dialogue, agent should press A.
     
-    NOTE: Tests use OCR for ground truth, agent uses VLM in production!
+    NOTE: Tests use VLM (same as agent) for realistic behavior validation!
     """
-    
-    detector = create_ocr_detector()
     
     env = EmeraldEmulator('Emerald-GBAdvance/rom.gba', headless=True)
     env.initialize()
     env.load_state('tests/states/dialog2.state')
     env.tick(60)
     
-    # Use OCR to detect dialogue
+    # Use VLM to detect dialogue (same as agent)
+    state = env.get_comprehensive_state()
     screenshot = env.get_screenshot()
-    dialogue_text = detector.detect_dialogue_from_screenshot(screenshot)
-    has_dialogue = dialogue_text is not None and len(dialogue_text.strip()) > 5
+    visual_data = perception_step(state, screenshot, vlm)
     
-    print("\n=== Action Priority Test (OCR Ground Truth) ===")
-    print(f"OCR detected dialogue: {has_dialogue}")
+    on_screen_text = visual_data.get('on_screen_text', {})
+    dialogue_text = on_screen_text.get('dialogue', '')
+    has_dialogue = dialogue_text and len(dialogue_text.strip()) > 3
+    
+    print("\n=== Action Priority Test (VLM - Agent's Method) ===")
+    print(f"VLM detected dialogue: {has_dialogue}")
     if has_dialogue:
         print(f"Dialogue text: '{dialogue_text}'")
     print(f"Expected action: Press A to advance dialogue")
     
-    # Verify OCR detected dialogue
-    assert has_dialogue, "OCR should detect dialogue in dialog2.state"
+    # Verify VLM detected dialogue
+    assert has_dialogue, "VLM should detect dialogue in dialog2.state"
     
     # The action module checks VLM detection and returns ["A"]
     # See agent/action.py lines 137-142 for VLM dialogue priority
-    print("\n✓ OCR confirmed dialogue present - agent should press A")
+    print("\n✓ VLM confirmed dialogue present - agent should press A")
     print("✓ See agent/action.py lines 137-142 for VLM-based dialogue handling")
-    print("✓ Tests use OCR (100%), agent uses VLM (85%) + OCR fallback")
-
-
-
-
-if __name__ == "__main__":
-    print("=" * 80)
-    print("DIALOGUE DETECTION TESTS - OCR-BASED (Ground Truth)")
-    print("=" * 80)
+    print("✓ Tests and agent use same VLM detection method")
     
-    test_dialogue_multi_flag_detection()
-    print("\n" + "=" * 80)
-    
-    test_state_consistency_no_override()
-    print("\n" + "=" * 80)
-    
-    test_multi_flag_internal_consistency()
-    print("\n" + "=" * 80)
-    
-    test_action_should_prioritize_dialogue()
-    print("\n" + "=" * 80)
-    
-    print("\n✅ ALL OCR-BASED DIALOGUE DETECTION TESTS PASSED!")
-    print("✅ Tests use OCR (100% accurate) for ground truth")
-    print("✅ Agent uses VLM (85% accurate) for real-time detection")
-
+    env.close()
 

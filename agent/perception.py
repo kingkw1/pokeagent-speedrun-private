@@ -231,6 +231,73 @@ Return only the JSON with real observations:"""
                     print(f"✅ [PERCEPTION] VLM extraction successful! Screen context: {visual_data.get('screen_context', 'unknown')}")
                     logger.info("[PERCEPTION] VLM extraction successful")
                     
+                    # ============================================================
+                    # QWEN-2B DIALOGUE FIX: Simple Yes/No dialogue check
+                    # ============================================================
+                    # Qwen-2B often copies template text instead of extracting dialogue.
+                    # Add a second, very simple VLM call to directly ask about dialogue visibility.
+                    is_qwen_2b = vlm and hasattr(vlm, 'model_name') and 'Qwen2-VL-2B-Instruct' in vlm.model_name
+                    
+                    if is_qwen_2b:
+                        # Check if dialogue status is uncertain
+                        visual_elements = visual_data.get('visual_elements', {})
+                        text_box_visible = visual_elements.get('text_box_visible')
+                        
+                        # Only do secondary check if text_box_visible is missing/None or if dialogue seems like template
+                        dialogue_text = visual_data.get('on_screen_text', {}).get('dialogue', '')
+                        needs_secondary_check = (
+                            text_box_visible is None or 
+                            (dialogue_text and is_template_text(dialogue_text))
+                        )
+                        
+                        if needs_secondary_check:
+                            print(f"🔍 [QWEN-2B FIX] Running secondary dialogue check (text_box_visible={text_box_visible}, has_template={is_template_text(dialogue_text) if dialogue_text else False})")
+                            logger.info("[PERCEPTION] Qwen-2B: Performing secondary dialogue visibility check")
+                            
+                            try:
+                                # Simple yes/no prompt - use phrasing that works with Qwen-2B
+                                simple_dialogue_prompt = "Look at the bottom of the screen. Do you see a text box with dialogue? Answer YES or NO."
+                                
+                                # Make second VLM call with timeout
+                                signal.signal(signal.SIGALRM, timeout_handler)
+                                signal.alarm(30)  # Shorter timeout for simple query
+                                
+                                dialogue_check_response = vlm.get_query(frame, simple_dialogue_prompt, "DIALOGUE_CHECK")
+                                signal.alarm(0)  # Cancel timeout
+                                
+                                print(f"🔍 [QWEN-2B FIX] Dialogue check response: '{dialogue_check_response}'")
+                                
+                                # Parse YES/NO response
+                                response_upper = dialogue_check_response.strip().upper()
+                                has_dialogue_box = 'YES' in response_upper and 'NO' not in response_upper[:10]  # YES should come before NO
+                                
+                                # Update visual_data
+                                if 'visual_elements' not in visual_data:
+                                    visual_data['visual_elements'] = {}
+                                visual_data['visual_elements']['text_box_visible'] = has_dialogue_box
+                                
+                                print(f"✅ [QWEN-2B FIX] Secondary check complete: text_box_visible={has_dialogue_box}")
+                                logger.info(f"[PERCEPTION] Qwen-2B dialogue check: text_box_visible={has_dialogue_box}")
+                                
+                                # If dialogue box is visible but text was template, clear it
+                                if has_dialogue_box and dialogue_text and is_template_text(dialogue_text):
+                                    visual_data['on_screen_text']['dialogue'] = None
+                                    visual_data['screen_context'] = 'dialogue'
+                                    print(f"🔧 [QWEN-2B FIX] Cleared template text, set screen_context=dialogue")
+                                
+                            except (TimeoutError, Exception) as secondary_error:
+                                signal.alarm(0)  # Cancel timeout
+                                print(f"⚠️ [QWEN-2B FIX] Secondary dialogue check failed: {secondary_error}")
+                                logger.warning(f"[PERCEPTION] Qwen-2B dialogue check failed: {secondary_error}")
+                                # Default to False if check fails
+                                if 'visual_elements' not in visual_data:
+                                    visual_data['visual_elements'] = {}
+                                visual_data['visual_elements']['text_box_visible'] = False
+                    
+                    # ============================================================
+                    # END QWEN-2B FIX
+                    # ============================================================
+                    
                     # CRITICAL FIX: Check if VLM returned template text instead of real dialogue
                     # If so, use OCR as fallback to detect actual dialogue
                     dialogue_text = visual_data.get('on_screen_text', {}).get('dialogue', '')

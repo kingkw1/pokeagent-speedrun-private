@@ -3,46 +3,73 @@
 ⚠️ **CRITICAL: Memory-Based Detection is UNRELIABLE!**
 
 **DO NOT USE:**
-- ❌ `state['game']['in_dialog']` - Memory flag is unreliable in Pokemon Emerald
+- ❌ `state['game']['in_dialog']` - Memory flag is unreliable in Pokemon Emerald (42.9% accurate!)
 - ❌ Direct memory reading for dialogue state
 - ❌ Any test that checks `in_dialog` from `/state` endpoint
 
 **CORRECT APPROACH:**
 
-**For Tests (Ground Truth):**
-- ✅ **OCR detection** (100% accurate, slower) - Use for test assertions
-- ✅ `utils.ocr_dialogue.create_ocr_detector()` - Pixel-perfect dialogue box detection
-- ✅ Provides reliable ground truth for validating agent behavior
+**For Tests (Ground Truth via Server API):**
+- ✅ **OCR detection via server** (100% accurate) - Use for test assertions
+- ✅ Server's `/api/frame` endpoint + `utils.ocr_dialogue.create_ocr_detector()`
+- ✅ See `test_unit_ocr_vs_memory.py` for working example
+- ⚠️  OCR requires server context - doesn't work with direct emulator screenshots
+
+**For Tests (Agent Behavior Validation):**
+- ✅ **VLM detection** (same as agent uses) - Test what agent actually sees
+- ✅ `agent/perception.py` with VLM perception step
+- ✅ See `test_unit_multiflag_state.py` for working example
+- ✅ Works with direct emulator screenshots
 
 **For Agent (Production):**
 - ✅ **VLM detection** (85% accurate, fast) - What agent uses in real-time
-- ✅ `agent/perception.py` with `visual_dialogue_active` flag
-- ✅ OCR fallback when VLM returns template text
+- ✅ `agent/perception.py` extracts `visual_data['on_screen_text']['dialogue']`
+- ✅ `agent/action.py` lines 137-142: VLM dialogue priority with A-press
+- ✅ Automatic OCR fallback when VLM returns template text
 
 **Why Memory is Unreliable:**
-Pokemon Emerald's memory flags (`DIALOG_STATE`, `overworld_freeze`) are inconsistent:
+Pokemon Emerald's memory flags are inconsistent (proven in `test_unit_ocr_vs_memory.py`):
+- ❌ **42.9% accuracy** (3/7 correct) vs OCR's 100% accuracy (7/7 correct)
 - Can show `in_dialog=False` when dialogue box is visibly on screen (dialog2.state!)
-- Can show `in_dialog=True` with no dialogue (residual text)
+- Can show `in_dialog=True` with no dialogue visible (no_dialog1/2/3.state)
 - State transitions don't update flags reliably
 
-**OCR Detection for Tests (100% Accurate):**
+**OCR Detection for Tests (100% Accurate - Via Server):**
 ```python
+# Works ONLY via server API (see test_unit_ocr_vs_memory.py)
+import requests
 from utils.ocr_dialogue import create_ocr_detector
+
+# Start server with state
+# subprocess.Popen(["python", "-m", "server.app", "--load-state", "tests/states/dialog2.state"])
+
+# Get screenshot via server API
+frame_resp = requests.get("http://localhost:8000/api/frame")
+frame_data = frame_resp.json()
+image_data = base64.b64decode(frame_data['frame'])
+screenshot = Image.open(io.BytesIO(image_data))
+
+# OCR detection
 detector = create_ocr_detector()
-screenshot = env.get_screenshot()
-dialogue_text = detector.detect_dialogue_from_screenshot(screenshot)
-has_dialogue = dialogue_text is not None and len(dialogue_text.strip()) > 5
+has_dialogue = detector.is_dialogue_box_visible(screenshot)
 ```
 
-**VLM Detection for Agent (85% Accurate, Fast):**
+**VLM Detection for Tests & Agent (Same Method):**
 ```python
+# Works with direct emulator screenshots (see test_unit_multiflag_state.py)
+from pokemon_env.emulator import EmeraldEmulator
 from agent.perception import perception_step
 from utils.vlm import VLM
-vlm = VLM(backend='local', model_name='Qwen/Qwen2-VL-2B-Instruct')
+
+env = EmeraldEmulator('Emerald-GBAdvance/rom.gba', headless=True)
+env.load_state('tests/states/dialog2.state')
 screenshot = env.get_screenshot()
-observation = perception_step(screenshot, {}, vlm)
-dialogue = observation['visual_data']['on_screen_text']['dialogue']
-has_dialogue = dialogue is not None and len(str(dialogue)) > 5
+state = env.get_comprehensive_state()
+
+vlm = VLM(backend='local', model_name='Qwen/Qwen2-VL-2B-Instruct')
+visual_data = perception_step(state, screenshot, vlm)
+dialogue = visual_data['on_screen_text']['dialogue']
+has_dialogue = dialogue and len(dialogue.strip()) > 3
 ```
 
 **Agent Action Priority (See agent/action.py lines 137-142):**
@@ -54,6 +81,20 @@ The agent checks `visual_dialogue_active` (from VLM) and presses A when dialogue
 
 This directory contains all tests for dialogue detection and handling in Pokemon Emerald.
 
+### Test Status Summary
+
+**✅ WORKING - Unit Tests:**
+- `test_unit_ocr_vs_memory.py` - Proves OCR is 100% accurate vs memory 42.9%
+- `test_unit_detection.py` - Basic dialogue detection functions  
+- `test_unit_multiflag_state.py` - VLM detection (same as agent uses)
+
+**✅ READY - Integration Tests:**
+- `test_integration_dialogue_completion.py` - OCR-based dialogue clearing
+- `test_integration_agent_dialogue.py` - Agent dialogue handling
+- `test_integration_vlm_detection.py` - VLM accuracy tests (slow)
+
+**📁 Debug Scripts:** `debug/` folder contains diagnostic utilities
+
 ## Testing Philosophy
 
 Tests are organized from **foundational → integration → real-world usage**:
@@ -61,22 +102,28 @@ Tests are organized from **foundational → integration → real-world usage**:
 2. **Integration tests**: Verify components work together  
 3. **Agent tests**: Verify agent can complete dialogues in practice
 
+## Quick Start
+
+Run all unit tests:
+```bash
+cd tests/dialogue
+./run_all_tests.sh
+```
+
+Or run individually:
+```bash
+# OCR vs Memory comparison (proves OCR is 100% accurate)
+python test_unit_ocr_vs_memory.py
+
+# VLM detection tests (tests what agent actually uses)
+python test_unit_multiflag_state.py
+```
+
 ## Recommended Testing Order
 
 ### Level 1: Foundation - Unit Tests (Fast, ~30s total)
 
 Run these first to verify core dialogue system works:
-
-```bash
-# 1. Test multi-flag state system (most fundamental)
-pytest tests/dialogue/test_unit_multiflag_state.py -v
-
-# 2. Test dialogue detection logic
-pytest tests/dialogue/test_unit_detection.py -v
-
-# 3. Compare OCR vs memory detection
-pytest tests/dialogue/test_unit_ocr_vs_memory.py -v
-```
 
 **What these verify:**
 - ✅ Multi-flag state system correctly models overlapping states
