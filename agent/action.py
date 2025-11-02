@@ -137,10 +137,25 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     # 🎯 PRIORITY 1: VLM VISUAL DIALOGUE DETECTION (HIGHEST PRIORITY)
     # Use VLM's text_box_visible from perception - already runs, no extra cost
     # 85.7% accurate vs 42.9% for memory-based detection
+    # 
+    # DIALOGUE FALSE POSITIVE PROTECTION:
+    # Some locations (e.g., MOVING_VAN) have visual elements that VLM mistakes for dialogue boxes.
+    # Blacklist these specific locations to prevent the agent from spamming A button.
+    DIALOGUE_DETECTION_BLACKLIST = [
+        'MOVING_VAN',  # Has cardboard boxes that VLM mistakes for dialogue boxes
+        # Add other problematic locations here if discovered
+    ]
+    
     if visual_dialogue_active:
-        logger.info(f"💬 [DIALOGUE] VLM detected dialogue box visible - pressing A to advance")
-        print(f"💬 [DIALOGUE] VLM visual detection: dialogue box active, pressing A")
-        return ["A"]
+        current_location = state_data.get('player', {}).get('location', '')
+        
+        if current_location in DIALOGUE_DETECTION_BLACKLIST:
+            logger.warning(f"💬 [DIALOGUE] VLM detected dialogue but location '{current_location}' is blacklisted - ignoring false positive")
+            print(f"⚠️ [DIALOGUE] Ignoring VLM dialogue in {current_location} (known false positive)")
+        else:
+            logger.info(f"💬 [DIALOGUE] VLM confirmed dialogue box visible - pressing A to advance")
+            print(f"💬 [DIALOGUE] VLM visual detection: dialogue box active, pressing A")
+            return ["A"]
     
     # 🚨 PRIORITY 2: NEW GAME MENU DETECTION
     # Must happen before ANY other logic to prevent override conflicts
@@ -313,14 +328,25 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     
     # NAVIGATION DECISION LOGIC: Clear hierarchy of what mode to use
     
-    # CRITICAL: Check dialogue state using new multi-flag system
-    # If dialogue is active, we MUST clear it before doing anything else
+    # PRIORITY 2: MEMORY-BASED DIALOGUE DETECTION (SECONDARY CHECK)
+    # Check game memory's in_dialog flag as backup to VLM detection
+    # Note: Less reliable than VLM (42.9% accurate) but catches cases VLM might miss
+    # 
+    # DIALOGUE FALSE POSITIVE PROTECTION:
+    # Apply same blacklist as VLM detection - some locations incorrectly report in_dialog=True
     in_dialog = game_data.get('in_dialog', False)
-    logger.info(f"[ACTION] Multi-flag dialogue check: in_dialog={in_dialog}")
+    logger.info(f"[ACTION] Memory-based dialogue check: in_dialog={in_dialog}")
+    
     if in_dialog:
-        logger.info(f"[ACTION] Dialogue active - pressing A to advance")
-        print(f"💬 [DIALOGUE] in_dialog=True detected - pressing A to advance dialogue")
-        return ["A"]
+        current_location = player_data.get('location', '')
+        
+        if current_location in DIALOGUE_DETECTION_BLACKLIST:
+            logger.warning(f"💬 [DIALOGUE] in_dialog=True but location '{current_location}' is blacklisted - ignoring false positive")
+            print(f"⚠️ [DIALOGUE] Ignoring in_dialog flag in {current_location} (known false positive)")
+        else:
+            logger.info(f"💬 [DIALOGUE] Memory confirms dialogue active - pressing A to advance")
+            print(f"💬 [DIALOGUE] in_dialog=True detected - pressing A to advance dialogue")
+            return ["A"]
     
     # 1. Post-name override: Only when name is set but intro cutscene isn't complete yet
     # FIXED: Don't activate if player has already progressed beyond intro (has Pokemon on routes)

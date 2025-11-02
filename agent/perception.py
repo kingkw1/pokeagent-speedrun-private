@@ -255,8 +255,9 @@ Return only the JSON with real observations:"""
                             logger.info("[PERCEPTION] Qwen-2B: Performing secondary dialogue visibility check")
                             
                             try:
-                                # Simple yes/no prompt - use phrasing that works with Qwen-2B
-                                simple_dialogue_prompt = "Look at the bottom of the screen. Do you see a text box with dialogue? Answer YES or NO."
+                                # More specific prompt to avoid false positives (e.g., cardboard boxes in moving van)
+                                # Explicitly mention "white text box" and "character dialogue" to be clear
+                                simple_dialogue_prompt = "Is there a white text box at the bottom of the screen showing character dialogue or speech? Answer YES or NO."
                                 
                                 # Make second VLM call with timeout
                                 signal.signal(signal.SIGALRM, timeout_handler)

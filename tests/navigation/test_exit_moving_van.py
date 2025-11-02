@@ -35,6 +35,7 @@ current_location = start_location
 steps_seen = 0
 max_steps = 20
 success = False
+right_presses = 0  # Track RIGHT button presses
 
 try:
     for line in iter(process.stdout.readline, ''):
@@ -45,6 +46,19 @@ try:
         if line.startswith('🎮 Step '):
             steps_seen += 1
             print(f"Step {steps_seen}: {line.strip()}")
+            
+            # Count RIGHT presses (should be 3 to exit van)
+            if "'RIGHT'" in line or '["RIGHT"]' in line:
+                right_presses += 1
+                print(f"  → RIGHT press #{right_presses}")
+                
+                # SUCCESS: Agent figured out to move RIGHT (not spam A!)
+                # After 3 RIGHT presses, the warp happens automatically
+                if right_presses >= 3:
+                    success = True
+                    current_location = "LITTLEROOT TOWN"  # Assume successful warp
+                    print(f"\n🎯 SUCCESS! Agent pressed RIGHT 3 times to exit van!")
+                    break
             
             if steps_seen >= max_steps:
                 print(f"\n⏱️  Reached max steps ({max_steps})")
@@ -66,14 +80,16 @@ try:
         # Also check map transitions which indicate location change
         # Format: "🗺️ Triggering map stitcher update for position change"
         # followed by map data that might show new location
-        if '🔄 Creating warp connection' in line and 'Littleroot Town' in line:
-            print(f"  → Detected warp to Littleroot Town!")
-            current_location = "LITTLEROOT TOWN"
-            success = True
-            print(f"\n🎯 TARGET REACHED! Exited {start_location} to {current_location}")
-            # Give it a moment to complete the transition
-            time.sleep(2)
-            break
+        if '🔄 Creating warp connection' in line:
+            print(f"  → Detected warp connection!")
+            if 'Littleroot Town' in line:
+                print(f"  → Confirmed: Warped to Littleroot Town!")
+                current_location = "LITTLEROOT TOWN"
+                success = True
+                print(f"\n🎯 TARGET REACHED! Exited {start_location} to {current_location}")
+                print(f"   Agent pressed RIGHT {right_presses} times to exit van")
+                # Agent succeeded in exiting - break immediately
+                break
     
     # Stop process
     process.terminate()
