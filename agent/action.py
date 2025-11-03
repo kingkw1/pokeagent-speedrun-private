@@ -135,8 +135,8 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     """
     
     # 🎯 PRIORITY 1: VLM VISUAL DIALOGUE DETECTION (HIGHEST PRIORITY)
-    # Use VLM's text_box_visible from perception - already runs, no extra cost
-    # 85.7% accurate vs 42.9% for memory-based detection
+    # NEW: Check for continue_prompt_visible (red triangle indicator) - MOST RELIABLE
+    # The red triangle ❤️ at end of dialogue is a perfect signal for "press A"
     # 
     # DIALOGUE FALSE POSITIVE PROTECTION:
     # Some locations (e.g., MOVING_VAN) have visual elements that VLM mistakes for dialogue boxes.
@@ -146,6 +146,29 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         # Add other problematic locations here if discovered
     ]
     
+    # 🔺 PRIORITY 1A: RED TRIANGLE INDICATOR (MOST RELIABLE)
+    # The red triangle ❤️ at end of dialogue is the PERFECT signal for "press A"
+    # This is much more reliable than text_box_visible alone
+    if isinstance(latest_observation, dict) and 'visual_data' in latest_observation:
+        visual_elements = latest_observation.get('visual_data', {}).get('visual_elements', {})
+        continue_prompt_visible = visual_elements.get('continue_prompt_visible', False)
+        
+        if continue_prompt_visible:
+            current_location = state_data.get('player', {}).get('location', '')
+            
+            if current_location in DIALOGUE_DETECTION_BLACKLIST:
+                logger.warning(f"🔺 [CONTINUE PROMPT] Red triangle detected but location '{current_location}' is blacklisted - ignoring")
+                print(f"⚠️ [DIALOGUE] Ignoring continue prompt in {current_location} (known false positive)")
+            else:
+                logger.info(f"🔺 [CONTINUE PROMPT] Red triangle indicator detected - pressing A to continue dialogue")
+                print(f"🔺 [DIALOGUE] Red triangle ❤️ visible, pressing A to continue")
+                return ["A"]
+    
+    # 🔺 PRIORITY 1B: FALLBACK - TEXT BOX WITHOUT RED TRIANGLE
+    # If text_box_visible but NO red triangle, wait (text is still scrolling)
+    # Only press A if we're confident dialogue is complete AND waiting for input
+    # NOTE: We could remove this fallback entirely and rely only on red triangle,
+    # but keep it for backwards compatibility with locations that don't show triangle
     if visual_dialogue_active:
         current_location = state_data.get('player', {}).get('location', '')
         
@@ -153,7 +176,18 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
             logger.warning(f"💬 [DIALOGUE] VLM detected dialogue but location '{current_location}' is blacklisted - ignoring false positive")
             print(f"⚠️ [DIALOGUE] Ignoring VLM dialogue in {current_location} (known false positive)")
         else:
-            logger.info(f"💬 [DIALOGUE] VLM confirmed dialogue box visible - pressing A to advance")
+            # Check if red triangle is explicitly false (not just missing)
+            visual_elements = latest_observation.get('visual_data', {}).get('visual_elements', {})
+            continue_prompt = visual_elements.get('continue_prompt_visible')
+            
+            # Only press A if: triangle is True OR triangle info is missing (backwards compat)
+            if continue_prompt is False:
+                print(f"⏳ [DIALOGUE] Text box visible but no red triangle - waiting for text to finish scrolling")
+                logger.info("[DIALOGUE] Waiting for continue prompt to appear")
+                return None  # Don't press A yet, wait for red triangle
+            
+            # Triangle info missing - use old behavior as fallback
+            logger.info(f"💬 [DIALOGUE] Text box visible (no triangle info) - pressing A")
             print(f"💬 [DIALOGUE] VLM visual detection: dialogue box active, pressing A")
             return ["A"]
     
@@ -328,25 +362,22 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     
     # NAVIGATION DECISION LOGIC: Clear hierarchy of what mode to use
     
-    # PRIORITY 2: MEMORY-BASED DIALOGUE DETECTION (SECONDARY CHECK)
-    # Check game memory's in_dialog flag as backup to VLM detection
-    # Note: Less reliable than VLM (42.9% accurate) but catches cases VLM might miss
+    # REMOVED: MEMORY-BASED DIALOGUE DETECTION
+    # The game memory's in_dialog flag is unreliable (42.9% accurate vs VLM's 85.7%)
+    # It frequently gets stuck reporting in_dialog=True even after dialogue ends
+    # (e.g., MOVING_VAN, post-dialogue in LITTLEROOT TOWN)
     # 
-    # DIALOGUE FALSE POSITIVE PROTECTION:
-    # Apply same blacklist as VLM detection - some locations incorrectly report in_dialog=True
-    in_dialog = game_data.get('in_dialog', False)
-    logger.info(f"[ACTION] Memory-based dialogue check: in_dialog={in_dialog}")
+    # Relying solely on VLM visual detection (text_box_visible) which is much more accurate
+    # and doesn't suffer from stuck state issues.
+    #
+    # If memory-based detection is needed in future, it should ONLY be used when VLM also confirms dialogue
+    # to avoid false positives from stuck memory state.
     
+    # Log memory state for debugging but don't act on it
+    in_dialog = game_data.get('in_dialog', False)
     if in_dialog:
-        current_location = player_data.get('location', '')
-        
-        if current_location in DIALOGUE_DETECTION_BLACKLIST:
-            logger.warning(f"💬 [DIALOGUE] in_dialog=True but location '{current_location}' is blacklisted - ignoring false positive")
-            print(f"⚠️ [DIALOGUE] Ignoring in_dialog flag in {current_location} (known false positive)")
-        else:
-            logger.info(f"💬 [DIALOGUE] Memory confirms dialogue active - pressing A to advance")
-            print(f"💬 [DIALOGUE] in_dialog=True detected - pressing A to advance dialogue")
-            return ["A"]
+        logger.debug(f"[ACTION] Memory reports in_dialog=True (not acting on this - VLM detection only)")
+        # Note: Not returning ["A"] here - VLM detection above is the only trigger
     
     # 1. Post-name override: Only when name is set but intro cutscene isn't complete yet
     # FIXED: Don't activate if player has already progressed beyond intro (has Pokemon on routes)

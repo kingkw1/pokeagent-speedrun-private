@@ -103,86 +103,56 @@ def perception_step(frame, state_data, vlm):
                 for direction, description in movement_options.items():
                     movement_context += f"\n- {direction}: {description}"
             
-            # Create focused JSON extraction prompt specifically for Pokemon Emerald
+            # Create SIMPLIFIED JSON extraction prompt for Pokemon Emerald
+            # CRITICAL: Keep prompt short to prevent VLM hallucinations/template echoing
             extraction_prompt = f"""
-Look at this Pokemon Emerald game screenshot and analyze what you see for navigation purposes.
+Analyze this Pokemon Emerald screenshot. Current state: {state_summary}
 
-Current game state: {state_summary}{movement_context}
+Look at the image and extract:
 
-CRITICAL NAVIGATION ANALYSIS:
-You are looking at a Pokemon game screen. The player needs to NAVIGATE effectively.
+1. DIALOGUE BOX CHECK (CRITICAL):
+   - Is there a white/black text box at the BOTTOM of the screen?
+   - If YES: Extract the dialogue text you see
+   - Look for a small RED TRIANGLE ❤️ or arrow at the END of the text
+   - The red triangle means "waiting for A button press"
+   - IGNORE the player name display at TOP of screen (e.g., "Player: JOHNNY")
+   - ONLY extract text from dialogue boxes at BOTTOM of screen
 
-LOCATION CONTEXT: {state_summary}
+2. SCREEN TYPE:
+   - "overworld" = top-down map view with player character
+   - "dialogue" = dialogue box is the main focus
+   - "battle" = Pokemon battle interface
+   - "menu" = menu is open
 
-1. SCREEN TYPE DETECTION:
-   - If you see a top-down view of a character on paths/grass/routes = "overworld"
-   - If you see dialogue text at bottom of screen = "dialogue"
-   - If you see a battle interface with Pokemon = "battle"
+3. NAVIGATION (for overworld only):
+   - Describe what you see in each direction (paths, obstacles, exits)
 
-2. FOR OVERWORLD NAVIGATION:
-   - LOOK FOR PATHS: Light colored areas where player can walk (roads, paths, clearings)
-   - LOOK FOR GRASS: Green areas (may have wild Pokemon)
-   - LOOK FOR OBSTACLES: Trees, rocks, water, buildings that block movement
-   - LOOK FOR TRANSITIONS: Edges of map where player can move to new areas
-   - DESCRIBE EACH DIRECTION: What's visible UP/DOWN/LEFT/RIGHT from player?
-
-3. FOR INDOOR/ROOM NAVIGATION:
-   - LOOK FOR EXITS: Dark rectangles at edges = doors/exits
-   - LOOK FOR FURNITURE: Tables, beds, computers that block movement
-   - IDENTIFY INTERACTABLES: NPCs, computers, items to press A on
-
-Based on what is visible in the image, fill this JSON with your observations:
+Return JSON:
 
 {{
-    "screen_context": "overworld, battle, menu, dialogue, title, or cutscene",
+    "screen_context": "overworld or dialogue or battle or menu",
     "on_screen_text": {{
-        "dialogue": "ONLY text from dialogue boxes with white/black text boxes at bottom of screen. DO NOT include HUD/status text. If no dialogue box visible, use null",
-        "speaker": "character name if shown in dialogue box or null", 
-        "menu_title": "exact menu header text or null",
-        "button_prompts": ["any button instructions like 'Press A' or empty array"]
+        "dialogue": "exact text from dialogue box or null if none",
+        "speaker": "character name or null",
+        "menu_title": "menu title or null"
     }},
-    "visible_entities": ["describe NPCs, Pokemon, or characters you see in the game world - NOT the player's own Pokemon"],
+    "visible_entities": ["NPCs or Pokemon you see"],
     "navigation_info": {{
-        "exits_visible": ["describe visible exits: 'path continues north', 'door to building south', 'route edge east'"],
-        "interactable_objects": ["NPCs, trainers, items, computers - things that show dialogue when you press A"],
-        "movement_barriers": ["trees', 'rocks', 'water', 'walls', 'furniture' - things blocking movement"],
-        "open_paths": ["DESCRIBE what you see in each direction: 'UP: clear grass path', 'DOWN: route continues south', 'LEFT: trees blocking', 'RIGHT: path to town'"]
+        "open_paths": ["UP: what you see", "DOWN: what you see", "LEFT: what you see", "RIGHT: what you see"]
     }},
-    "spatial_layout": {{
-        "player_position": "where is the small player character sprite in the scene?",
-        "room_type": "indoor room, outdoor route, town, forest, etc.",
-        "notable_features": ["paths, roads, exits, doors, town entrances, route connections visible in THIS image"]
-    }},
-    "menu_state": "open menu name or closed",
     "visual_elements": {{
-        "health_bars_visible": true_or_false,
-        "pokemon_sprites_visible": true_or_false,
-        "overworld_map_visible": true_or_false,
-        "text_box_visible": true_or_false
+        "text_box_visible": true_or_false,
+        "continue_prompt_visible": true_or_false
     }}
 }}
 
-CRITICAL - DIALOGUE vs HUD:
-- Dialogue boxes appear at the BOTTOM of the screen with text from NPCs/story
-- The HUD/status overlay (player name, location, position, money, HP) is NOT dialogue
-- ONLY extract dialogue if you see an actual dialogue text box
-- If you just see the overworld with HUD, set dialogue to null
+CRITICAL RULES:
+- If you see a red triangle ❤️ at end of dialogue, set continue_prompt_visible = true
+- DO NOT copy prompt text into the JSON - analyze the actual image
+- If no dialogue box, set dialogue = null and text_box_visible = false
+- Return only real observations from THIS image
 
-IMPORTANT:
-- Only describe what you actually see in THIS specific image
-- Don't make up information about battles or Pokemon not shown
-- Don't copy text from instructions or system prompts
-- Don't repeat the same response - analyze THIS frame freshly
-- If you see a top-down map view with no text box, use "overworld" and dialogue=null
-
-NAVIGATION ANALYSIS GUIDE:
-- Look for doorways, stairs, passages leading to other areas
-- Identify NPCs, computers, boxes, or other objects you could interact with by pressing A
-- Notice walls, furniture, or other obstacles that would block movement
-- See which directions have clear floor/grass areas you could walk to
-- Use descriptive terms like "door to the south", "stairs leading up", "computer on the left"
-
-Return only the JSON with real observations:"""
+JSON response:"""
             
             # Make VLM call with timeout protection
             def timeout_handler(signum, frame):
@@ -232,6 +202,139 @@ Return only the JSON with real observations:"""
                     logger.info("[PERCEPTION] VLM extraction successful")
                     
                     # ============================================================
+                    # FALSE POSITIVE FILTERING - HUD/Status text detection
+                    # ============================================================
+                    # The VLM sometimes mistakes HUD elements (player name, status bars) for dialogue
+                    # Filter out HUD patterns that are not real dialogue boxes
+                    def is_hud_text(data):
+                        """Check if dialogue is actually just HUD/status text, not real dialogue"""
+                        if not isinstance(data, dict):
+                            return False
+                        
+                        dialogue = data.get('on_screen_text', {}).get('dialogue', '')
+                        if not dialogue:
+                            return False
+                        
+                        dialogue_str = str(dialogue).strip()
+                        
+                        import re
+                        
+                        # Pattern 1: Debug/Status HUD with pipe-separated fields
+                        # Example: "Player: JOHNNY | Location: TOWN | Pos: (8, 7) | State: dialog | Money: $3000..."
+                        if '|' in dialogue_str and any(keyword in dialogue_str for keyword in ['Location:', 'Pos:', 'State:', 'Money:', 'Pokedex:', 'Time:']):
+                            return True
+                        
+                        # Pattern 2: Simple player name HUD
+                        # Examples: "Player: JOHNNY", "PLAYER: JOHNNY"
+                        player_hud_patterns = [
+                            r'^Player:\s*\w+$',  # "Player: JOHNNY"
+                            r'^PLAYER:\s*\w+$',  # "PLAYER: JOHNNY"
+                            r'^\w+:\s*JOHNNY$',  # "Johnny: JOHNNY" (confused VLM)
+                        ]
+                        
+                        for pattern in player_hud_patterns:
+                            if re.match(pattern, dialogue_str, re.IGNORECASE):
+                                return True
+                        
+                        return False
+                    
+                    if is_hud_text(visual_data):
+                        dialogue_preview = str(visual_data.get('on_screen_text', {}).get('dialogue', ''))[:100]
+                        print(f"🚫 [FALSE POSITIVE] VLM detected HUD/status text as dialogue!")
+                        print(f"     Text: '{dialogue_preview}...'")
+                        print(f"     This is NOT a dialogue box, clearing...")
+                        logger.warning("[PERCEPTION] Filtered out HUD/status text mistaken for dialogue")
+                        
+                        # Clear the false positive dialogue
+                        visual_data['on_screen_text']['dialogue'] = None
+                        visual_data['on_screen_text']['speaker'] = None
+                        visual_data['screen_context'] = 'overworld'  # Correct the context
+                        if 'visual_elements' not in visual_data:
+                            visual_data['visual_elements'] = {}
+                        visual_data['visual_elements']['text_box_visible'] = False
+                        visual_data['visual_elements']['continue_prompt_visible'] = False
+                    
+                    # ============================================================
+                    # TEMPLATE TEXT DETECTION - VLM hallucination check
+                    # ============================================================
+                    # Sometimes VLM returns the instruction text instead of analyzing the image
+                    # Check for common template phrases and flag as invalid
+                    def contains_template_phrases(data):
+                        """Check if data contains instruction text instead of real observations"""
+                        if not isinstance(data, dict):
+                            return False
+                        
+                        # Check dialogue field for instruction text
+                        dialogue = data.get('on_screen_text', {}).get('dialogue', '')
+                        if dialogue:
+                            template_phrases = [
+                                'ONLY text from dialogue boxes',
+                                'DO NOT include HUD',
+                                'If no dialogue box visible',
+                                'exact text from dialogue',
+                                'or null if none'
+                            ]
+                            dialogue_upper = str(dialogue).upper()
+                            if any(phrase.upper() in dialogue_upper for phrase in template_phrases):
+                                return True
+                        
+                        # Check if speaker field has instruction text
+                        speaker = data.get('on_screen_text', {}).get('speaker', '')
+                        if speaker and ('character name' in str(speaker).lower() or 'or null' in str(speaker).lower()):
+                            return True
+                        
+                        return False
+                    
+                    if contains_template_phrases(visual_data):
+                        print(f"⚠️ [TEMPLATE DETECTED] VLM returned instruction text instead of analyzing image!")
+                        print(f"     This indicates VLM hallucination. Doing simple dialogue check...")
+                        logger.warning("[PERCEPTION] VLM returned template text - doing simple dialogue/triangle check")
+                        
+                        # Try a much simpler VLM call to detect dialogue and red triangle
+                        try:
+                            signal.signal(signal.SIGALRM, timeout_handler)
+                            signal.alarm(30)
+                            
+                            # Ask two simple questions
+                            simple_prompt = """Look at this Pokemon game screenshot. Answer these 2 questions:
+
+1. Is there a white text box at the bottom of the screen? (YES/NO)
+2. Do you see a small red triangle ❤️ or arrow at the end of the text? (YES/NO)
+
+Answer in format: "1: YES/NO, 2: YES/NO" """
+                            
+                            simple_response = vlm.get_query(frame, simple_prompt, "SIMPLE_CHECK")
+                            signal.alarm(0)
+                            
+                            print(f"🔍 [SIMPLE CHECK] Response: '{simple_response}'")
+                            
+                            # Parse response
+                            response_upper = simple_response.upper()
+                            has_text_box = '1' in response_upper and 'YES' in response_upper.split('2')[0]
+                            has_triangle = '2' in response_upper and 'YES' in response_upper.split('2')[-1]
+                            
+                            # Update visual_data with simple check results
+                            visual_data['on_screen_text']['dialogue'] = None
+                            visual_data['on_screen_text']['speaker'] = None
+                            if 'visual_elements' not in visual_data:
+                                visual_data['visual_elements'] = {}
+                            visual_data['visual_elements']['text_box_visible'] = has_text_box
+                            visual_data['visual_elements']['continue_prompt_visible'] = has_triangle
+                            
+                            print(f"✅ [SIMPLE CHECK] text_box={has_text_box}, red_triangle={has_triangle}")
+                            
+                        except Exception as e:
+                            signal.alarm(0)
+                            print(f"⚠️ [SIMPLE CHECK] Failed: {e}")
+                            # Clear and mark as no dialogue
+                            visual_data['on_screen_text']['dialogue'] = None
+                            visual_data['on_screen_text']['speaker'] = None
+                            if 'visual_elements' not in visual_data:
+                                visual_data['visual_elements'] = {}
+                            visual_data['visual_elements']['text_box_visible'] = False
+                            visual_data['visual_elements']['continue_prompt_visible'] = False
+                    
+                    # ============================================================
                     # QWEN-2B DIALOGUE FIX: Simple Yes/No dialogue check
                     # ============================================================
                     # Qwen-2B often copies template text instead of extracting dialogue.
@@ -279,6 +382,18 @@ Return only the JSON with real observations:"""
                                 
                                 print(f"✅ [QWEN-2B FIX] Secondary check complete: text_box_visible={has_dialogue_box}")
                                 logger.info(f"[PERCEPTION] Qwen-2B dialogue check: text_box_visible={has_dialogue_box}")
+                                
+                                # OVERRIDE LOGIC: If VLM extracted real dialogue text AND classified as dialogue screen,
+                                # but secondary check says NO, trust the primary extraction
+                                if not has_dialogue_box and dialogue_text and not is_template_text(dialogue_text):
+                                    screen_context = visual_data.get('screen_context', '')
+                                    if screen_context == 'dialogue' and len(dialogue_text) > 10:
+                                        print(f"🔧 [QWEN-2B FIX] Secondary check said NO but primary extracted real dialogue:")
+                                        print(f"     Dialogue: '{dialogue_text[:50]}...'")
+                                        print(f"     Screen context: '{screen_context}'")
+                                        print(f"     Overriding: text_box_visible = True")
+                                        visual_data['visual_elements']['text_box_visible'] = True
+                                        logger.info("[PERCEPTION] Overriding secondary check - primary extraction has strong dialogue evidence")
                                 
                                 # If dialogue box is visible but text was template, clear it
                                 if has_dialogue_box and dialogue_text and is_template_text(dialogue_text):
