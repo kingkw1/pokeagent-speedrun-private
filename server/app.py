@@ -85,6 +85,9 @@ memory_lock = threading.Lock()  # New lock for memory operations to prevent race
 state_update_thread = None
 state_update_running = False
 
+# Signal handler state
+signal_handler_called = False
+
 # Button mapping removed - handled by client
 
 # Video recording functions
@@ -285,7 +288,13 @@ def periodic_milestone_updater():
 
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully"""
-    global running, state_update_running
+    global running, state_update_running, signal_handler_called
+    
+    # Prevent reentrant calls
+    if signal_handler_called:
+        return
+    signal_handler_called = True
+    
     print(f"\nReceived signal {signum}, shutting down gracefully...")
     running = False
     state_update_running = False

@@ -530,10 +530,10 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         action_context.append("=== BATTLE MODE ===")
         battle_info = game_data.get('battle_info', {})
         if battle_info:
-            if 'player_pokemon' in battle_info:
+            if 'player_pokemon' in battle_info and battle_info['player_pokemon']:
                 player_pkmn = battle_info['player_pokemon']
                 action_context.append(f"Your Pokemon: {player_pkmn.get('species_name', player_pkmn.get('species', 'Unknown'))} (Lv.{player_pkmn.get('level', '?')}) HP: {player_pkmn.get('current_hp', '?')}/{player_pkmn.get('max_hp', '?')}")
-            if 'opponent_pokemon' in battle_info:
+            if 'opponent_pokemon' in battle_info and battle_info['opponent_pokemon']:
                 opp_pkmn = battle_info['opponent_pokemon']
                 action_context.append(f"Opponent: {opp_pkmn.get('species_name', opp_pkmn.get('species', 'Unknown'))} (Lv.{opp_pkmn.get('level', '?')}) HP: {opp_pkmn.get('current_hp', '?')}/{opp_pkmn.get('max_hp', '?')}")
     else:

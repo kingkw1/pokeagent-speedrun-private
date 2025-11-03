@@ -518,8 +518,8 @@ def create_programmatic_visual_data(game_state, in_battle, current_location, gam
         }
     elif in_battle:
         battle_info = game_data.get('battle_info', {})
-        player_pokemon = battle_info.get('player_pokemon', {})
-        opponent_pokemon = battle_info.get('opponent_pokemon', {})
+        player_pokemon = battle_info.get('player_pokemon') or {}
+        opponent_pokemon = battle_info.get('opponent_pokemon') or {}
         
         return {
             "_source": "programmatic",
@@ -533,12 +533,12 @@ def create_programmatic_visual_data(game_state, in_battle, current_location, gam
             "visible_entities": [
                 {
                     "type": "player_pokemon",
-                    "name": player_pokemon.get('species', 'Unknown'),
+                    "name": player_pokemon.get('species', 'Unknown') if player_pokemon else 'Unknown',
                     "position": "bottom_left"
                 },
                 {
                     "type": "opponent_pokemon", 
-                    "name": opponent_pokemon.get('species', 'Unknown'),
+                    "name": opponent_pokemon.get('species', 'Unknown') if opponent_pokemon else 'Unknown',
                     "position": "top_right"
                 }
             ],
