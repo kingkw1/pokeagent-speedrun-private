@@ -26,7 +26,7 @@ def benchmark_detection_methods(num_iterations=100):
     print(f"Running {num_iterations} iterations of each method...\n")
     
     # Start server with a test state
-    cmd = ["python", "-m", "server.app", "--load-state", "tests/states/dialog.state"]
+    cmd = ["python", "-m", "server.app", "--load-state", "tests/save_states/dialog.state"]
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     
     try:

@@ -167,7 +167,7 @@ class TestServerMapValidation:
     
     def test_house_state_map(self, server_tester):
         """Test map reading from house state"""
-        assert server_tester.start_server("tests/states/house.state"), "Failed to start server"
+        assert server_tester.start_server("tests/save_states/house.state"), "Failed to start server"
         
         map_data = server_tester.get_map_data()
         assert map_data is not None, "Failed to get map data"
@@ -185,7 +185,7 @@ class TestServerMapValidation:
     
     def test_upstairs_state_map(self, server_tester):
         """Test map reading from upstairs state"""
-        assert server_tester.start_server("tests/states/upstairs.state"), "Failed to start server"
+        assert server_tester.start_server("tests/save_states/upstairs.state"), "Failed to start server"
         
         map_data = server_tester.get_map_data()
         assert map_data is not None, "Failed to get map data"
@@ -223,7 +223,7 @@ class TestServerMapValidation:
     
     def test_house_to_outside_transition(self, server_tester):
         """Test area transition from house to outside"""
-        assert server_tester.start_server("tests/states/house.state"), "Failed to start server"
+        assert server_tester.start_server("tests/save_states/house.state"), "Failed to start server"
         
         # Get initial house map
         house_map = server_tester.get_map_data()
@@ -281,12 +281,12 @@ class TestServerMapValidation:
             
             # Determine which state file to use based on location
             if "BRENDAN" in location.upper() and "HOUSE" in location.upper() and "2F" not in location:
-                state_file = "tests/states/house.state"
+                state_file = "tests/save_states/house.state"
             elif "2F" in location or "UPSTAIRS" in location.upper():
-                state_file = "tests/states/upstairs.state"
+                state_file = "tests/save_states/upstairs.state"
             else:
                 # For outdoor locations, start from house and transition
-                state_file = "tests/states/house.state"
+                state_file = "tests/save_states/house.state"
             
             assert server_tester.start_server(state_file), f"Failed to start server for {location}"
             

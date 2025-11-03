@@ -11,7 +11,7 @@ def main():
     print("Starting agent with dialog.state in AUTO mode...")
     
     # Start agent
-    cmd = ["python", "run.py", "--agent-auto", "--load-state", "tests/states/dialog.state"]
+    cmd = ["python", "run.py", "--agent-auto", "--load-state", "tests/save_states/dialog.state"]
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     
     try:

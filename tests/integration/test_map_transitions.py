@@ -48,7 +48,7 @@ class TestHouseToOutsideDirectTransition:
         print("\n📍 Testing house map baseline...")
         
         # Load house state
-        emulator.load_state("tests/states/house.state")
+        emulator.load_state("tests/save_states/house.state")
         
         # Read initial map
         map_data = emulator.memory_reader.read_map_around_player(radius=7)
@@ -74,7 +74,7 @@ class TestHouseToOutsideDirectTransition:
         print("\n🚶 Testing walk outside and map transition...")
         
         # Load house state
-        emulator.load_state("tests/states/house.state")
+        emulator.load_state("tests/save_states/house.state")
         
         # Get initial state
         initial_location = emulator.memory_reader.read_location()
@@ -95,7 +95,7 @@ class TestHouseToOutsideDirectTransition:
             print(f"\n   Trying movement pattern: {movement_name}")
             
             # Reload state for fresh attempt
-            emulator.load_state("tests/states/house.state")
+            emulator.load_state("tests/save_states/house.state")
             
             # Execute button sequence
             for button, count in button_sequence:

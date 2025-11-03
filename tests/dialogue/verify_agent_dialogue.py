@@ -17,7 +17,7 @@ print("Looking for evidence of dialogue detection and A-presses...\n")
 process = subprocess.Popen([
     "python", "run.py",
     "--agent-auto",
-    "--load-state", "tests/states/dialog2.state",
+    "--load-state", "tests/save_states/dialog2.state",
     "--headless"
 ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
 

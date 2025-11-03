@@ -152,7 +152,7 @@ class TestMapGroundTruthComparison:
         # Initialize direct emulator
         emu = EmeraldEmulator('Emerald-GBAdvance/rom.gba', headless=True, sound=False)
         emu.initialize()
-        emu.load_state('tests/states/house.state')
+        emu.load_state('tests/save_states/house.state')
         
         try:
             # Get house map
@@ -189,7 +189,7 @@ class TestMapGroundTruthComparison:
         # Initialize direct emulator
         emu = EmeraldEmulator('Emerald-GBAdvance/rom.gba', headless=True, sound=False)
         emu.initialize()
-        emu.load_state('tests/states/house.state')
+        emu.load_state('tests/save_states/house.state')
         
         try:
             # Move outside
@@ -236,7 +236,7 @@ class TestMapGroundTruthComparison:
         time.sleep(2)
         
         # Start server
-        server_cmd = ["python", "-m", "server.app", "--load-state", "tests/states/house.state", "--port", "8101", "--manual"]
+        server_cmd = ["python", "-m", "server.app", "--load-state", "tests/save_states/house.state", "--port", "8101", "--manual"]
         server_process = subprocess.Popen(server_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         server_url = "http://127.0.0.1:8101"
         
@@ -294,7 +294,7 @@ class TestMapGroundTruthComparison:
         # time.sleep(2)
         
         # Start server
-        # server_cmd = ["python", "-m", "server.app", "--load-state", "tests/states/house.state", "--port", "8102", "--manual"]
+        # server_cmd = ["python", "-m", "server.app", "--load-state", "tests/save_states/house.state", "--port", "8102", "--manual"]
         # server_process = subprocess.Popen(server_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         server_url = "http://127.0.0.1:8000"
         

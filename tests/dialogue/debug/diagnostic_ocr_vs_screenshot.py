@@ -17,7 +17,7 @@ print("="*80)
 # Initialize
 env = EmeraldEmulator('Emerald-GBAdvance/rom.gba', headless=False)  # Show display
 env.initialize()
-env.load_state('tests/states/dialog2.state')
+env.load_state('tests/save_states/dialog2.state')
 env.tick(60)
 
 # Save screenshot

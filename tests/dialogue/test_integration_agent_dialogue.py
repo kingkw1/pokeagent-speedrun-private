@@ -77,7 +77,7 @@ class TestAgentDialogueIntegration:
         # Start server with dialog2.state (working state)
         server_proc = subprocess.Popen([
             "python", "-m", "server.app",
-            "--load-state", "tests/states/dialog2.state",
+            "--load-state", "tests/save_states/dialog2.state",
             "--port", "8000"
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         
@@ -151,7 +151,7 @@ class TestAgentDialogueIntegration:
         
         server_proc = subprocess.Popen([
             "python", "-m", "server.app",
-            "--load-state", "tests/states/dialog.state",
+            "--load-state", "tests/save_states/dialog.state",
             "--port", "8000"
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         
@@ -221,7 +221,7 @@ class TestAgentDialogueIntegration:
         
         # This test is marked slow - run full agent with --agent-auto
         cmd = ["python", "run.py", "--agent-auto", 
-               "--load-state", "tests/states/dialog.state"]
+               "--load-state", "tests/save_states/dialog.state"]
         
         print(f"🚀 Starting: {' '.join(cmd)}")
         print("⏱️  Timeout: 30 seconds")

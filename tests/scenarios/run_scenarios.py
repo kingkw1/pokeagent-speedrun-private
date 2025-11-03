@@ -237,7 +237,7 @@ def check_dialogue_complete(state_data):
 TESTS = [
     ScenarioTest(
         name="Exit Moving Van",
-        save_state="tests/scenarios/save_states/truck_start.state",
+        save_state="tests/save_states/truck_start.state",
         max_steps=20,  # Give it more steps to find the exit
         success_fn=check_exit_moving_van,
         description="Agent should exit the moving van and successfully enter Brendan's house"
@@ -247,7 +247,7 @@ TESTS = [
     # 
     # ScenarioTest(
     #     name="Navigate Out of House",
-    #     save_state="tests/scenarios/save_states/inside_house.state",
+    #     save_state="tests/save_states/inside_house.state",
     #     max_steps=30,
     #     success_fn=check_exit_house,
     #     description="Agent should navigate from inside the house to outside in Littleroot Town"
@@ -255,7 +255,7 @@ TESTS = [
     #
     # ScenarioTest(
     #     name="Reach Route 101",
-    #     save_state="tests/scenarios/save_states/littleroot_start.state",
+    #     save_state="tests/save_states/littleroot_start.state",
     #     max_steps=100,
     #     success_fn=check_navigate_route_101,
     #     description="Agent should navigate from Littleroot Town to Route 101"

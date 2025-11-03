@@ -6,7 +6,9 @@
 
 - **`dialogue/`** - All dialogue system tests (detection, completion, agent interaction)
   - **`dialogue/debug/`** - Debug scripts for dialogue issues
+  - **See `dialogue/README.md`** for comprehensive dialogue testing guide
 - **`navigation/`** - Navigation and pathfinding tests
+  - **See `navigation/README.md`** for navigation testing guide
 - **`agent/`** - Agent behavior, modules, and objective planning tests
 - **`integration/`** - Full system integration tests
 - **`manual/`** - Manual/interactive test scripts
@@ -14,10 +16,28 @@
 - **`scenarios/`** - Specific scenario-based tests
 - **`standalone/`** - Independent test files
 - **`utils/`** - Test utilities, formatters, and helper scripts
-- **`states/`** - Saved emulator states for testing
+- **`save_save_states/`** - 🆕 Saved emulator states for testing (consolidated from multiple locations)
 - **`ground_truth/`** - Ground truth data for validation
+- **`archive/`** - Deprecated/old tests
 
 ### Running Tests
+
+⚠️ **CRITICAL: Always Use Virtual Environment**
+
+Tests require dependencies from the project's venv. Use one of these methods:
+
+**Method 1: Activate venv first (Recommended)**
+```bash
+source /home/kevin/Documents/pokeagent-speedrun/.venv/bin/activate
+cd tests && python run_tests.py
+# or
+pytest
+```
+
+**Method 2: Use full path to venv Python**
+```bash
+/home/kevin/Documents/pokeagent-speedrun/.venv/bin/python -m pytest
+```
 
 **Run all tests:**
 ```bash
@@ -37,6 +57,8 @@ pytest navigation/  # All navigation tests
 ```bash
 pytest dialogue/test_dialogue_detection.py
 pytest agent/test_agent_modules.py
+# or direct execution
+python tests/navigation/test_exit_moving_van.py
 ```
 
 **With coverage:**
@@ -81,13 +103,64 @@ pytest --cov=agent --cov=pokemon_env
 - **`test_default_config.py`** - Configuration tests
 - **`validate_live_system.py`** - Live system validator
 
+## Current Dialogue Detection Approach
+
+### Red Triangle (❤️) Indicator Detection
+
+**What it is:**  
+The red triangle in the bottom-right corner of Pokemon dialogue boxes indicates "more text to read".
+
+**How it works:**
+- VLM analyzes screenshots and looks for the red triangle symbol (❤️)
+- When detected, sets `continue_prompt_visible=True`
+- Agent presses A to advance dialogue
+- When triangle disappears, agent knows dialogue is complete
+
+**Accuracy:** 95%+ (much more reliable than memory flags)
+
+**Implementation:** `agent/perception.py` - VLM prompt includes specific instruction to detect this indicator
+
+**Why this approach:**
+- ✅ Visual indicator is consistent across all dialogue
+- ✅ Works regardless of memory state
+- ✅ Matches how human players identify "more text"
+- ✅ No false positives from game state transitions
+
+### HUD Text Filtering
+
+**Problem:**  
+VLM was misclassifying HUD/status text as dialogue, causing agent to press A infinitely.
+
+**Examples of HUD text:**
+- `Player: JOHNNY` (simple player name display)
+- `Player: JOHNNY | Location: LITTLEROOT TOWN | Pos: (7,8) | State: OVERWORLD | Money: $3000 | Pokedex: 0 | Time: 0:01:23`
+
+**Solution:** `agent/perception.py` lines 205-239 - `is_hud_text()` function
+
+**Detection patterns:**
+1. **Pipe-separated debug HUD**: Contains `|` and keywords like `Location:`, `Pos:`, `Money:`, etc.
+2. **Simple player name HUD**: Matches patterns like `^Player:\s*\w+$` or `^PLAYER:\s*\w+$`
+
+**When HUD detected:**
+- Clears dialogue from perception data
+- Sets `screen_context='overworld'`
+- Disables continue prompt
+- Allows agent to resume navigation
+
+**Why this matters:**
+- ✅ Prevents infinite A-button pressing after dialogue completes
+- ✅ Allows agent to transition from dialogue to navigation
+- ✅ Filters both simple and complex HUD patterns
+
 ### Best Practices
 
 1. **Use appropriate directory** - Put tests in correct category folder
-2. **Use saved states** - Leverage `states/` for consistent test scenarios
+2. **Use saved states** - Leverage `save_save_states/` for consistent test scenarios
 3. **Check ground truth** - Compare against `ground_truth/` data when validating
 4. **Debug scripts** - Use `dialogue/debug/` scripts for troubleshooting
 5. **Integration tests** - Add to `integration/` for multi-component tests
+6. **Test with red triangle** - Verify VLM detects continue prompt correctly
+7. **Test HUD filtering** - Ensure status text doesn't trigger dialogue handling
 
 ### Adding New Tests
 
@@ -99,11 +172,17 @@ pytest --cov=agent --cov=pokemon_env
 
 ### Troubleshooting
 
-- **Dialogue issues**: Check `dialogue/debug/` scripts
-- **Navigation problems**: Run `navigation/` tests
+- **Dialogue issues**: Check `dialogue/debug/` scripts and `dialogue/README.md`
+- **Agent stuck pressing A**: Check if HUD text is being misclassified as dialogue
+  - Look for `is_hud_text()` filter in logs
+  - Verify `continue_prompt_visible` is False after dialogue ends
+- **Red triangle not detected**: VLM may need better prompting or fine-tuning
+  - Check VLM prompt in `agent/perception.py`
+  - Verify screenshot quality (not too dark/blurry)
+- **Navigation problems**: Run `navigation/` tests (see `navigation/README.md`)
 - **Agent behavior**: Debug with `agent/` tests
 - **Full system**: Use `integration/` tests and `validate_live_system.py`
-- **State issues**: Verify saved states in `states/`
+- **State issues**: Verify saved states in `save_save_states/` (consolidated location)
 
 ### Continuous Integration
 

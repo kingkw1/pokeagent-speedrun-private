@@ -7,7 +7,7 @@ import subprocess
 import time
 import requests
 
-cmd = ["python", "-m", "server.app", "--load-state", "tests/states/dialog.state"]
+cmd = ["python", "-m", "server.app", "--load-state", "tests/save_states/dialog.state"]
 process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
 try:

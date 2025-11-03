@@ -22,7 +22,7 @@ env.initialize()
 
 # Load dialog.state
 print("\n⏳ Loading dialog.state...")
-env.load_state('tests/states/dialog.state')
+env.load_state('tests/save_states/dialog.state')
 
 # Let it settle
 env.tick(30)

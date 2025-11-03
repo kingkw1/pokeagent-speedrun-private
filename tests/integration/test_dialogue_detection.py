@@ -12,7 +12,7 @@ Test Cases:
     - Validates detection confidence scores
 
 Dependencies:
-    - Save states: Multiple dialogue states in tests/states/
+    - Save states: Multiple dialogue states in tests/save_states/
     - External services: Spawns temporary server (slow)
 
 Runtime:
@@ -172,10 +172,10 @@ class TestDialogueDetection:
     def test_no_dialog_states(self):
         """Test states that should NOT have dialogue"""
         no_dialog_states = [
-            ("tests/states/no_dialog1.state", "No dialogue state 1"),
-            ("tests/states/no_dialog2.state", "No dialogue state 2"),
-            ("tests/states/no_dialog3.state", "No dialogue state 3"),
-            ("tests/states/after_dialog.state", "After dialogue was dismissed"),
+            ("tests/save_states/no_dialog1.state", "No dialogue state 1"),
+            ("tests/save_states/no_dialog2.state", "No dialogue state 2"),
+            ("tests/save_states/no_dialog3.state", "No dialogue state 3"),
+            ("tests/save_states/after_dialog.state", "After dialogue was dismissed"),
         ]
         
         for state_file, description in no_dialog_states:
@@ -188,9 +188,9 @@ class TestDialogueDetection:
     def test_dialog_states(self):
         """Test states that SHOULD have dialogue"""
         dialog_states = [
-            ("tests/states/dialog.state", "Original dialogue state"),
-            ("tests/states/dialog2.state", "Second dialogue state"),
-            ("tests/states/dialog3.state", "New dialogue state 3"),
+            ("tests/save_states/dialog.state", "Original dialogue state"),
+            ("tests/save_states/dialog2.state", "Second dialogue state"),
+            ("tests/save_states/dialog3.state", "New dialogue state 3"),
         ]
         
         for state_file, description in dialog_states:

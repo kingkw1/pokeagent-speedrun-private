@@ -25,7 +25,7 @@ env = EmeraldEmulator('Emerald-GBAdvance/rom.gba', headless=False)  # Show displ
 env.initialize()
 
 print("\n⏳ Loading no_dialog1.state...")
-env.load_state('tests/states/no_dialog1.state')
+env.load_state('tests/save_states/no_dialog1.state')
 env.tick(60)  # Let it settle
 
 # Check initial state
@@ -57,7 +57,7 @@ for i in range(10):
         
         # Save this state
         print(f"\n💾 Saving as dialog_working.state...")
-        env.save_state('tests/states/dialog_working.state')
+        env.save_state('tests/save_states/dialog_working.state')
         print(f"   ✅ Saved!")
         
         # Test if it can be cleared

@@ -47,9 +47,9 @@ class TestVLMDialogueDetection:
         Expected: text_box_visible=True for dialog.state, dialog2.state, dialog3.state
         """
         test_cases = [
-            ("tests/states/dialog.state", True, "dialog.state"),
-            ("tests/states/dialog2.state", True, "dialog2.state"),
-            ("tests/states/dialog3.state", True, "dialog3.state"),
+            ("tests/save_states/dialog.state", True, "dialog.state"),
+            ("tests/save_states/dialog2.state", True, "dialog2.state"),
+            ("tests/save_states/dialog3.state", True, "dialog3.state"),
         ]
         
         results = []
@@ -126,8 +126,8 @@ class TestVLMDialogueDetection:
         Expected: text_box_visible=False for states without dialogue
         """
         test_cases = [
-            ("tests/states/no_dialog1.state", False, "no_dialog1.state"),
-            ("tests/states/after_dialog.state", False, "after_dialog.state"),
+            ("tests/save_states/no_dialog1.state", False, "no_dialog1.state"),
+            ("tests/save_states/after_dialog.state", False, "after_dialog.state"),
         ]
         
         results = []
@@ -203,7 +203,7 @@ class TestVLMDialogueDetection:
         
         server_proc = subprocess.Popen([
             "python", "-m", "server.app",
-            "--load-state", "tests/states/dialog.state",
+            "--load-state", "tests/save_states/dialog.state",
             "--port", "8000"
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         

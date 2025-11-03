@@ -29,7 +29,7 @@ print("")
 process = subprocess.Popen([
     "python", "run.py",
     "--agent-auto",
-    "--load-state", "tests/states/dialog2.state",
+    "--load-state", "tests/save_states/dialog2.state",
     "--headless"  # Run headless for faster testing
 ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
 

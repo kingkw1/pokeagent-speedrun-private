@@ -2,7 +2,7 @@
 """
 COMPREHENSIVE DIALOGUE DETECTION TEST
 
-Tests dialogue detection accuracy across ALL dialogue states in tests/states/:
+Tests dialogue detection accuracy across ALL dialogue states in tests/save_states/:
 - dialog.state, dialog2.state, dialog3.state (should have in_dialog=True)
 - after_dialog.state (should have in_dialog=False - dialogue already dismissed)
 - no_dialog1.state, no_dialog2.state, no_dialog3.state (should have in_dialog=False)
@@ -23,15 +23,15 @@ import sys
 # Test cases: (state_file, expected_in_dialog, description)
 TEST_CASES = [
     # States that SHOULD have active dialogue (in_dialog=True)
-    ("tests/states/dialog.state", True, "PC dialogue in player's house"),
-    ("tests/states/dialog2.state", True, "Second dialogue state"),
-    ("tests/states/dialog3.state", True, "Third dialogue state"),
+    ("tests/save_states/dialog.state", True, "PC dialogue in player's house"),
+    ("tests/save_states/dialog2.state", True, "Second dialogue state"),
+    ("tests/save_states/dialog3.state", True, "Third dialogue state"),
     
     # States that should NOT have active dialogue (in_dialog=False)
-    ("tests/states/after_dialog.state", False, "After dialogue was dismissed"),
-    ("tests/states/no_dialog1.state", False, "No dialogue - first state"),
-    ("tests/states/no_dialog2.state", False, "No dialogue - second state"),
-    ("tests/states/no_dialog3.state", False, "No dialogue - third state"),
+    ("tests/save_states/after_dialog.state", False, "After dialogue was dismissed"),
+    ("tests/save_states/no_dialog1.state", False, "No dialogue - first state"),
+    ("tests/save_states/no_dialog2.state", False, "No dialogue - second state"),
+    ("tests/save_states/no_dialog3.state", False, "No dialogue - third state"),
 ]
 
 def test_state(state_file, expected_in_dialog, description):

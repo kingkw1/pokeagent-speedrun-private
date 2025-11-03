@@ -21,11 +21,20 @@
 - ✅ See `test_unit_multiflag_state.py` for working example
 - ✅ Works with direct emulator screenshots
 
-**For Agent (Production):**
-- ✅ **VLM detection** (85% accurate, fast) - What agent uses in real-time
-- ✅ `agent/perception.py` extracts `visual_data['on_screen_text']['dialogue']`
+**For Agent (Production) - CURRENT APPROACH:**
+- ✅ **Red Triangle (❤️) Detection** - Primary dialogue indicator (95%+ accurate)
+- ✅ **HUD Text Filtering** - Prevents false positives from status displays
+- ✅ `agent/perception.py` VLM detects red triangle indicator in dialogue box
+- ✅ `agent/perception.py` filters HUD patterns: "Player: JOHNNY", "Location: ...", etc.
 - ✅ `agent/action.py` lines 137-142: VLM dialogue priority with A-press
 - ✅ Automatic OCR fallback when VLM returns template text
+
+**Recent Improvements (Nov 2025):**
+1. **Red Triangle Indicator** - VLM now looks for the ❤️ symbol at bottom-right of dialogue box as a reliable "more text" indicator
+2. **HUD False Positive Filter** - `is_hud_text()` function prevents misclassifying status displays as dialogue
+   - Detects pipe-separated debug HUD: `Player: JOHNNY | Location: ... | Money: $3000...`
+   - Detects simple player name HUD: `Player: JOHNNY`
+   - Allows agent to exit dialogue and resume navigation properly
 
 **Why Memory is Unreliable:**
 Pokemon Emerald's memory flags are inconsistent (proven in `test_unit_ocr_vs_memory.py`):
@@ -41,7 +50,7 @@ import requests
 from utils.ocr_dialogue import create_ocr_detector
 
 # Start server with state
-# subprocess.Popen(["python", "-m", "server.app", "--load-state", "tests/states/dialog2.state"])
+# subprocess.Popen(["python", "-m", "server.app", "--load-state", "tests/save_states/dialog2.state"])
 
 # Get screenshot via server API
 frame_resp = requests.get("http://localhost:8000/api/frame")
@@ -62,18 +71,30 @@ from agent.perception import perception_step
 from utils.vlm import VLM
 
 env = EmeraldEmulator('Emerald-GBAdvance/rom.gba', headless=True)
-env.load_state('tests/states/dialog2.state')
+env.load_state('tests/save_states/dialog2.state')  # Note: consolidated location
 screenshot = env.get_screenshot()
 state = env.get_comprehensive_state()
 
 vlm = VLM(backend='local', model_name='Qwen/Qwen2-VL-2B-Instruct')
 visual_data = perception_step(state, screenshot, vlm)
 dialogue = visual_data['on_screen_text']['dialogue']
-has_dialogue = dialogue and len(dialogue.strip()) > 3
+
+# Check if it's real dialogue (not HUD text)
+from agent.perception import is_hud_text
+has_dialogue = dialogue and len(dialogue.strip()) > 3 and not is_hud_text(visual_data)
+
+# Check for red triangle indicator
+continue_prompt = visual_data['on_screen_text'].get('continue_prompt_visible', False)
 ```
 
 **Agent Action Priority (See agent/action.py lines 137-142):**
 The agent checks `visual_dialogue_active` (from VLM) and presses A when dialogue is detected.
+
+**Dialogue Detection Logic (See agent/perception.py lines 205-248):**
+1. VLM extracts dialogue text from screenshot
+2. Check for red triangle (❤️) indicator → sets `continue_prompt_visible=True`
+3. Apply HUD filter → if HUD detected, clear dialogue and set `screen_context='overworld'`
+4. Real dialogue flows to action.py which presses A to continue
 
 ---
 
@@ -285,7 +306,7 @@ python tests/dialogue/debug/debug_auto_mode.py
 
 ## Test States
 
-Located in `tests/states/`:
+Located in `tests/save_states/`:
 - **dialog.state** - NPC dialogue active (primary test state)
 - **dialog2.state** - Alternative dialogue state
 - **dialog3.state** - Another dialogue variant

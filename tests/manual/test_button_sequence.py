@@ -23,7 +23,7 @@ print("Sequence: A, A, UP, UP, LEFT, RIGHT, DOWN")
 print("=" * 70)
 
 # Start server in headless mode (no client, so server processes actions directly)
-cmd = ["python", "-m", "server.app", "--port", "8000", "--load-state", "tests/states/dialog.state"]
+cmd = ["python", "-m", "server.app", "--port", "8000", "--load-state", "tests/save_states/dialog.state"]
 process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
 try:

@@ -75,15 +75,15 @@ print("="*80)
 results = []
 
 # Dialog states (should have text_box_visible=True)
-results.append(test_state("tests/states/dialog.state", True, "dialog.state"))
-results.append(test_state("tests/states/dialog2.state", True, "dialog2.state"))
-results.append(test_state("tests/states/dialog3.state", True, "dialog3.state"))
+results.append(test_state("tests/save_states/dialog.state", True, "dialog.state"))
+results.append(test_state("tests/save_states/dialog2.state", True, "dialog2.state"))
+results.append(test_state("tests/save_states/dialog3.state", True, "dialog3.state"))
 
 # No dialog states (should have text_box_visible=False)
-results.append(test_state("tests/states/no_dialog1.state", False, "no_dialog1.state"))
-results.append(test_state("tests/states/no_dialog2.state", False, "no_dialog2.state"))
-results.append(test_state("tests/states/no_dialog3.state", False, "no_dialog3.state"))
-results.append(test_state("tests/states/after_dialog.state", False, "after_dialog.state"))
+results.append(test_state("tests/save_states/no_dialog1.state", False, "no_dialog1.state"))
+results.append(test_state("tests/save_states/no_dialog2.state", False, "no_dialog2.state"))
+results.append(test_state("tests/save_states/no_dialog3.state", False, "no_dialog3.state"))
+results.append(test_state("tests/save_states/after_dialog.state", False, "after_dialog.state"))
 
 # Summary
 results = [r for r in results if r is not None]

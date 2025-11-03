@@ -8,7 +8,7 @@ import time
 import requests
 import sys
 
-STATE_FILE = "tests/states/dialog.state"
+STATE_FILE = "tests/save_states/dialog.state"
 
 def main():
     print("=" * 70)

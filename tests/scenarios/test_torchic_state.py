@@ -90,7 +90,7 @@ class ServerManager:
 @pytest.fixture(scope="session", autouse=True)
 def check_environment():
     """Check that required files exist"""
-    torchic_state = "tests/states/torchic.state"
+    torchic_state = "tests/save_states/torchic.state"
     if not os.path.exists(torchic_state):
         pytest.skip(f"Torchic state file not found: {torchic_state}")
     
@@ -102,7 +102,7 @@ def test_torchic_state_loading():
     
     try:
         # Start server with torchic state
-        assert server_manager.start_server("tests/states/torchic.state"), "Failed to start server"
+        assert server_manager.start_server("tests/save_states/torchic.state"), "Failed to start server"
         
         # Get comprehensive state
         response = requests.get("http://localhost:8000/state", timeout=10)
@@ -158,7 +158,7 @@ def test_torchic_milestones():
     
     try:
         # Start server with torchic state
-        assert server_manager.start_server("tests/states/torchic.state"), "Failed to start server"
+        assert server_manager.start_server("tests/save_states/torchic.state"), "Failed to start server"
         
         # Get milestones
         response = requests.get("http://localhost:8000/milestones", timeout=10)
@@ -220,7 +220,7 @@ def test_torchic_state_summary():
     
     try:
         # Start server with torchic state
-        assert server_manager.start_server("tests/states/torchic.state"), "Failed to start server"
+        assert server_manager.start_server("tests/save_states/torchic.state"), "Failed to start server"
         
         # Get comprehensive state
         response = requests.get("http://localhost:8000/state", timeout=10)

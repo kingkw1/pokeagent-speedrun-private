@@ -19,7 +19,7 @@ def main():
     
     # Load dialog state
     print("Loading dialog.state...")
-    env.load_state('tests/states/dialog.state')
+    env.load_state('tests/save_states/dialog.state')
     env.tick(30)  # Let it settle
     
     # Get initial state

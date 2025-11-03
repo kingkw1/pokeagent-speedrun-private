@@ -67,7 +67,7 @@ class TestDialogueCompletion:
         
         server_proc = subprocess.Popen([
             "python", "-m", "server.app",
-            "--load-state", "tests/states/dialog2.state",  # Use working state
+            "--load-state", "tests/save_states/dialog2.state",  # Use working state
             "--port", "8000"
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         
@@ -137,7 +137,7 @@ class TestDialogueCompletion:
         
         server_proc = subprocess.Popen([
             "python", "-m", "server.app",
-            "--load-state", "tests/states/dialog2.state",  # Use working state
+            "--load-state", "tests/save_states/dialog2.state",  # Use working state
             "--port", "8000"
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         
@@ -212,7 +212,7 @@ class TestDialogueCompletion:
         
         server_proc = subprocess.Popen([
             "python", "-m", "server.app",
-            "--load-state", "tests/states/dialog.state",
+            "--load-state", "tests/save_states/dialog.state",
             "--port", "8000"
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         

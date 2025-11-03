@@ -32,22 +32,22 @@ import sys
 # Test data
 TEST_CASES = [
     {
-        "state_file": "tests/states/simple_test.state",
+        "state_file": "tests/save_states/simple_test.state",
         "expected_fps": 30,
         "test_name": "Base Overworld State"
     },
     {
-        "state_file": "tests/states/dialog.state", 
+        "state_file": "tests/save_states/dialog.state", 
         "expected_fps": 120,
         "test_name": "Dialog State"
     },
     {
-        "state_file": "tests/states/dialog2.state",
+        "state_file": "tests/save_states/dialog2.state",
         "expected_fps": 120,
         "test_name": "Dialog State 2"
     },
     {
-        "state_file": "tests/states/after_dialog.state",
+        "state_file": "tests/save_states/after_dialog.state",
         "expected_fps": 30,
         "test_name": "After Dialog Ends"
     }
@@ -149,10 +149,10 @@ def check_environment():
     
     # Check if state files exist
     required_files = [
-        "tests/states/simple_test.state",
-        "tests/states/dialog.state", 
-        "tests/states/dialog2.state",
-        "tests/states/after_dialog.state"
+        "tests/save_states/simple_test.state",
+        "tests/save_states/dialog.state", 
+        "tests/save_states/dialog2.state",
+        "tests/save_states/after_dialog.state"
     ]
     
     missing_files = [f for f in required_files if not os.path.exists(f)]

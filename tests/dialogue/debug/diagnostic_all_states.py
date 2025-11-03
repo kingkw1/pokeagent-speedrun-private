@@ -17,7 +17,7 @@ def test_state(state_file):
     
     env = EmeraldEmulator('Emerald-GBAdvance/rom.gba', headless=True)
     env.initialize()
-    env.load_state(f'tests/states/{state_file}')
+    env.load_state(f'tests/save_states/{state_file}')
     env.tick(30)
     
     # Get initial state

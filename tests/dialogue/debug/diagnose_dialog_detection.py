@@ -35,7 +35,7 @@ def main():
     print("=" * 80)
     
     # Start server
-    cmd = ["python", "-m", "server.app", "--load-state", "tests/states/dialog.state"]
+    cmd = ["python", "-m", "server.app", "--load-state", "tests/save_states/dialog.state"]
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     
     try:

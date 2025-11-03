@@ -17,7 +17,7 @@ print("="*80)
 print("\n⏳ Starting server with dialog.state...")
 server_proc = subprocess.Popen([
     "python", "-m", "server.app",
-    "--load-state", "tests/states/dialog.state",
+    "--load-state", "tests/save_states/dialog.state",
     "--port", "8000"
 ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 

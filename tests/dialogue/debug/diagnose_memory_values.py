@@ -26,7 +26,7 @@ def main():
     print(f"Emulator core initialized: {emu.core is not None}")
     print(f"Memory reader initialized: {emu.memory_reader is not None}")
     
-    emu.load_state("tests/states/dialog.state")
+    emu.load_state("tests/save_states/dialog.state")
     
     print(f"State loaded successfully")
     

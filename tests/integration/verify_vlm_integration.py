@@ -15,7 +15,7 @@ print("="*80)
 
 # Start server with dialog state
 # Using dialog2.state which is known to work well with VLM
-cmd = ["python", "-m", "server.app", "--load-state", "tests/states/dialog2.state"]
+cmd = ["python", "-m", "server.app", "--load-state", "tests/save_states/dialog2.state"]
 process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 try:

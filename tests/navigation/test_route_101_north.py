@@ -25,7 +25,7 @@ print("Max steps: 100\n")
 process = subprocess.Popen([
     "python", "run.py",
     "--agent-auto",
-    "--load-state", "tests/states/route101_simple_test.state",
+    "--load-state", "tests/save_states/route101_simple_test.state",
     "--headless"
 ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
 
