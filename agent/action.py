@@ -408,16 +408,9 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         if current_step % 5 == 0 or current_step in [16, 21, 27] or advanced_location:
             print(f"🤖 [VLM MODE] Step {current_step} - VLM Navigation Active (intro_complete={intro_complete}, past_limit={current_step > override_step_limit}, moving_van={is_in_moving_van}, advanced_location={advanced_location})")
         
-        # ========================================================================
-        # OVERRIDE STATUS CHECK - Show if any overrides are currently active
-        # ========================================================================
-        print(f"\n{'='*80}")
-        print(f"📊 OVERRIDE STATUS CHECK - Step {current_step}")
-        print(f"{'='*80}")
-        print(f"🔧 Post-name override: {'❌ INACTIVE' if intro_complete or advanced_location or current_step > override_step_limit or is_in_moving_van else '✅ ACTIVE (should not see VLM call)'}")
-        print(f"🎯 Title screen override: {'❌ INACTIVE' if not is_title_screen else '✅ ACTIVE (should not see VLM call)'}")
-        print(f"🤖 VLM Mode: ✅ ACTIVE - VLM will make decision")
-        print(f"{'='*80}\n")
+        # Override status check - only log periodically
+        if current_step % 100 == 0:
+            logger.info(f"Mode check (Step {current_step}): VLM navigation active, overrides inactive")
         
         # Direct VLM call - let the VLM handle all navigation decisions
         pass  # Continue to VLM logic below
@@ -1137,12 +1130,11 @@ Now analyze THIS frame and respond with your reasoning and button:
     # Check if movement preview is in the prompt
     if "MOVEMENT PREVIEW:" in complete_prompt:
         print(f"✅ [VLM PROMPT DEBUG] Movement preview IS included in prompt")
-        # Find and show the movement preview section
+        # Movement preview check (only log if actually missing in navigation mode)
         mp_start = complete_prompt.find("MOVEMENT PREVIEW:")
-        mp_section = complete_prompt[mp_start:mp_start + 200] if mp_start != -1 else "Not found"
-        print(f"🗺️ [VLM PROMPT DEBUG] Movement preview section: '{mp_section}'")
-    else:
-        print(f"❌ [VLM PROMPT DEBUG] Movement preview is MISSING from prompt")
+        if mp_start == -1 and visual_context == 'overworld':
+            logger.warning("[VLM PROMPT] Movement preview missing in overworld mode")
+        # Otherwise it's expected (dialogue/battle) - don't log
     
     # Check if we're using multiple-choice mode
     if walkable_options and len(walkable_options) > 0:
@@ -1152,31 +1144,26 @@ Now analyze THIS frame and respond with your reasoning and button:
     else:
         print(f"📝 [FREE-FORM MODE] Using traditional free-form action selection")
     
-    print(f"🔍 [VLM PROMPT DEBUG] Last 500 chars of prompt:")
-    print("=" * 50)
-    print(complete_prompt[-500:])
-    print("=" * 50)
+    # VLM prompt validation (only log on errors or periodically)
+    if current_step % 100 == 0:
+        logger.debug(f"VLM prompt length: {len(complete_prompt)} chars")
     
     # ULTRA DEBUG: Show the exact numbered list section
     if walkable_options and "YOUR MOVEMENT CHOICES" in complete_prompt:
         list_start = complete_prompt.find("YOUR MOVEMENT CHOICES")
+        # Numbered list validation (only log issues)
         list_section = complete_prompt[list_start:list_start+500]
-        print(f"🔍 [NUMBERED LIST DEBUG] Movement choices section in prompt:")
-        print("=" * 50)
-        print(list_section)
-        print("=" * 50)
+        if "1." not in list_section:
+            logger.warning("[NUMBERED LIST] Options list formatting may be incorrect")
     elif "1." in complete_prompt and walkable_options:
-        # Fallback: try to find first numbered option after "READ THE LIST"
+        # Fallback: try to find first numbered option
         if "READ THE LIST:" in complete_prompt:
             list_start = complete_prompt.find("READ THE LIST:")
-            list_section = complete_prompt[list_start:list_start+400]
         else:
             list_start = complete_prompt.find("1.")
-            list_section = complete_prompt[list_start:list_start+300]
-        print(f"🔍 [NUMBERED LIST DEBUG] Found at position {list_start}:")
-        print("=" * 50)
-        print(list_section)
-        print("=" * 50)
+        # Validate but don't print unless there's an issue
+        if list_start == -1:
+            logger.warning("[NUMBERED LIST] Could not find numbered options in prompt")
     
     action_response = vlm.get_text_query(complete_prompt, "ACTION")
     
