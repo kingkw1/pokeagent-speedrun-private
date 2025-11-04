@@ -17,27 +17,31 @@ We've successfully resolved a critical issue where the VLM perception system was
 - ✅ **Real-Time Performance**: Agent runs at ~60 FPS with 2.3s VLM inference time using Qwen2-VL-2B-Instruct
 - ✅ **Intelligent Behavior**: Agent properly advances through dialogue, navigates menus, and explores the overworld
 
-## Architectural Overview
+## Architectural Overview: The Hybrid Hierarchical Controller (HHC)
 
-This agent is built upon the starter kit's four-module framework (Perception, Planning, Memory, Action) but implements a sophisticated, learning-driven architecture designed to maximize autonomy and performance. Our design's core philosophy is to replace hard-coded components with learned policies to minimize the competition's scaffolding penalty.
+Our agent's architecture has been redesigned to maximize **Raw Performance** and reliability within the 12-day sprint. We now use a **Hybrid Hierarchical Controller (HHC)**, a "meaningful modification" that delegates tasks to specialized sub-controllers based on the game context.
 
-### 1. Hierarchical Command Structure: Strategic Planner & Tactical Controller
-To address the long-horizon challenge of an RPG, our agent uses a two-layer hierarchical command structure that separates high-level strategy from low-level execution.
+This architecture is orchestrated by `action.py`, which acts as a master controller, and is guided by a high-level programmatic planner.
 
-* **High-Level Planner:** The strategic brain of the agent will be a fine-tuned Large Language Model (LLM). It is trained to analyze the game state and memory to issue the next major subgoal, such as `{"subgoal": "NAVIGATE_TO", "target": "Pewter City Gym"}`. This allows the agent to reason about the critical path of the speedrun at a strategic level.
-* **Low-Level Controller:** A goal-conditioned reinforcement learning (RL) policy is responsible for tactical execution. It takes a subgoal from the planner (e.g., "NAVIGATE_TO") and outputs the sequence of primitive game actions required to achieve it efficiently.
+### 1. High-Level Planner: Programmatic `ObjectiveManager`
+The agent's strategic "brain" is a fully programmatic module (`objective_manager.py`). It contains a hard-coded list of all critical-path milestones for the competition (up to the first gym). This module provides the "current objective" to the master controller, ensuring the agent is always focused on the correct next step.
 
-### 2. Advanced VLM Perception: Image-to-Structure Translation
-The agent's "vision" is powered by a fine-tuned Vision-Language Model (VLM). Our perception module moves beyond simple descriptions by performing **image-to-structure translation**. Given a raw game screenshot, the VLM is trained to output a structured JSON object representing the complete multi-modal game state. This provides rich, machine-readable data for all other modules, forming a robust foundation for decision-making.
+### 2. Low-Level Master Controller (`action.py`)
+The `action.py` module contains the "handoff" logic. On every step, it checks the current game state and objective to determine which sub-controller to use:
 
-### 3. Active Memory Management
-To handle a game spanning thousands of steps, our blueprint specifies a hybrid memory system that is actively managed by a dedicated RL agent, the Memory Management Agent (MMA).
+1.  **If in battle:** Control is passed to the **Battle Bot**.
+2.  **If objective is in the opening sequence:** Control is passed to the **Opener Bot**.
+3.  **If objective is navigation:** Control is passed to the **A\* Navigator**.
 
-* **Hybrid Memory:** The system includes a short-term "scratchpad," a long-term episodic memory (Vector DB), and a structured semantic memory (Knowledge Graph).
-* **Memory Management Agent (MMA):** This RL agent learns a policy for what information to store, what to retrieve, and what to forget. By learning to make goal-oriented memory decisions, the MMA transforms memory from a passive database into an active component of the agent's reasoning process, a key innovation for minimizing the scaffolding penalty.
+### 3. The Sub-Controllers
 
-### 4. Phased Training Protocol
-The agent's complex capabilities are built incrementally through a structured, four-phase training curriculum. This approach de-risks development by mastering foundational skills like perception and tactical execution before moving on to more complex strategic planning and memory management.
+* **Programmatic "Opener Bot":** A rule-based state machine that programmatically handles the entire deterministic opening of the game (Splits 0-4). This includes the title screen, character naming, setting the clock, and winning the first rival battle. This ensures maximum speed and 100% reliability on the competition's early milestones.
+
+* **Programmatic "Battle Bot":** A simple, rule-based AI that takes over during battles. It checks move effectiveness and selects the best damaging move to win encounters, which is sufficient for the run to the first gym.
+
+* **Programmatic "A\* Navigator" (with VLM Executor):** This is our solution to the VLM's spatial reasoning failures (the "cul-de-sac" problem).
+    * **Pathfinding:** We use a programmatic **A\*** pathfinding algorithm as a "Tool". This tool reads the reliable ASCII map data from the `MapStitcher` and calculates the optimal (x,y) path to the destination.
+    * **VLM as Executor:** The VLM's job is demoted to a simple executor. It is given a prompt like, "Your current position is (10,10). The next step on your path is (10,11). What is the one button you should press?" The VLM's only task is to translate this step into `DOWN`. This satisfies the "final action from a neural network" rule while ensuring 100% reliable navigation.
 
 ---
 
@@ -58,16 +62,12 @@ The agent's complex capabilities are built incrementally through a structured, f
 
 ## Key Features
 
-This agent implements several innovative features beyond the baseline starter kit:
-
-- **🔍 Advanced Visual Perception**: Fine-tuned Qwen2-VL model that converts game screens to structured JSON data
-- **🧠 Intelligent Action Sequencing**: Context-aware decision making with controlled multi-action sequences
-- **⚡ Real-Time Performance**: 2.3s VLM inference with ~60 FPS game execution
-- **🛡️ Robust Error Handling**: Fallback systems and error recovery for stable operation
-- **📊 Structured State Representation**: Rich semantic understanding of game state beyond pixel data
-- **🎯 Context-Aware Planning**: Decisions adapt based on current screen context (dialogue, menu, overworld)
-- **🔧 Modular Architecture**: Clean separation of Perception, Planning, Memory, and Action modules
-
+- **🧠 Hybrid Hierarchical Controller:** Master controller in `action.py` delegates tasks to specialized sub-controllers (Opener, Battler, Navigator) based on game context.
+- **🤖 Programmatic "Opener Bot":** A hard-coded bot that solves the entire game opening (Splits 0-4) with maximum speed and reliability.
+- **⚔️ Rule-Based "Battle Bot":** A simple, fast, and effective programmatic AI for winning all required battles up to the first gym.
+- **🗺️ A\* Programmatic Pathfinding:** Solves complex navigation (like cul-de-sacs) using an A\* algorithm on the `MapStitcher`'s reliable ASCII grid data.
+- **🔍 VLM as Executor:** Uses the Qwen-2B VLM for its "neural network" requirement, but constrains its task to simple, reliable translations (e.g., "next step is (10,11)" -> `DOWN`).
+- **🎯 Milestone-Driven Planning:** Uses the `ObjectiveManager` to provide a persistent, high-level strategic "quest log" for the agent.
 ---
 
 ## Installation
@@ -197,13 +197,14 @@ Our architecture is designed to maximize Adjusted Performance by:
 3. **Efficient Architecture**: Real-time performance suitable for speedrunning requirements
 4. **Robust Operation**: Intelligent fallback systems prevent crashes and ensure progress
 
-### Current Capabilities
+### Current Capabilities (as of Nov 4th)
 
-- ✅ Stable autonomous operation without human intervention
-- ✅ Real-time visual understanding and decision making
-- ✅ Context-aware action selection and sequencing
-- ✅ Progression through game intro and basic navigation
-- 🔄 Advanced strategic planning and optimization (in development)
+The agent is undergoing a planned pivot to a Hybrid Hierarchical Controller architecture to maximize Raw Performance.
+
+- ✅ **Dialogue & Perception:** VLM-based dialogue detection is now reliable.
+- 🚧 **Navigation:** VLM-based navigation has been proven unreliable (gets stuck in cul-de-sacs). **Currently implementing A\* programmatic pathfinder.**
+- 🚧 **Game Opening:** VLM-based agent fails at opening menus/naming. **Currently implementing programmatic "Opener Bot".**
+- 🔄 **Strategic Planning:** Programmatic `ObjectiveManager` is complete and provides high-level goals.
 
 ---
 
