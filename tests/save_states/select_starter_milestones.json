@@ -1,0 +1,78 @@
+{
+  "milestones": {
+    "GAME_RUNNING": {
+      "completed": true,
+      "timestamp": 1762361512.1910012,
+      "first_completed": 1762361512.1910012,
+      "split_time": 0.0,
+      "split_formatted": "00:00:00",
+      "total_time": 0.0,
+      "total_formatted": "00:00:00"
+    },
+    "PLAYER_NAME_SET": {
+      "completed": true,
+      "timestamp": 1762361676.8999932,
+      "first_completed": 1762361676.8999932,
+      "split_time": 164.70899200439453,
+      "split_formatted": "00:02:44",
+      "total_time": 164.70899200439453,
+      "total_formatted": "00:02:44"
+    },
+    "INTRO_CUTSCENE_COMPLETE": {
+      "completed": true,
+      "timestamp": 1762361735.4445202,
+      "first_completed": 1762361735.4445202,
+      "split_time": 58.54452705383301,
+      "split_formatted": "00:00:58",
+      "total_time": 223.25351905822754,
+      "total_formatted": "00:03:43"
+    },
+    "LITTLEROOT_TOWN": {
+      "completed": true,
+      "timestamp": 1762361750.5304945,
+      "first_completed": 1762361750.5304945,
+      "split_time": 15.085974216461182,
+      "split_formatted": "00:00:15",
+      "total_time": 238.33949327468872,
+      "total_formatted": "00:03:58"
+    },
+    "PLAYER_HOUSE_ENTERED": {
+      "completed": true,
+      "timestamp": 1762361774.825272,
+      "first_completed": 1762361774.825272,
+      "split_time": 24.294777631759644,
+      "split_formatted": "00:00:24",
+      "total_time": 262.63427090644836,
+      "total_formatted": "00:04:22"
+    },
+    "PLAYER_BEDROOM": {
+      "completed": true,
+      "timestamp": 1762361809.387189,
+      "first_completed": 1762361809.387189,
+      "split_time": 34.56191682815552,
+      "split_formatted": "00:00:34",
+      "total_time": 297.1961877346039,
+      "total_formatted": "00:04:57"
+    },
+    "RIVAL_HOUSE": {
+      "completed": true,
+      "timestamp": 1762362024.1121583,
+      "first_completed": 1762362024.1121583,
+      "split_time": 214.72496938705444,
+      "split_formatted": "00:03:34",
+      "total_time": 511.9211571216583,
+      "total_formatted": "00:08:31"
+    },
+    "RIVAL_BEDROOM": {
+      "completed": true,
+      "timestamp": 1762362103.6500545,
+      "first_completed": 1762362103.6500545,
+      "split_time": 79.53789615631104,
+      "split_formatted": "00:01:19",
+      "total_time": 591.4590532779694,
+      "total_formatted": "00:09:51"
+    }
+  },
+  "last_updated": 1762362479.5607812,
+  "version": "1.0"
+}
