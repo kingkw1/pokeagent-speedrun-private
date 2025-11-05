@@ -4,6 +4,7 @@ import sys
 import logging
 import random
 from agent.system_prompt import system_prompt
+from agent.opener_bot import get_opener_bot
 from utils.state_formatter import format_state_for_llm, format_state_summary, get_movement_options, get_party_health_summary, format_movement_preview_for_llm
 from utils.vlm import VLM
 
@@ -133,6 +134,29 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         vlm: VLM instance for action decisions
         visual_dialogue_active: VLM's visual detection of dialogue box (85.7% accurate, no time cost)
     """
+    # 🤖 PRIORITY 0: OPENER BOT - Programmatic State Machine (Splits 0-4)
+    # Handles deterministic early game states with high reliability using memory state
+    # and milestone tracking as primary signals. Returns None to fallback to VLM.
+    try:
+        opener_bot = get_opener_bot()
+        visual_data = latest_observation.get('visual_data', {}) if isinstance(latest_observation, dict) else {}
+        
+        if opener_bot.should_handle(state_data, visual_data):
+            opener_action = opener_bot.get_action(state_data, visual_data, current_plan)
+            
+            if opener_action is not None:
+                # Opener bot has a programmatic action - use it
+                bot_state = opener_bot.get_state_summary()
+                logger.info(f"🤖 [OPENER BOT] Taking control in state: {bot_state['current_state']}")
+                logger.info(f"🤖 [OPENER BOT] Action: {opener_action} | Attempt: {bot_state['attempt_count']}/{bot_state['max_attempts']}")
+                return opener_action
+            else:
+                # Opener bot returned None - fallback to VLM
+                logger.debug(f"🤖 [OPENER BOT] Fallback to VLM in state: {opener_bot.current_state_name}")
+        
+    except Exception as e:
+        logger.error(f"🤖 [OPENER BOT] Error: {e}", exc_info=True)
+        # Continue to VLM logic on error
     
     # 🎯 PRIORITY 1: VLM VISUAL DIALOGUE DETECTION (HIGHEST PRIORITY)
     # NEW: Check for continue_prompt_visible (red triangle indicator) - MOST RELIABLE

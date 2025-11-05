@@ -43,6 +43,7 @@ from .memory import memory_step
 from .perception import perception_step
 from .planning import planning_step
 from .simple import SimpleAgent, get_simple_agent, simple_mode_processing_multiprocess, configure_simple_agent_defaults
+from .opener_bot import OpenerBot, get_opener_bot
 
 # Set up module logging
 logger = logging.getLogger(__name__)
@@ -304,5 +305,7 @@ __all__ = [
     'SimpleAgent',
     'get_simple_agent',
     'simple_mode_processing_multiprocess',
-    'configure_simple_agent_defaults'
+    'configure_simple_agent_defaults',
+    'OpenerBot',
+    'get_opener_bot'
 ]

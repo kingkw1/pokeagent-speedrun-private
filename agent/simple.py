@@ -41,6 +41,7 @@ import numpy as np
 from PIL import Image
 
 from utils.state_formatter import format_state_for_llm
+from agent.opener_bot import get_opener_bot
 
 logger = logging.getLogger(__name__)
 
@@ -623,6 +624,32 @@ class SimpleAgent:
         if self.is_black_frame(frame):
             logger.info("⏳ Black frame detected (likely a transition), waiting for next frame...")
             return "WAIT"  # Return WAIT to skip this frame and wait for the next one
+        
+        # 🤖 PRIORITY 0: OPENER BOT - Programmatic State Machine (Splits 0-4)
+        # Handles deterministic early game states with high reliability using memory state
+        # and milestone tracking as primary signals. Returns None to fallback to VLM.
+        try:
+            opener_bot = get_opener_bot()
+            # Simple agent doesn't have separate visual_data, so pass empty dict
+            visual_data = {}
+            
+            if opener_bot.should_handle(game_state, visual_data):
+                opener_action = opener_bot.get_action(game_state, visual_data, "")
+                
+                if opener_action is not None:
+                    # Opener bot has a programmatic action - use it
+                    bot_state = opener_bot.get_state_summary()
+                    logger.info(f"🤖 [OPENER BOT] Taking control in state: {bot_state['current_state']}")
+                    logger.info(f"🤖 [OPENER BOT] Action: {opener_action} | Attempt: {bot_state['attempt_count']}/{bot_state['max_attempts']}")
+                    # Opener bot returns list of actions, simple agent expects single action
+                    return opener_action[0] if isinstance(opener_action, list) else opener_action
+                else:
+                    # Opener bot returned None - fallback to VLM
+                    logger.info(f"🤖 [OPENER BOT] Fallback to VLM in state: {opener_bot.current_state_name}")
+            
+        except Exception as e:
+            logger.error(f"🤖 [OPENER BOT] Error: {e}", exc_info=True)
+            # Continue to VLM logic on error
         
         try:
             # Increment step counter
