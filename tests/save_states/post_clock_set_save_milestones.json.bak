@@ -1,0 +1,61 @@
+{
+  "milestones": {
+    "GAME_RUNNING": {
+      "completed": true,
+      "timestamp": 1754551143.255193,
+      "first_completed": 1754551143.255193
+    },
+    "EARNED_1000_POKEDOLLARS": {
+      "completed": true,
+      "timestamp": 1754551246.5548232,
+      "first_completed": 1754551246.5548232
+    },
+    "PLAYER_NAME_SET": {
+      "completed": true,
+      "timestamp": 1762372467.7687068,
+      "first_completed": 1762372467.7687068,
+      "split_time": 7821324.5135138035,
+      "split_formatted": "2172:35:24",
+      "total_time": 7821324.5135138035,
+      "total_formatted": "2172:35:24"
+    },
+    "INTRO_CUTSCENE_COMPLETE": {
+      "completed": true,
+      "timestamp": 1762372467.769095,
+      "first_completed": 1762372467.769095,
+      "split_time": 0.00038814544677734375,
+      "split_formatted": "00:00:00",
+      "total_time": 7821324.513901949,
+      "total_formatted": "2172:35:24"
+    },
+    "LITTLEROOT_TOWN": {
+      "completed": true,
+      "timestamp": 1762372471.6968713,
+      "first_completed": 1762372471.6968713,
+      "split_time": 3.927776336669922,
+      "split_formatted": "00:00:03",
+      "total_time": 7821328.441678286,
+      "total_formatted": "2172:35:28"
+    },
+    "PLAYER_HOUSE_ENTERED": {
+      "completed": true,
+      "timestamp": 1762440229.7530422,
+      "first_completed": 1762440229.7530422,
+      "split_time": 67758.0561709404,
+      "split_formatted": "18:49:18",
+      "total_time": 7889086.497849226,
+      "total_formatted": "2191:24:46"
+    },
+    "PLAYER_BEDROOM": {
+      "completed": true,
+      "timestamp": 1762440243.4205744,
+      "first_completed": 1762440243.4205744,
+      "split_time": 13.667532205581665,
+      "split_formatted": "00:00:13",
+      "total_time": 7889100.165381432,
+      "total_formatted": "2191:25:00"
+    }
+  },
+  "last_updated": 1762440254.6463914,
+  "version": "1.0"
+}
