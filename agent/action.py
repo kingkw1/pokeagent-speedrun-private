@@ -138,6 +138,7 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     # Handles deterministic early game states with high reliability using memory state
     # and milestone tracking as primary signals. Returns None to fallback to VLM.
     try:
+        from agent.opener_bot import NavigationGoal
         opener_bot = get_opener_bot()
         visual_data = latest_observation.get('visual_data', {}) if isinstance(latest_observation, dict) else {}
         
@@ -145,11 +146,72 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
             opener_action = opener_bot.get_action(state_data, visual_data, current_plan)
             
             if opener_action is not None:
-                # Opener bot has a programmatic action - use it
                 bot_state = opener_bot.get_state_summary()
-                logger.info(f"🤖 [OPENER BOT] Taking control in state: {bot_state['current_state']}")
-                logger.info(f"🤖 [OPENER BOT] Action: {opener_action} | Attempt: {bot_state['attempt_count']}/{bot_state['max_attempts']}")
-                return opener_action
+                
+                # Check if it's a NavigationGoal
+                if isinstance(opener_action, NavigationGoal):
+                    # Convert navigation goal to simple direction command
+                    current_x = state_data.get('player', {}).get('position', {}).get('x', 0)
+                    current_y = state_data.get('player', {}).get('position', {}).get('y', 0)
+                    goal_x = opener_action.x
+                    goal_y = opener_action.y
+                    
+                    logger.info(f"🤖 [OPENER BOT] Navigation Goal: {opener_action.description}")
+                    logger.info(f"🤖 [OPENER BOT] Current: ({current_x}, {current_y}) -> Goal: ({goal_x}, {goal_y})")
+                    
+                    # At exact goal position - interact
+                    if current_x == goal_x and current_y == goal_y:
+                        logger.info(f"🤖 [OPENER BOT] At exact goal - interacting with A")
+                        return ['A']
+                    
+                    # Calculate which direction we need to move/face to reach goal
+                    required_direction = None
+                    if current_x < goal_x:
+                        required_direction = 'RIGHT'
+                    elif current_x > goal_x:
+                        required_direction = 'LEFT'
+                    elif current_y < goal_y:
+                        required_direction = 'DOWN'
+                    elif current_y > goal_y:
+                        required_direction = 'UP'
+                    
+                    # Determine player's current orientation from last directional command
+                    # Any UP/DOWN/LEFT/RIGHT command changes orientation, even if blocked
+                    current_orientation = None
+                    if recent_actions:
+                        for action in reversed(recent_actions):
+                            if isinstance(action, list):
+                                action = action[0] if action else None
+                            if action in ['UP', 'DOWN', 'LEFT', 'RIGHT']:
+                                current_orientation = action
+                                break
+                    
+                    # Check if we're adjacent to goal (distance = 1)
+                    distance = abs(current_x - goal_x) + abs(current_y - goal_y)
+                    if distance == 1:
+                        # Adjacent to goal - check if we're facing it
+                        logger.info(f"🤖 [OPENER BOT] Adjacent to goal - Current orientation: {current_orientation}, Required: {required_direction}")
+                        
+                        if current_orientation == required_direction:
+                            # Already facing the goal - interact!
+                            logger.info(f"🤖 [OPENER BOT] Facing goal correctly - pressing A")
+                            return ['A']
+                        else:
+                            # Need to turn toward goal first
+                            logger.info(f"🤖 [OPENER BOT] Turning to face goal: {required_direction}")
+                            return [required_direction]
+                    
+                    # Not adjacent yet - move toward goal
+                    if required_direction:
+                        return [required_direction]
+                    else:
+                        # Shouldn't reach here, but fallback to interact
+                        return ['A']
+                else:
+                    # Direct button action from opener bot
+                    logger.info(f"🤖 [OPENER BOT] Taking control in state: {bot_state['current_state']}")
+                    logger.info(f"🤖 [OPENER BOT] Action: {opener_action} | Attempt: {bot_state['attempt_count']}/{bot_state['max_attempts']}")
+                    return opener_action
             else:
                 # Opener bot returned None - fallback to VLM
                 logger.debug(f"🤖 [OPENER BOT] Fallback to VLM in state: {opener_bot.current_state_name}")
