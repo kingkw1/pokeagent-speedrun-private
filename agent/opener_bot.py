@@ -301,12 +301,32 @@ class OpenerBot:
             return None
 
         def action_special_clock(s, v):
-            """Handles the clock UI."""
+            """
+            Handles the clock UI including the Yes/No confirmation.
+            
+            Clock sequence:
+            1. "The clock..." - press A
+            2. "Better set the clock..." - press A to set time
+            3. "Is this the correct time?" with Yes/No menu - press UP then A
+            """
             dialogue = v.get('on_screen_text', {}).get('dialogue', '').upper()
-            if "SET THE CLOCK" in dialogue or "IS THIS TIME" in dialogue:
+            
+            # Check if we're at the "Is this the correct time?" dialogue
+            if "IS THIS" in dialogue and "CORRECT TIME" in dialogue:
+                # Yes/No menu - press UP to select Yes, then A to confirm
+                print(f"🕐 [CLOCK] Yes/No menu detected, pressing UP then A")
+                return ['UP', 'A']
+            
+            # For all other clock-related dialogue, just press A
+            if "SET THE CLOCK" in dialogue or "IS THIS TIME" in dialogue or "THE CLOCK" in dialogue:
+                print(f"🕐 [CLOCK] Clock dialogue detected, pressing A")
                 return ['A']
+                
+            # General dialogue clearing
             if v.get('visual_elements', {}).get('text_box_visible', False):
+                print(f"🕐 [CLOCK] Text box visible, pressing A")
                 return ['A']
+                
             return None
 
         def action_special_starter(s, v):
@@ -580,7 +600,7 @@ class OpenerBot:
     def _action_exit_house(self, state_data: Dict[str, Any], visual_data: Dict[str, Any]) -> Union[List[str], NavigationGoal]:
         """
         Multi-phase house exit: 2F -> stairs -> 1F -> door
-        CORRECTED: Stairs are at (8, 2) on both floors
+        Stairs are WALK-ON tiles - just navigate to them, don't press directions!
         """
         player_location = state_data.get('player', {}).get('location', '')
         player_pos = state_data.get('player', {}).get('position', {})
@@ -591,15 +611,12 @@ class OpenerBot:
             return ['A']
         
         if '2F' in player_location:
-            # Phase 1: Navigate to stairs on 2F
-            if x == 8 and y == 2:
-                logger.info("[EXIT HOUSE] At 2F stairs (8,2), going DOWN")
-                return ['DOWN']
-            logger.info(f"[EXIT HOUSE] Phase 1: At ({x},{y}), navigating to 2F stairs (8,2)")
-            return NavigationGoal(x=8, y=2, map_location='PLAYERS_HOUSE_2F', description="Go to Stairs (2F)")
+            # Phase 1: Navigate to stairs on 2F (walk-on tile at 7, 1)
+            logger.info(f"[EXIT HOUSE] Phase 1: At ({x},{y}), navigating to 2F stairs (7,1)")
+            return NavigationGoal(x=7, y=1, map_location='PLAYERS_HOUSE_2F', description="2F Stairs")
         
         elif '1F' in player_location:
-            # Phase 2: Navigate to door on 1F
+            # Phase 2: Navigate to door on 1F (stairs are also at 7,1 on 1F)
             logger.info(f"[EXIT HOUSE] Phase 2: At ({x},{y}), navigating to door (4,7)")
             return NavigationGoal(x=4, y=7, map_location='PLAYERS_HOUSE_1F', description="Exit House")
         
