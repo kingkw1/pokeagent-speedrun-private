@@ -601,6 +601,10 @@ class OpenerBot:
         """
         Multi-phase house exit: 2F -> stairs -> 1F -> door
         Stairs are WALK-ON tiles - just navigate to them, don't press directions!
+        
+        On 1F: Uses waypoint navigation to avoid table obstacle.
+        - From mom's position (4,5), go RIGHT to (8,5) to clear the table
+        - Then go DOWN to door at (4,7)
         """
         player_location = state_data.get('player', {}).get('location', '')
         player_pos = state_data.get('player', {}).get('position', {})
@@ -616,9 +620,13 @@ class OpenerBot:
             return NavigationGoal(x=7, y=1, map_location='PLAYERS_HOUSE_2F', description="2F Stairs")
         
         elif '1F' in player_location:
-            # Phase 2: Navigate to door on 1F (stairs are also at 7,1 on 1F)
-            logger.info(f"[EXIT HOUSE] Phase 2: At ({x},{y}), navigating to door (4,7)")
-            return NavigationGoal(x=4, y=7, map_location='PLAYERS_HOUSE_1F', description="Exit House")
+            # Phase 2: Navigate to door on 1F
+            # Door is at (8, 9) and (9, 9) - south wall of the house
+            # Mom's position is (4,5), table may block some paths
+            
+            # Simple navigation: just go to the door at (8,9)
+            logger.info(f"[EXIT HOUSE] Phase 2: At ({x},{y}), navigating to door (8,9)")
+            return NavigationGoal(x=8, y=9, map_location='PLAYERS_HOUSE_1F', description="Exit House")
         
         else:
             logger.warning(f"[EXIT HOUSE] Unknown location: {player_location}")
