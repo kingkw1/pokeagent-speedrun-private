@@ -64,7 +64,6 @@ class OpenerBot:
         self.state_attempt_count: int = 0
         self.last_action: Any = None
         self.state_history: List[tuple] = []
-        self.initialized_state: bool = False  # Track if we've auto-detected state
         
         logger.info("[OPENER BOT] Initialized STATEFUL at state: S0_TITLE_SCREEN")
     
@@ -92,26 +91,18 @@ class OpenerBot:
         Determines if the opener bot should be active.
         STATEFUL: Just checks if we're in COMPLETED state or if opener sequence is done.
         """
-        print(f"🤖 [OPENER BOT SHOULD_HANDLE] Current state: {self.current_state_name}")
-        
         if self.current_state_name == 'COMPLETED':
-            print("[OPENER BOT SHOULD_HANDLE] State is COMPLETED, returning False")
             return False
             
         # Check if we've completed the opener sequence
         milestones = state_data.get('milestones', {})
-        starter_chosen = milestones.get('STARTER_CHOSEN', {}).get('completed', False)
-        player_loc = state_data.get('player', {}).get('location', '')
-        
-        print(f"🤖 [OPENER BOT SHOULD_HANDLE] Starter chosen: {starter_chosen}, Player location: {player_loc}")
-        
-        if starter_chosen:
+        if milestones.get('STARTER_CHOSEN', {}).get('completed', False):
+            player_loc = state_data.get('player', {}).get('location', '')
             if 'BIRCHS_LAB' not in player_loc:
-                print("[OPENER BOT] Starter chosen and outside lab. Handing off to VLM.")
+                logger.info("[OPENER BOT] Starter chosen and outside lab. Handing off to VLM.")
                 self._transition_to_state('COMPLETED')
                 return False
         
-        print(f"🤖 [OPENER BOT SHOULD_HANDLE] Bot is ACTIVE, will handle action")
         return True  # Bot is active
 
     def get_action(self, state_data: Dict[str, Any], visual_data: Dict[str, Any], 
@@ -123,36 +114,15 @@ class OpenerBot:
         3. Check if state's transition condition is met (if yes, transition)
         4. Execute current state's action
         """
-        # Debug: Show what data we received
-        player_pos = state_data.get('player', {}).get('position', {})
-        player_loc = state_data.get('player', {}).get('location', '')
-        print(f"🤖 [OPENER BOT GET_ACTION] ========================================")
-        print(f"🤖 [OPENER BOT GET_ACTION] Current state: {self.current_state_name}")
-        print(f"🤖 [OPENER BOT GET_ACTION] Player position: ({player_pos.get('x', '?')}, {player_pos.get('y', '?')})")
-        print(f"🤖 [OPENER BOT GET_ACTION] Player location: {player_loc}")
-        print(f"🤖 [OPENER BOT GET_ACTION] Attempt: {self.state_attempt_count + 1}")
-        
-        # AUTO-DETECT STARTING STATE on first call
-        if not self.initialized_state:
-            detected_state = self._detect_starting_state(state_data)
-            if detected_state and detected_state != self.current_state_name:
-                print(f"🤖 [OPENER BOT INIT] Auto-detected starting state: {detected_state}")
-                self._transition_to_state(detected_state)
-            self.initialized_state = True
-        
         state = self.states.get(self.current_state_name)
         if not state:
             logger.error(f"[OPENER BOT] In unknown state {self.current_state_name}, completing.")
             self._transition_to_state('COMPLETED')
             return None
 
-        logger.info(f"[OPENER BOT GET_ACTION] State description: {state.description}")
-
         # 1. Check Safety Fallbacks
         self.state_attempt_count += 1
         elapsed = time.time() - self.state_entry_time
-        logger.info(f"[OPENER BOT GET_ACTION] Safety check: {self.state_attempt_count}/{state.max_attempts} attempts, {elapsed:.1f}/{state.timeout_seconds}s elapsed")
-        
         if self.state_attempt_count > state.max_attempts or elapsed > state.timeout_seconds:
             logger.warning(f"[OPENER BOT] ⚠️ SAFETY FALLBACK: State {state.name} timed out! Handing off to VLM.")
             self._transition_to_state('COMPLETED')
@@ -161,100 +131,31 @@ class OpenerBot:
         # 2. Check for State Transition
         if state.next_state_fn:
             try:
-                print(f"🔍 [OPENER BOT] Checking transition for {state.name}...")
                 next_state_name = state.next_state_fn(state_data, visual_data)
-                print(f"🔍 [OPENER BOT] Transition result: {next_state_name}")
                 if next_state_name:
                     logger.info(f"[OPENER BOT] ✅ State {state.name} transition condition MET. Moving to {next_state_name}.")
-                    print(f"✅ [OPENER BOT] Transitioning from {state.name} to {next_state_name}")
                     self._transition_to_state(next_state_name)
                     # Get the NEW state after transition
                     state = self.states[self.current_state_name]
-                    logger.info(f"[OPENER BOT GET_ACTION] Now in new state: {state.name} - {state.description}")
-                else:
-                    logger.info(f"[OPENER BOT GET_ACTION] Transition condition NOT met, staying in {state.name}")
             except Exception as e:
                 logger.error(f"[OPENER BOT] Error in next_state_fn for {state.name}: {e}")
-                import traceback
-                traceback.print_exc()
                 self._transition_to_state('COMPLETED')
                 return None
-        else:
-            print(f"🔍 [OPENER BOT] No transition function defined for {state.name}")
 
         # 3. Execute Current State's Action
         action_or_goal = None
         if state.action_fn:
             try:
-                logger.info(f"[OPENER BOT GET_ACTION] Executing action_fn for {state.name}...")
                 action_or_goal = state.action_fn(state_data, visual_data)
                 self.last_action = action_or_goal
                 if isinstance(action_or_goal, NavigationGoal):
-                    logger.info(f"[OPENER BOT] State: {state.name} | Goal: {action_or_goal.description} to ({action_or_goal.x}, {action_or_goal.y})")
+                    logger.info(f"[OPENER BOT] State: {state.name} | Goal: {action_or_goal.description}")
                 else:
                     logger.info(f"[OPENER BOT] State: {state.name} | Action: {action_or_goal} | Attempt: {self.state_attempt_count}")
             except Exception as e:
                 logger.error(f"[OPENER BOT] Error in action_fn for {state.name}: {e}")
-                import traceback
-                traceback.print_exc()
-        
-        logger.info(f"[OPENER BOT GET_ACTION] Returning: {action_or_goal}")
-        logger.info(f"[OPENER BOT GET_ACTION] ========================================")
+                
         return action_or_goal
-    
-    def _detect_starting_state(self, state_data: Dict[str, Any]) -> Optional[str]:
-        """
-        Auto-detect which state we should start in based on game progress.
-        Used when loading from save states.
-        """
-        milestones = state_data.get('milestones', {})
-        player_loc = state_data.get('player', {}).get('location', '')
-        player_pos = state_data.get('player', {}).get('position', {})
-        x, y = player_pos.get('x', 0), player_pos.get('y', 0)
-        
-        print(f"🔍 [STATE DETECTION] Location: {player_loc}, Position: ({x}, {y})")
-        print(f"🔍 [STATE DETECTION] Milestones: {list(milestones.keys())}")
-        
-        # Check milestones in reverse order (most recent first)
-        if milestones.get('STARTER_CHOSEN', {}).get('completed', False):
-            return 'S19_LAB_DIALOG'  # After getting starter
-        
-        if milestones.get('BIRCH_SAVED', {}).get('completed', False):
-            return 'S18_BIRCH_BATTLE'  # Just fought battle
-            
-        if milestones.get('PLAYER_HOUSE_EXITED', {}).get('completed', False):
-            # Left house, probably heading to May's or Route 101
-            if 'MAYS_HOUSE' in player_loc or 'MAY' in player_loc:
-                return 'S10_MAYS_MOTHER_DIALOG'
-            elif 'ROUTE_101' in player_loc or 'ROUTE101' in player_loc or 'ROUTE 101' in player_loc:
-                return 'S14_NAV_TO_BIRCH'
-            else:
-                return 'S9_NAV_TO_MAYS_HOUSE'
-        
-        # Check if we're in player's house (regardless of milestone - location is truth)
-        if ('PLAYERS_HOUSE' in player_loc or 'BRENDANS_HOUSE' in player_loc or 'BRENDAN' in player_loc) and 'HOUSE' in player_loc:
-            if '2F' in player_loc:
-                # On 2nd floor - setting clock or leaving
-                return 'S6_NAV_TO_CLOCK'
-            else:
-                # On 1st floor - Mom dialogue or navigating to stairs
-                return 'S4_MOM_DIALOG_1F'
-        
-        # Fallback milestone checks
-        if milestones.get('PLAYER_HOUSE_ENTERED', {}).get('completed', False):
-            # PLAYER_HOUSE_ENTERED set but not in house location - should transition
-            return 'S4_MOM_DIALOG_1F'
-        
-        if milestones.get('PLAYER_NAME_SET', {}).get('completed', False):
-            # Name is set - if in MOVING_VAN, exit it; otherwise skip to S4
-            if 'MOVING_VAN' in player_loc or 'VAN' in player_loc:
-                return 'S3_TRUCK_RIDE'
-            else:
-                # Name set but not in van - probably already in house
-                return 'S4_MOM_DIALOG_1F'
-        
-        # Default to title screen if no milestones
-        return 'S0_TITLE_SCREEN'
         
     def _build_state_machine(self) -> Dict[str, BotState]:
         """
@@ -349,8 +250,7 @@ class OpenerBot:
         def trans_dialogue_contains(text: str, next_state: str) -> Callable:
             """Transition when dialogue contains specific text."""
             def check_fn(s, v):
-                dialogue = v.get('on_screen_text', {}).get('dialogue', '') or ''
-                if text.upper() in dialogue.upper():
+                if text.upper() in v.get('on_screen_text', {}).get('dialogue', '').upper():
                     return next_state
                 return None
             return check_fn
@@ -366,11 +266,7 @@ class OpenerBot:
         def trans_location_contains(loc_name: str, next_state: str) -> Callable:
             """Transition when location contains specific text."""
             def check_fn(s, v):
-                location = s.get('player', {}).get('location', '') or ''
-                result = loc_name.upper() in location.upper()
-                print(f"🔍 [TRANS_LOCATION] Checking if '{loc_name}' in '{location}': {result}")
-                if result:
-                    print(f"🔍 [TRANS_LOCATION] Transitioning to {next_state}")
+                if loc_name.upper() in s.get('player', {}).get('location', '').upper():
                     return next_state
                 return None
             return check_fn
@@ -415,8 +311,8 @@ class OpenerBot:
         def trans_no_dialogue_and_no_nickname_text(next_state: str) -> Callable:
             """Transition when dialogue is done AND nickname text is gone."""
             def check_fn(s, v):
-                dialogue = v.get('on_screen_text', {}).get('dialogue', '') or ''
-                if not v.get('visual_elements', {}).get('text_box_visible', False) and "NICKNAME" not in dialogue.upper():
+                dialogue = v.get('on_screen_text', {}).get('dialogue', '').upper()
+                if not v.get('visual_elements', {}).get('text_box_visible', False) and "NICKNAME" not in dialogue:
                     return next_state
                 return None
             return check_fn
@@ -461,14 +357,14 @@ class OpenerBot:
                 name='S5_NAV_TO_STAIRS_1F',
                 description='Navigate to stairs on 1F',
                 action_fn=action_nav(NavigationGoal(x=8, y=2, map_location='PLAYERS_HOUSE_1F', description="Go to Stairs")),
-                next_state_fn=trans_location_contains('2F', 'S6_NAV_TO_CLOCK')  # Check for 2F (works for both PLAYERS_HOUSE and BRENDANS_HOUSE)
+                next_state_fn=trans_location_contains('PLAYERS_HOUSE_2F', 'S6_NAV_TO_CLOCK')
             ),
             
             # === THE CRITICAL FIX: S6 -> S7 with area-based transition ===
             'S6_NAV_TO_CLOCK': BotState(
                 name='S6_NAV_TO_CLOCK',
                 description='Navigate to clock in 2F bedroom',
-                action_fn=action_nav(NavigationGoal(x=5, y=1, map_location='PLAYERS_HOUSE_2F', description="Interact with Clock")),
+                action_fn=action_nav(NavigationGoal(x=5, y=1, map_location='PLAYERS_HOUSE_2F', description="Go to Clock")),
                 # CRITICAL: Transition when in clock AREA and dialogue appears (not exact position)
                 # This handles the "adjacent-interact" bug where agent presses A from (6,1) or (5,2)
                 next_state_fn=trans_area_and_dialogue(x_range=[4, 5, 6], y_range=[1, 2], next_state='S7_SET_CLOCK')
@@ -606,41 +502,3 @@ class OpenerBot:
         else:
             logger.warning(f"[EXIT HOUSE] Unknown location: {player_location}")
             return None
-
-    def get_state_summary(self) -> Dict[str, Any]:
-        """Get current state summary for debugging/monitoring"""
-        state = self.states.get(self.current_state_name)
-        elapsed = time.time() - self.state_entry_time if state else 0
-        
-        return {
-            'current_state': self.current_state_name,
-            'state_description': state.description if state else 'Unknown',
-            'attempt_count': self.state_attempt_count,
-            'max_attempts': state.max_attempts if state else 0,
-            'elapsed_seconds': elapsed,
-            'timeout_seconds': state.timeout_seconds if state else 0,
-            'last_action': self.last_action,
-            'state_history_length': len(self.state_history)
-        }
-    
-    def reset(self):
-        """Reset the opener bot to initial state"""
-        self.current_state_name = 'S0_TITLE_SCREEN'
-        self.state_entry_time = time.time()
-        self.state_attempt_count = 0
-        self.last_action = None
-        self.state_history.clear()
-        logger.info("[OPENER BOT] Reset to S0_TITLE_SCREEN state")
-
-
-# === Global Instance Management ===
-
-_global_opener_bot: Optional[OpenerBot] = None
-
-
-def get_opener_bot() -> OpenerBot:
-    """Get or create the global opener bot instance"""
-    global _global_opener_bot
-    if _global_opener_bot is None:
-        _global_opener_bot = OpenerBot()
-    return _global_opener_bot

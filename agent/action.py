@@ -134,18 +134,35 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         vlm: VLM instance for action decisions
         visual_dialogue_active: VLM's visual detection of dialogue box (85.7% accurate, no time cost)
     """
+    print("=" * 80)
+    print("🎯 [ACTION_STEP] CALLED - Starting action decision process")
+    print("=" * 80)
+    
     # 🤖 PRIORITY 0: OPENER BOT - Programmatic State Machine (Splits 0-4)
     # Handles deterministic early game states with high reliability using memory state
     # and milestone tracking as primary signals. Returns None to fallback to VLM.
     try:
+        print("🔍 [ACTION_STEP] About to import NavigationGoal...")
         from agent.opener_bot import NavigationGoal
-        opener_bot = get_opener_bot()
-        visual_data = latest_observation.get('visual_data', {}) if isinstance(latest_observation, dict) else {}
+        print("🔍 [ACTION_STEP] NavigationGoal imported successfully")
         
-        if opener_bot.should_handle(state_data, visual_data):
+        print("🔍 [ACTION_STEP] About to call get_opener_bot()...")
+        opener_bot = get_opener_bot()
+        print(f"🔍 [ACTION_STEP] Got opener bot: {opener_bot}")
+        
+        visual_data = latest_observation.get('visual_data', {}) if isinstance(latest_observation, dict) else {}
+        print(f"🔍 [ACTION_STEP] Extracted visual_data, calling should_handle...")
+        
+        should_handle = opener_bot.should_handle(state_data, visual_data)
+        print(f"🔍 [ACTION_STEP] should_handle returned: {should_handle}")
+        
+        if should_handle:
+            print(f"🔍 [ACTION_STEP] should_handle is True, calling get_action...")
             opener_action = opener_bot.get_action(state_data, visual_data, current_plan)
+            print(f"🔍 [ACTION_STEP] get_action returned: {opener_action}")
             
             if opener_action is not None:
+                print(f"🔍 [ACTION_STEP] opener_action is not None, processing...")
                 bot_state = opener_bot.get_state_summary()
                 
                 # Check if it's a NavigationGoal
@@ -189,19 +206,35 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
                     # Check if we're adjacent to goal (distance = 1)
                     distance = abs(current_x - goal_x) + abs(current_y - goal_y)
                     if distance == 1:
-                        # Adjacent to goal - check if we're facing it
-                        logger.info(f"🤖 [OPENER BOT] Adjacent to goal - Current orientation: {current_orientation}, Required: {required_direction}")
+                        # Adjacent to goal - but for stairs/warp tiles, we need to WALK ON, not interact
+                        # Only interact with A if the goal description suggests it (e.g., "interact", "talk")
+                        goal_desc_lower = (opener_action.description or "").lower()
+                        should_interact = any(keyword in goal_desc_lower for keyword in ['interact', 'talk', 'speak', 'check'])
                         
-                        if current_orientation == required_direction:
-                            # Already facing the goal - interact!
-                            logger.info(f"🤖 [OPENER BOT] Facing goal correctly - pressing A")
-                            return ['A']
+                        print(f"🔍 [NAV] Adjacent to goal. Description: '{opener_action.description}'")
+                        print(f"🔍 [NAV] Should interact: {should_interact}")
+                        print(f"🔍 [NAV] Recent actions: {recent_actions[-5:] if recent_actions else []}")
+                        print(f"🔍 [NAV] Current orientation: {current_orientation}, Required: {required_direction}")
+                        
+                        if should_interact:
+                            # This is an interact-with-A goal (like NPC or sign)
+                            logger.info(f"🤖 [OPENER BOT] Adjacent to goal - Current orientation: {current_orientation}, Required: {required_direction}")
+                            
+                            if current_orientation == required_direction:
+                                # Already facing the goal - interact!
+                                logger.info(f"🤖 [OPENER BOT] Facing goal correctly - pressing A")
+                                print(f"✅ [NAV] Already facing {required_direction}, pressing A!")
+                                return ['A']
+                            else:
+                                # Need to turn toward goal first
+                                logger.info(f"🤖 [OPENER BOT] Turning to face goal: {required_direction}")
+                                print(f"🔄 [NAV] Turning from {current_orientation} to {required_direction}")
+                                return [required_direction]
                         else:
-                            # Need to turn toward goal first
-                            logger.info(f"🤖 [OPENER BOT] Turning to face goal: {required_direction}")
-                            return [required_direction]
+                            # This is a walk-to goal (stairs, warp tile, position) - keep moving
+                            logger.info(f"🤖 [OPENER BOT] Adjacent to walk-to goal ({opener_action.description}) - continuing to walk on it")
                     
-                    # Not adjacent yet - move toward goal
+                    # Not at exact goal yet - move toward goal
                     if required_direction:
                         return [required_direction]
                     else:
@@ -215,12 +248,14 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
             else:
                 # Opener bot returned None - fallback to VLM
                 logger.debug(f"🤖 [OPENER BOT] Fallback to VLM in state: {opener_bot.current_state_name}")
+        else:
+            logger.info(f"[ACTION] 🤖 Opener bot should NOT handle - continuing to VLM/dialogue detection")
         
     except Exception as e:
         logger.error(f"🤖 [OPENER BOT] Error: {e}", exc_info=True)
         # Continue to VLM logic on error
     
-    # 🎯 PRIORITY 1: VLM VISUAL DIALOGUE DETECTION (HIGHEST PRIORITY)
+    # 🎯 PRIORITY 1: VLM VISUAL DIALOGUE DETECTION (HIGHEST PRIORITY - BUT ONLY IF OPENER BOT NOT ACTIVE)
     # NEW: Check for continue_prompt_visible (red triangle indicator) - MOST RELIABLE
     # The red triangle ❤️ at end of dialogue is a perfect signal for "press A"
     # 

@@ -101,11 +101,15 @@ class Agent:
         Returns:
             dict: Contains 'action' and optionally 'reasoning'
         """
+        print(f"🔍 [AGENT.STEP] simple_mode={self.simple_mode}")
+        
         if self.simple_mode:
             # Simple mode - delegate to SimpleAgent
+            print(f"🔍 [AGENT.STEP] Delegating to SimpleAgent")
             return self.simple_agent.step(game_state)
         else:
             # Four-module processing
+            print(f"🔍 [AGENT.STEP] Using four-module processing")
             try:
                 # Extract the frame and state data from game_state
                 frame = game_state.get('frame')
