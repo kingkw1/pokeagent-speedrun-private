@@ -395,6 +395,18 @@ class OpenerBot:
                 return None
             return check_fn
 
+        def trans_location_exact(loc_name: str, next_state: str) -> Callable:
+            """Transition when location exactly matches (case-insensitive)."""
+            def check_fn(s, v):
+                location = s.get('player', {}).get('location', '') or ''
+                result = loc_name.upper() == location.upper()
+                print(f"🔍 [TRANS_LOCATION_EXACT] Checking if '{loc_name}' == '{location}': {result}")
+                if result:
+                    print(f"🔍 [TRANS_LOCATION_EXACT] Transitioning to {next_state}")
+                    return next_state
+                return None
+            return check_fn
+
         def trans_no_dialogue(next_state: str) -> Callable:
             """Transition when dialogue is no longer visible."""
             def check_fn(s, v):
@@ -503,7 +515,7 @@ class OpenerBot:
                 name='S8_NAV_OUT_OF_HOUSE',
                 description='Navigate to stairs on 2F, then exit house',
                 action_fn=lambda s, v: self._action_exit_house(s, v),
-                next_state_fn=trans_location_contains('LITTLEROOT_TOWN', 'S9_NAV_TO_MAYS_HOUSE')
+                next_state_fn=trans_location_exact('LITTLEROOT TOWN', 'S9_NAV_TO_MAYS_HOUSE')
             ),
             
             # === Phase 3: Rival's House ===
