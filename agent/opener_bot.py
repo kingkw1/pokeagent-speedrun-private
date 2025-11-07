@@ -2,20 +2,57 @@
 Opener Bot - STATEFUL State Machine for Game Opening (Splits 0-4)
 
 This module implements a STATEFUL rule-based controller that reliably handles
-the deterministic opening sequence of Pokemon Emerald.
+the deterministic opening sequence of Pokemon Emerald, from title screen through
+starter selection.
 
-CRITICAL ARCHITECTURAL CHANGE:
-- The bot now REMEMBERS its current state (self.current_state_name)
-- Each frame, it only checks TRANSITION CONDITIONS from the current state
-- This solves the "stateless Catch-22" where S6_NAV_TO_CLOCK and S8_NAV_OUT_OF_HOUSE
-  would oscillate because both matched at the same time
-- States use explicit next_state_fn to define when they're complete
+===============================================================================
+ARCHITECTURE OVERVIEW
+===============================================================================
 
-Design Philosophy:
-- Memory state (milestones, game_state) as PRIMARY signal (100% reliable)
-- Visual elements (text_box_visible) as SECONDARY (85% reliable)
-- VLM text parsing as TERTIARY hint only (60% reliable)
-- Stateful transitions prevent mid-sequence state jumping
+**State Machine Design:**
+- STATEFUL: Bot remembers current state (self.current_state_name)
+- Each frame, only checks transition conditions from current state
+- Prevents state oscillation (e.g., S6_NAV_TO_CLOCK ↔ S8_NAV_OUT_OF_HOUSE)
+- States use explicit next_state_fn to define completion criteria
+
+**Signal Hierarchy:**
+1. PRIMARY: Memory state (milestones, game_state) - 100% reliable
+2. SECONDARY: Visual elements (text_box_visible) - 85% reliable  
+3. TERTIARY: VLM text parsing - 60% reliable (hint only)
+
+**State Lifecycle:**
+```
+Title Screen → Name Selection → House Interior → Exit House → 
+Choose Starter → Exit Lab → COMPLETED
+```
+
+**COMPLETED State Behavior:**
+Once STARTER_CHOSEN milestone is achieved AND player exits Birch's Lab,
+the bot transitions to COMPLETED state and PERMANENTLY hands off to VLM.
+
+The bot will NOT re-activate even if player returns to lab later. This is
+intentional to prevent interference with normal gameplay after the opening.
+
+===============================================================================
+USAGE
+===============================================================================
+
+The opener_bot is called from action.py as Priority 0 (before all other logic):
+
+```python
+# In action_step():
+opener_bot = get_opener_bot()
+if opener_bot.should_handle(state_data, visual_data):
+    action = opener_bot.get_action(state_data, visual_data)
+    if action:
+        return action  # Bot handles this step
+# Otherwise, fall through to VLM navigation
+```
+
+Once COMPLETED, should_handle() always returns False, permanently handing off
+control to the VLM-based agent.
+
+===============================================================================
 """
 
 import logging
@@ -98,19 +135,7 @@ class OpenerBot:
         # Special case: If COMPLETED but we're actually still in the lab, re-detect state
         if self.current_state_name == 'COMPLETED':
             player_loc = state_data.get('player', {}).get('location', '')
-            
-            # If still in lab, we're not actually done - re-detect the correct state
-            if 'PROFESSOR BIRCHS LAB' in player_loc:
-                print(f"[OPENER BOT] COMPLETED but still in lab ({player_loc}) - RE-DETECTING STATE")
-                detected_state = self._detect_starting_state(state_data)
-                if detected_state and detected_state != 'COMPLETED':
-                    print(f"[OPENER BOT] Re-detected state as: {detected_state}")
-                    self._transition_to_state(detected_state)
-                    return True
-                else:
-                    print(f"[OPENER BOT] Re-detection returned {detected_state}, keeping COMPLETED")
-            else:
-                print(f"[OPENER BOT SHOULD_HANDLE] COMPLETED and outside lab ({player_loc}), returning False")
+            print(f"[OPENER BOT SHOULD_HANDLE] COMPLETED - OpenerBot permanently done. VLM will handle everything now. (Location: {player_loc})")
             return False
         
         # Check if we've completed the opener sequence

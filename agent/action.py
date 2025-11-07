@@ -3,6 +3,7 @@ import random
 import sys
 import logging
 import random
+from typing import Dict, Any, Optional, Tuple
 from agent.system_prompt import system_prompt
 from agent.opener_bot import get_opener_bot
 from utils.state_formatter import format_state_for_llm, format_state_summary, get_movement_options, get_party_health_summary, format_movement_preview_for_llm
@@ -118,6 +119,176 @@ def get_menu_navigation_moves(menu_state, options, current, target):
         return calculate_column_moves(options, current, target)
     
     # ... other menu types ...
+
+def _local_pathfind_from_tiles(state_data: Dict[str, Any], goal_direction: str) -> Optional[str]:
+    """
+    Pathfinding using BFS on the 15x15 visible tile grid.
+    Finds the best first step toward target positions along the goal direction edge.
+    
+    Args:
+        state_data: Current game state with 'map']['tiles'] containing 15x15 grid
+        goal_direction: Direction hint like 'north', 'south', etc.
+    
+    Returns:
+        Direction string ('UP', 'DOWN', 'LEFT', 'RIGHT') or None if no path
+    """
+    try:
+        from utils.state_formatter import format_tile_to_symbol
+        from collections import deque
+        
+        # Get tiles from state (15x15 grid centered on player)
+        map_info = state_data.get('map', {})
+        raw_tiles = map_info.get('tiles', [])
+        
+        if not raw_tiles or len(raw_tiles) < 15:
+            print(f"⚠️ [LOCAL A*] Insufficient tile data: {len(raw_tiles) if raw_tiles else 0} rows")
+            return None
+        
+        grid_size = len(raw_tiles)
+        center = grid_size // 2
+        
+        # Helper to check if tile is walkable
+        def is_walkable(y, x):
+            if not (0 <= y < grid_size and 0 <= x < grid_size):
+                return False
+            tile = raw_tiles[y][x]
+            symbol = format_tile_to_symbol(tile) if tile else '?'
+            # Walkable: grass/path only
+            # NOT walkable: doors, walls, stairs, unknown
+            return symbol in ['.', '_']
+        
+        # Determine target positions based on goal direction
+        goal_dir_upper = goal_direction.upper()
+        target_positions = []
+        
+        if 'NORTH' in goal_dir_upper or goal_direction == 'north':
+            # Target top edge (row 0) - find walkable tiles
+            for x in range(grid_size):
+                if is_walkable(0, x):
+                    target_positions.append((0, x))
+        elif 'SOUTH' in goal_dir_upper or goal_direction == 'south':
+            # Target bottom edge
+            for x in range(grid_size):
+                if is_walkable(grid_size - 1, x):
+                    target_positions.append((grid_size - 1, x))
+        elif 'EAST' in goal_dir_upper or goal_direction == 'east':
+            # Target right edge
+            for y in range(grid_size):
+                if is_walkable(y, grid_size - 1):
+                    target_positions.append((y, grid_size - 1))
+        elif 'WEST' in goal_dir_upper or goal_direction == 'west':
+            # Target left edge
+            for y in range(grid_size):
+                if is_walkable(y, 0):
+                    target_positions.append((y, 0))
+        else:
+            print(f"⚠️ [LOCAL A*] Unknown goal direction: {goal_direction}")
+            return None
+        
+        if not target_positions:
+            print(f"⚠️ [LOCAL A*] No walkable targets on {goal_direction} edge")
+            return None
+        
+        # BFS from player position to find shortest path to any target
+        directions = [
+            ('UP', 0, -1),
+            ('DOWN', 0, 1),
+            ('LEFT', -1, 0),
+            ('RIGHT', 1, 0)
+        ]
+        
+        start = (center, center)
+        queue = deque([(start, [])])  # (position, path_of_directions)
+        visited = {start}
+        
+        while queue:
+            (y, x), path = queue.popleft()
+            
+            # Check if we reached a target
+            if (y, x) in target_positions:
+                if path:
+                    first_step = path[0]
+                    print(f"✅ [LOCAL A*] Found path to {goal_direction} edge: {' -> '.join(path)}")
+                    print(f"   First step: {first_step}")
+                    return first_step
+                else:
+                    # Already at target? shouldn't happen
+                    print(f"⚠️ [LOCAL A*] Already at target position")
+                    return None
+            
+            # Explore neighbors
+            for dir_name, dx, dy in directions:
+                ny, nx = y + dy, x + dx
+                
+                if (ny, nx) not in visited and is_walkable(ny, nx):
+                    visited.add((ny, nx))
+                    new_path = path + [dir_name]
+                    queue.append(((ny, nx), new_path))
+        
+        # No path found to any target
+        print(f"⚠️ [LOCAL A*] No path found toward {goal_direction}")
+        print(f"   Checked {len(target_positions)} target positions on edge")
+        print(f"   Explored {len(visited)} tiles")
+        
+        # Fallback: just pick any walkable direction
+        for dir_name, dx, dy in directions:
+            ny, nx = center + dy, center + dx
+            if is_walkable(ny, nx):
+                print(f"   Fallback: choosing {dir_name} (first walkable)")
+                return dir_name
+        
+        return None
+        
+    except Exception as e:
+        print(f"❌ [LOCAL A*] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def _validate_map_stitcher_bounds(map_stitcher, player_pos: Tuple[int, int], location: str) -> bool:
+    """
+    Check if the map stitcher bounds contain the current player position.
+    This detects stale map data from previous runs/states.
+    
+    Args:
+        map_stitcher: The MapStitcher singleton instance
+        player_pos: Current player (x, y) world coordinates
+        location: Current location name
+    
+    Returns:
+        True if player position is within valid bounds, False if mismatch detected
+    """
+    try:
+        # Find the map area for current location
+        matching_area = None
+        for area in map_stitcher.map_areas.values():
+            if area.location_name.upper() == location.upper():
+                matching_area = area
+                break
+        
+        if not matching_area:
+            print(f"⚠️ [PATHFINDING] Location '{location}' not in map stitcher - likely fresh state")
+            return False
+        
+        bounds = matching_area.explored_bounds
+        player_x, player_y = player_pos
+        
+        # Check if player position is within bounds
+        if (bounds['min_x'] <= player_x <= bounds['max_x'] and
+            bounds['min_y'] <= player_y <= bounds['max_y']):
+            return True
+        else:
+            print(f"⚠️ [PATHFINDING] Map stitcher bounds mismatch!")
+            print(f"   Player position: ({player_x}, {player_y})")
+            print(f"   Map stitcher bounds: X:{bounds['min_x']}-{bounds['max_x']}, Y:{bounds['min_y']}-{bounds['max_y']}")
+            print(f"   This indicates stale data from a previous run")
+            print(f"   Disabling pathfinding for this step - relying on VLM navigation")
+            return False
+            
+    except Exception as e:
+        print(f"❌ [PATHFINDING] Error validating map stitcher: {e}")
+        return False
+
 
 def action_step(memory_context, current_plan, latest_observation, frame, state_data, recent_actions, vlm, visual_dialogue_active=False):
     """
@@ -914,10 +1085,16 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     
     # Get movement preview for pathfinding decisions
     movement_preview_text = ""
+    movement_preview = {}  # NEW: Full movement preview dict for pathfinding
     walkable_options = []  # NEW: Store walkable directions as multiple-choice options
     
     if not game_data.get('in_battle', False):  # Only show movement options in overworld
         try:
+            # Get full movement preview dict for pathfinding
+            from utils.state_formatter import get_movement_preview
+            movement_preview = get_movement_preview(state_data)
+            
+            # Get formatted text version for VLM prompt
             movement_preview_text = format_movement_preview_for_llm(state_data)
             print(f"🗺️ [MOVEMENT DEBUG] Raw movement preview result: '{movement_preview_text}'")
             
@@ -1072,6 +1249,71 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         # Context-aware goal based on location
         location = state_data.get('player', {}).get('location', '')
         
+        # ============================================================================
+        # A* PATHFINDING - Goal-driven navigation from planning module
+        # ============================================================================
+        # Extract navigation goal from strategic plan (NO hardcoded location checks!)
+        try:
+            from utils.goal_parser import get_goal_parser
+            from utils.pathfinding import find_direction_to_goal
+            from utils.state_formatter import _get_map_stitcher_instance
+            
+            goal_parser = get_goal_parser()
+            
+            # Extract goal from current plan
+            navigation_goal = goal_parser.extract_goal_from_plan(
+                plan=current_plan if current_plan else "",
+                current_location=location,
+                current_objective=None  # TODO: Pass actual objective when available
+            )
+            
+            if navigation_goal and navigation_goal.get('confidence', 0) >= 0.6:
+                print(f"🎯 [GOAL PARSER] Extracted navigation goal: {navigation_goal}")
+                
+                # Get map stitcher singleton (we'll validate it below)
+                map_stitcher = _get_map_stitcher_instance()
+                
+                if map_stitcher:
+                    player_pos = player_data.get('position', {})
+                    current_x = player_pos.get('x')
+                    current_y = player_pos.get('y')
+                    
+                    if current_x is not None and current_y is not None:
+                        # CRITICAL: Validate map stitcher bounds before using pathfinding
+                        # Competition split states may have stale singleton data from unrelated runs
+                        if not _validate_map_stitcher_bounds(map_stitcher, (current_x, current_y), location):
+                            print(f"🔄 [PATHFINDING] Map stitcher validation failed - using LOCAL A* with visible tiles")
+                            
+                            # Use lightweight local pathfinding with just the 15x15 visible grid
+                            direction_hint = navigation_goal.get('direction_hint', '')
+                            if direction_hint:
+                                local_direction = _local_pathfind_from_tiles(state_data, direction_hint)
+                                if local_direction:
+                                    print(f"✅ [LOCAL A*] Using direction: {local_direction}")
+                                    print(f"🚀 [LOCAL A*] Bypassing VLM with local pathfinding")
+                                    return [local_direction]
+                                else:
+                                    print(f"⚠️ [LOCAL A*] No path found, falling back to VLM")
+                            else:
+                                print(f"⚠️ [PATHFINDING] No direction hint in goal, can't use local A*")
+
+                        else:
+                            # Map stitcher is valid - could use full A* pathfinding here
+                            # For now, still use local A* as it's working well
+                            print(f"✅ [PATHFINDING] Map stitcher is valid")
+                            direction_hint = navigation_goal.get('direction_hint', '')
+                            if direction_hint:
+                                local_direction = _local_pathfind_from_tiles(state_data, direction_hint)
+                                if local_direction:
+                                    print(f"✅ [LOCAL A*] Using direction: {local_direction}")
+                                    return [local_direction]
+                                else:
+                                    print(f"⚠️ [LOCAL A*] No path found, falling back to VLM")
+        except Exception as e:
+            logger.warning(f"[PATHFINDING] Error: {e}")
+            import traceback
+            traceback.print_exc()
+        
         if 'MOVING_VAN' in location.upper():
             # In the moving van - goal is to find and exit through the door
             goal = "Exit the moving van through the door"
@@ -1089,12 +1331,10 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
             else:
                 instruction = "Look for stairs or a door to exit. Explore the room."
         else:
-            # Overworld - default to heading north toward Oldale Town
+            # Overworld - A* pathfinding already tried above, this is VLM fallback
             goal = "Navigate to Oldale Town (NORTH)"
-            if 'UP' in available_directions:
-                instruction = "Oldale Town is NORTH. Choose UP to move NORTH."
-            else:
-                instruction = "Oldale Town is NORTH. UP is blocked. Choose LEFT or RIGHT to go around."
+            instruction = "Head north. Avoid doors/warps marked [D] unless necessary."
+
         
         action_prompt = f"""{goal}
 
