@@ -95,22 +95,40 @@ class OpenerBot:
         """
         print(f"🤖 [OPENER BOT SHOULD_HANDLE] Current state: {self.current_state_name}")
         
+        # Special case: If COMPLETED but we're actually still in the lab, re-detect state
         if self.current_state_name == 'COMPLETED':
-            print("[OPENER BOT SHOULD_HANDLE] State is COMPLETED, returning False")
-            return False
+            player_loc = state_data.get('player', {}).get('location', '')
             
+            # If still in lab, we're not actually done - re-detect the correct state
+            if 'PROFESSOR BIRCHS LAB' in player_loc:
+                print(f"[OPENER BOT] COMPLETED but still in lab ({player_loc}) - RE-DETECTING STATE")
+                detected_state = self._detect_starting_state(state_data)
+                if detected_state and detected_state != 'COMPLETED':
+                    print(f"[OPENER BOT] Re-detected state as: {detected_state}")
+                    self._transition_to_state(detected_state)
+                    return True
+                else:
+                    print(f"[OPENER BOT] Re-detection returned {detected_state}, keeping COMPLETED")
+            else:
+                print(f"[OPENER BOT SHOULD_HANDLE] COMPLETED and outside lab ({player_loc}), returning False")
+            return False
+        
         # Check if we've completed the opener sequence
         milestones = state_data.get('milestones', {})
         starter_chosen = milestones.get('STARTER_CHOSEN', {}).get('completed', False)
         player_loc = state_data.get('player', {}).get('location', '')
         
-        print(f"🤖 [OPENER BOT SHOULD_HANDLE] Starter chosen: {starter_chosen}, Player location: {player_loc}")
+        print(f"🤖 [OPENER BOT SHOULD_HANDLE] Starter chosen: {starter_chosen}, Player location: '{player_loc}'")
+        print(f"🤖 [OPENER BOT DEBUG] 'PROFESSOR BIRCHS LAB' in player_loc: {'PROFESSOR BIRCHS LAB' in player_loc}")
+        print(f"🤖 [OPENER BOT DEBUG] player_loc repr: {repr(player_loc)}")
         
         if starter_chosen:
-            if 'BIRCHS_LAB' not in player_loc:
-                print("[OPENER BOT] Starter chosen and outside lab. Handing off to VLM.")
+            if 'PROFESSOR BIRCHS LAB' not in player_loc:
+                print(f"[OPENER BOT] Starter chosen and outside lab (PROFESSOR BIRCHS LAB not in '{player_loc}'). Handing off to VLM.")
                 self._transition_to_state('COMPLETED')
                 return False
+            else:
+                print(f"[OPENER BOT] Starter chosen but STILL IN LAB ('{player_loc}'). Continuing opener sequence.")
         
         print(f"🤖 [OPENER BOT SHOULD_HANDLE] Bot is ACTIVE, will handle action")
         return True  # Bot is active
@@ -133,8 +151,16 @@ class OpenerBot:
         print(f"🤖 [OPENER BOT GET_ACTION] Player location: {player_loc}")
         print(f"🤖 [OPENER BOT GET_ACTION] Attempt: {self.state_attempt_count + 1}")
         
-        # AUTO-DETECT STARTING STATE on first call
-        if not self.initialized_state:
+        # AUTO-DETECT STARTING STATE on first call OR if party data just became available
+        party = state_data.get('party', [])
+        has_party = len(party) > 0 if party else False
+        print(f"🤖 [OPENER BOT DEBUG] Party check: party={party}, has_party={has_party}, current_state={self.current_state_name}")
+        force_redetect = (has_party and self.current_state_name == 'S20_INTERACT_BAG')  # Party appeared after being in S20
+        print(f"🤖 [OPENER BOT DEBUG] Force redetect: {force_redetect}")
+        
+        if not self.initialized_state or force_redetect:
+            if force_redetect:
+                print(f"🤖 [OPENER BOT REDETECT] Party data now available ({len(party)} Pokemon), re-detecting state from S20")
             detected_state = self._detect_starting_state(state_data)
             if detected_state and detected_state != self.current_state_name:
                 print(f"🤖 [OPENER BOT INIT] Auto-detected starting state: {detected_state}")
@@ -239,11 +265,19 @@ class OpenerBot:
                 return 'S18_BIRCH_DIALOG'
         
         # Birch's Lab
-        if 'BIRCHS_LAB' in player_loc or 'BIRCH' in player_loc:
+        if 'PROFESSOR BIRCHS LAB' in player_loc or 'BIRCH' in player_loc:
             print(f"🔍 [STATE DETECTION] In Birch's Lab!")
-            if milestones.get('STARTER_CHOSEN', {}).get('completed', False):
+            # Check if we have a starter Pokemon in party
+            party = state_data.get('party', [])
+            has_starter = len(party) > 0 if party else False
+            print(f"🔍 [STATE DETECTION] Party data: {party}")
+            print(f"🔍 [STATE DETECTION] Party count: {len(party) if party else 0}, has_starter: {has_starter}")
+            
+            if has_starter:
+                print(f"🔍 [STATE DETECTION] Has starter - returning S23_BIRCH_DIALOG_2")
                 return 'S23_BIRCH_DIALOG_2'  # After getting starter
             else:
+                print(f"🔍 [STATE DETECTION] No starter yet - returning S20_INTERACT_BAG")
                 return 'S20_INTERACT_BAG'  # Interacting with bag
         
         # Littleroot Town (OVERWORLD) - the critical case!
@@ -488,14 +522,62 @@ class OpenerBot:
             return None
 
         def action_special_nickname(s, v):
-            """Handles nickname screen."""
-            dialogue = v.get('on_screen_text', {}).get('dialogue', '').upper()
-            if "NICKNAME" in dialogue:
-                return ['B']
-            if "ARE YOU SURE" in dialogue:
-                return ['A']
+            """
+            Handles nickname screen - either decline before entering OR exit if already inside.
+            
+            Strategy: Due to VLM timing, we often enter the naming window before detecting it.
+            If inside the naming window, use shortcut: B (backspace) → START (move to OK) → A (confirm)
+            """
+            dialogue = (v.get('on_screen_text', {}).get('dialogue', '') or '').upper()
+            screen_context = v.get('screen_context', '').lower()
+            
+            # Initialize step counter if needed
+            if not hasattr(action_special_nickname, '_nickname_step'):
+                action_special_nickname._nickname_step = 0
+            
+            # Check if we're INSIDE the naming window (keyboard visible)
+            # Indicators: "nickname?" in dialogue, letter grid visible, "SELECT" menu visible
+            menu_title = (v.get('on_screen_text', {}).get('menu_title', '') or '').upper()
+            inside_naming_window = (
+                ("NICKNAME?" in dialogue or menu_title == "SELECT") and
+                screen_context == 'dialogue'
+            )
+            
+            if inside_naming_window:
+                # We're already inside - use B → START → A shortcut to exit quickly
+                print(f"🎮 [NICKNAME WINDOW] Inside naming screen (step {action_special_nickname._nickname_step})")
+                
+                if action_special_nickname._nickname_step == 0:
+                    action_special_nickname._nickname_step = 1
+                    print("🎮 [NICKNAME WINDOW] Step 1: Pressing B to clear any letters")
+                    return ['B']
+                elif action_special_nickname._nickname_step == 1:
+                    action_special_nickname._nickname_step = 2
+                    print("🎮 [NICKNAME WINDOW] Step 2: Pressing START to jump to OK button")
+                    return ['START']
+                else:
+                    action_special_nickname._nickname_step = 0  # Reset for next time
+                    print("🎮 [NICKNAME WINDOW] Step 3: Pressing A to confirm and exit")
+                    return ['A']
+            
+            # If asking about nickname BEFORE entering naming window (ideal case)
+            if "NICKNAME" in dialogue and not inside_naming_window:
+                print(f"🎮 [NICKNAME PROMPT] At nickname prompt (step {action_special_nickname._nickname_step})")
+                
+                if action_special_nickname._nickname_step == 0:
+                    action_special_nickname._nickname_step = 1
+                    print("🎮 [NICKNAME PROMPT] Step 1: Pressing DOWN to select NO")
+                    return ['DOWN']
+                else:
+                    action_special_nickname._nickname_step = 0  # Reset for next time
+                    print("🎮 [NICKNAME PROMPT] Step 2: Pressing A to confirm NO")
+                    return ['A']
+            
+            # Clear any remaining dialogue
             if v.get('visual_elements', {}).get('text_box_visible', False):
+                print("🎮 [NICKNAME] Clearing dialogue with A")
                 return ['A']
+            
             return None
             
         def action_pass_to_battle_bot(s, v):
@@ -818,7 +900,15 @@ class OpenerBot:
                 name='S20_INTERACT_BAG',
                 description='Interact with bag to trigger starter menu',
                 action_fn=action_clear_dialogue,
-                next_state_fn=trans_dialogue_contains("Choose a", 'S21_STARTER_SELECT')
+                next_state_fn=lambda s, v: (
+                    'S24_NICKNAME' if "NICKNAME" in (v.get('on_screen_text', {}).get('dialogue', '') or '').upper()
+                    else ('S23_BIRCH_DIALOG_2' if (
+                        s.get('milestones', {}).get('STARTER_CHOSEN', {}).get('completed', False) and
+                        'PROFESSOR BIRCHS LAB' in s.get('player', {}).get('location', '')
+                    )
+                    else ('S21_STARTER_SELECT' if "Choose a" in (v.get('on_screen_text', {}).get('dialogue', '') or '')
+                    else None))
+                )
             ),
             'S21_STARTER_SELECT': BotState(
                 name='S21_STARTER_SELECT',
@@ -847,8 +937,8 @@ class OpenerBot:
             'S25_LEAVE_LAB': BotState(
                 name='S25_LEAVE_LAB',
                 description="Leave Birch's Lab",
-                action_fn=action_nav(NavigationGoal(x=5, y=8, map_location='BIRCHS_LAB', description="Exit Lab")),
-                next_state_fn=trans_location_contains('LITTLEROOT_TOWN', 'COMPLETED')
+                action_fn=action_nav(NavigationGoal(x=6, y=13, map_location='BIRCHS_LAB', description="Exit Lab")),
+                next_state_fn=trans_location_exact('LITTLEROOT TOWN', 'COMPLETED')  # Exact match - not inside lab!
             ),
             
             # === Final State ===

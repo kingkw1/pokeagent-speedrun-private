@@ -117,6 +117,7 @@ class Agent:
                     'player': game_state.get('player', {}),
                     'game': game_state.get('game', {}),
                     'map': game_state.get('map', {}),
+                    'party': game_state.get('party', []),  # ADD PARTY DATA!
                     'milestones': game_state.get('milestones', {}),
                     'visual': game_state.get('visual', {}),
                     'step_number': game_state.get('step_number', 0),
