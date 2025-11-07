@@ -1,0 +1,70 @@
+{
+  "milestones": {
+    "GAME_RUNNING": {
+      "completed": true,
+      "timestamp": 1754551143.255193,
+      "first_completed": 1754551143.255193
+    },
+    "EARNED_1000_POKEDOLLARS": {
+      "completed": true,
+      "timestamp": 1754551246.5548232,
+      "first_completed": 1754551246.5548232
+    },
+    "PLAYER_NAME_SET": {
+      "completed": true,
+      "timestamp": 1762372467.7687068,
+      "first_completed": 1762372467.7687068,
+      "split_time": 7821324.5135138035,
+      "split_formatted": "2172:35:24",
+      "total_time": 7821324.5135138035,
+      "total_formatted": "2172:35:24"
+    },
+    "INTRO_CUTSCENE_COMPLETE": {
+      "completed": true,
+      "timestamp": 1762372467.769095,
+      "first_completed": 1762372467.769095,
+      "split_time": 0.00038814544677734375,
+      "split_formatted": "00:00:00",
+      "total_time": 7821324.513901949,
+      "total_formatted": "2172:35:24"
+    },
+    "LITTLEROOT_TOWN": {
+      "completed": true,
+      "timestamp": 1762372471.6968713,
+      "first_completed": 1762372471.6968713,
+      "split_time": 3.927776336669922,
+      "split_formatted": "00:00:03",
+      "total_time": 7821328.441678286,
+      "total_formatted": "2172:35:28"
+    },
+    "PLAYER_HOUSE_ENTERED": {
+      "completed": true,
+      "timestamp": 1762490593.7782772,
+      "first_completed": 1762490593.7782772,
+      "split_time": 118122.08140587807,
+      "split_formatted": "32:48:42",
+      "total_time": 7939450.523084164,
+      "total_formatted": "2205:24:10"
+    },
+    "PLAYER_BEDROOM": {
+      "completed": true,
+      "timestamp": 1762490633.8053553,
+      "first_completed": 1762490633.8053553,
+      "split_time": 40.02707815170288,
+      "split_formatted": "00:00:40",
+      "total_time": 7939490.550162315,
+      "total_formatted": "2205:24:50"
+    },
+    "RIVAL_HOUSE": {
+      "completed": true,
+      "timestamp": 1762490791.4814246,
+      "first_completed": 1762490791.4814246,
+      "split_time": 157.67606925964355,
+      "split_formatted": "00:02:37",
+      "total_time": 7939648.226231575,
+      "total_formatted": "2205:27:28"
+    }
+  },
+  "last_updated": 1762490818.7543666,
+  "version": "1.0"
+}
