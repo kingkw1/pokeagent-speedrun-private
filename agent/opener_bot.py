@@ -217,17 +217,32 @@ class OpenerBot:
         
         # Check milestones in reverse order (most recent first)
         if milestones.get('STARTER_CHOSEN', {}).get('completed', False):
-            return 'S19_LAB_DIALOG'  # After getting starter
+            return 'S23_BIRCH_DIALOG_2'  # After getting starter
         
         if milestones.get('BIRCH_SAVED', {}).get('completed', False):
-            return 'S18_BIRCH_BATTLE'  # Just fought battle
+            return 'S22_FIRST_BATTLE'  # Just fought battle
             
+        # Check location FIRST (location is ground truth)
+        # Route 101 - heading to Birch
+        if 'ROUTE 101' in player_loc or 'ROUTE_101' in player_loc or 'ROUTE101' in player_loc:
+            # On Route 101 - probably heading to Birch or bag
+            if y > 10:  # Near bag location (y=14)
+                return 'S19_NAV_TO_BAG'
+            else:  # Just entered from town
+                return 'S18_BIRCH_DIALOG'
+        
+        # Check for May's house before player's house (both contain "HOUSE")
+        if 'MAYS HOUSE' in player_loc or ('MAY' in player_loc and 'HOUSE' in player_loc):
+            # In May's house
+            if '2F' in player_loc:
+                return 'S11B_NAV_TO_POKEBALL'  # On 2F
+            else:
+                return 'S10_MAYS_MOTHER_DIALOG'  # On 1F
+        
         if milestones.get('PLAYER_HOUSE_EXITED', {}).get('completed', False):
-            # Left house, probably heading to May's or Route 101
-            if 'MAYS_HOUSE' in player_loc or 'MAY' in player_loc:
-                return 'S10_MAYS_MOTHER_DIALOG'
-            elif 'ROUTE_101' in player_loc or 'ROUTE101' in player_loc or 'ROUTE 101' in player_loc:
-                return 'S14_NAV_TO_BIRCH'
+            # Left house, in Littleroot Town heading to May's or north
+            if y < 5:  # Near north edge of town
+                return 'S15_NAV_TO_NPC_NORTH'
             else:
                 return 'S9_NAV_TO_MAYS_HOUSE'
         
@@ -274,8 +289,14 @@ class OpenerBot:
             return ['B']
 
         def action_clear_dialogue(s, v):
-            """Press A if dialogue is visible, otherwise do nothing."""
-            if v.get('visual_elements', {}).get('text_box_visible', False):
+            """Press A if dialogue is detected through any method."""
+            screen_context = v.get('screen_context', '').lower()
+            text_box_visible = v.get('visual_elements', {}).get('text_box_visible', False)
+            continue_prompt_visible = v.get('visual_elements', {}).get('continue_prompt_visible', False)
+            game_state = s.get('game', {}).get('game_state', '').lower()
+            
+            # Press A if ANY indicator shows we're in dialogue
+            if text_box_visible or screen_context == 'dialogue' or game_state == 'dialog' or continue_prompt_visible:
                 return ['A']
             return None
 
@@ -408,9 +429,19 @@ class OpenerBot:
             return check_fn
 
         def trans_no_dialogue(next_state: str) -> Callable:
-            """Transition when dialogue is no longer visible."""
+            """Transition when dialogue is no longer visible AND game state confirms not in dialog."""
             def check_fn(s, v):
-                if not v.get('visual_elements', {}).get('text_box_visible', False):
+                screen_context = v.get('screen_context', '').lower()
+                text_box_visible = v.get('visual_elements', {}).get('text_box_visible', False)
+                continue_prompt_visible = v.get('visual_elements', {}).get('continue_prompt_visible', False)
+                game_state = s.get('game', {}).get('game_state', '').lower()
+                
+                # Only transition if ALL FOUR conditions indicate no dialogue:
+                # 1. No text box visible
+                # 2. Screen context is not 'dialogue' 
+                # 3. Game state is not 'dialog'
+                # 4. No continue prompt (red triangle) visible
+                if not text_box_visible and screen_context != 'dialogue' and game_state != 'dialog' and not continue_prompt_visible:
                     return next_state
                 return None
             return check_fn
@@ -432,6 +463,33 @@ class OpenerBot:
                 pos = s.get('player', {}).get('position', {})
                 x, y = pos.get('x', -1), pos.get('y', -1)
                 if x in x_range and y in y_range and v.get('visual_elements', {}).get('text_box_visible', False):
+                    return next_state
+                return None
+            return check_fn
+        
+        def trans_left_area_or_no_dialogue(x_range: List[int], y_range: List[int], next_state: str) -> Callable:
+            """
+            Transition when player has LEFT specific area OR all dialogue cleared.
+            This prevents premature transitions while dialogue is blocking movement.
+            Used for post-interaction dialogue like May's pokeball.
+            """
+            def check_fn(s, v):
+                pos = s.get('player', {}).get('position', {})
+                x, y = pos.get('x', -1), pos.get('y', -1)
+                
+                # Check if we've left the interaction area
+                left_area = x not in x_range or y not in y_range
+                
+                # Check all dialogue indicators
+                screen_context = v.get('screen_context', '').lower()
+                text_box_visible = v.get('visual_elements', {}).get('text_box_visible', False)
+                continue_prompt_visible = v.get('visual_elements', {}).get('continue_prompt_visible', False)
+                game_state = s.get('game', {}).get('game_state', '').lower()
+                no_dialogue = not text_box_visible and screen_context != 'dialogue' and game_state != 'dialog' and not continue_prompt_visible
+                
+                # Transition if we've left the area OR dialogue is fully cleared
+                if left_area or no_dialogue:
+                    print(f"🔍 [TRANS_LEFT_AREA] Pos ({x},{y}), left_area={left_area}, no_dialogue={no_dialogue}")
                     return next_state
                 return None
             return check_fn
@@ -522,79 +580,107 @@ class OpenerBot:
             'S9_NAV_TO_MAYS_HOUSE': BotState(
                 name='S9_NAV_TO_MAYS_HOUSE',
                 description="Navigate to May's house",
-                action_fn=action_nav(NavigationGoal(x=12, y=7, map_location='LITTLEROOT_TOWN', description="Go to May's House")),
-                next_state_fn=trans_location_contains('MAYS_HOUSE_1F', 'S10_MAYS_MOTHER_DIALOG')
+                action_fn=action_nav(NavigationGoal(x=14, y=8, map_location='LITTLEROOT_TOWN', description="Go to May's House")),
+                next_state_fn=trans_location_contains('MAYS HOUSE 1F', 'S10_MAYS_MOTHER_DIALOG')
             ),
             'S10_MAYS_MOTHER_DIALOG': BotState(
                 name='S10_MAYS_MOTHER_DIALOG',
                 description="May's mother dialogue (1F)",
                 action_fn=action_clear_dialogue,
-                next_state_fn=trans_no_dialogue('S11_NAV_TO_MAY')
+                next_state_fn=trans_no_dialogue('S11_NAV_TO_STAIRS_MAYS_HOUSE')
             ),
-            'S11_NAV_TO_MAY': BotState(
-                name='S11_NAV_TO_MAY',
-                description='Navigate to May (2F)',
-                action_fn=action_nav(NavigationGoal(x=4, y=2, map_location='MAYS_HOUSE_2F', description="Go to May")),
-                next_state_fn=trans_area_and_dialogue(x_range=[3, 4, 5], y_range=[1, 2, 3], next_state='S12_MAY_DIALOG')
+            'S11_NAV_TO_STAIRS_MAYS_HOUSE': BotState(
+                name='S11_NAV_TO_STAIRS_MAYS_HOUSE',
+                description="Navigate to stairs in May's house (1F)",
+                action_fn=action_nav(NavigationGoal(x=2, y=2, map_location='LITTLEROOT TOWN MAYS HOUSE 1F', description='Go to Stairs')),
+                next_state_fn=trans_location_contains('MAYS HOUSE 2F', 'S11B_NAV_TO_POKEBALL')
+            ),
+            'S11B_NAV_TO_POKEBALL': BotState(
+                name='S11B_NAV_TO_POKEBALL',
+                description='Navigate to Pokéball on 2F to trigger May',
+                action_fn=action_nav(NavigationGoal(x=5, y=4, map_location='MAYS_HOUSE_2F', description="Interact with Pokéball")),
+                next_state_fn=trans_area_and_dialogue(x_range=[4, 5, 6], y_range=[3, 4, 5], next_state='S12_MAY_DIALOG')
             ),
             'S12_MAY_DIALOG': BotState(
                 name='S12_MAY_DIALOG',
                 description='May dialogue (2F)',
                 action_fn=action_clear_dialogue,
-                next_state_fn=trans_no_dialogue('S13_LEAVE_MAYS_HOUSE')
+                next_state_fn=trans_left_area_or_no_dialogue(x_range=[4, 5, 6], y_range=[3, 4, 5], next_state='S13_NAV_TO_STAIRS_2F')
             ),
-            'S13_LEAVE_MAYS_HOUSE': BotState(
-                name='S13_LEAVE_MAYS_HOUSE',
-                description="Leave May's house",
-                action_fn=action_nav(NavigationGoal(x=4, y=7, map_location='MAYS_HOUSE_1F', description="Exit May's House")),
-                next_state_fn=trans_location_contains('LITTLEROOT_TOWN', 'S14_NAV_TO_ROUTE_101')
+            'S13_NAV_TO_STAIRS_2F': BotState(
+                name='S13_NAV_TO_STAIRS_2F',
+                description="Navigate to stairs on May's house 2F",
+                action_fn=action_nav(NavigationGoal(x=1, y=1, map_location='LITTLEROOT TOWN MAYS HOUSE 2F', description='Go to Stairs')),
+                next_state_fn=trans_location_contains('MAYS HOUSE 1F', 'S14_NAV_TO_EXIT_MAYS_HOUSE')
             ),
-
-            # === Phase 4: Route 101 & Starter Selection ===
-            'S14_NAV_TO_ROUTE_101': BotState(
-                name='S14_NAV_TO_ROUTE_101',
-                description='Navigate north to Route 101',
-                action_fn=action_nav(NavigationGoal(x=5, y=0, map_location='LITTLEROOT_TOWN', description="Go to Route 101")),
-                next_state_fn=trans_location_contains('ROUTE_101', 'S15_BIRCH_DIALOG')
+            'S14_NAV_TO_EXIT_MAYS_HOUSE': BotState(
+                name='S14_NAV_TO_EXIT_MAYS_HOUSE',
+                description="Navigate to exit on May's house 1F",
+                action_fn=action_nav(NavigationGoal(x=2, y=9, map_location='LITTLEROOT TOWN MAYS HOUSE 1F', description="Exit May's House")),
+                next_state_fn=trans_location_exact('LITTLEROOT TOWN', 'S15_NAV_TO_NPC_NORTH')
             ),
-            'S15_BIRCH_DIALOG': BotState(
-                name='S15_BIRCH_DIALOG',
-                description='Dialogue with Birch on Route 101',
+            'S15_NAV_TO_NPC_NORTH': BotState(
+                name='S15_NAV_TO_NPC_NORTH',
+                description='Navigate north to NPC in Littleroot Town',
+                action_fn=action_nav(NavigationGoal(x=11, y=1, map_location='LITTLEROOT TOWN', description='Go to North NPC')),
+                next_state_fn=trans_area_and_dialogue(x_range=[10, 11, 12], y_range=[1, 2, 3], next_state='S16_NPC_DIALOG')
+            ),
+            'S16_NPC_DIALOG': BotState(
+                name='S16_NPC_DIALOG',
+                description='Brief NPC dialogue',
                 action_fn=action_clear_dialogue,
-                next_state_fn=trans_no_dialogue_and_not_in_battle('S16_NAV_TO_BAG')
+                next_state_fn=trans_no_dialogue('S17_NAV_TO_ROUTE_101')
             ),
-            'S16_NAV_TO_BAG': BotState(
-                name='S16_NAV_TO_BAG',
-                description="Navigate to Birch's bag",
-                action_fn=action_nav(NavigationGoal(x=5, y=7, map_location='ROUTE_101', description="Go to Birch's Bag")),
-                next_state_fn=trans_area_and_dialogue(x_range=[4, 5, 6], y_range=[6, 7, 8], next_state='S17_STARTER_SELECT')
+            'S17_NAV_TO_ROUTE_101': BotState(
+                name='S17_NAV_TO_ROUTE_101',
+                description='Navigate north to Route 101 (map transition)',
+                action_fn=action_nav(NavigationGoal(x=11, y=0, map_location='LITTLEROOT TOWN', description='Go to Route 101')),
+                next_state_fn=trans_location_contains('ROUTE 101', 'S18_BIRCH_DIALOG')
             ),
-            'S17_STARTER_SELECT': BotState(
-                name='S17_STARTER_SELECT',
+            'S18_BIRCH_DIALOG': BotState(
+                name='S18_BIRCH_DIALOG',
+                description='Dialogue with Birch on Route 101 (auto-trigger)',
+                action_fn=action_clear_dialogue,
+                next_state_fn=trans_no_dialogue('S19_NAV_TO_BAG')
+            ),
+            'S19_NAV_TO_BAG': BotState(
+                name='S19_NAV_TO_BAG',
+                description="Navigate to Birch's bag on ground",
+                action_fn=action_nav(NavigationGoal(x=7, y=14, map_location='ROUTE 101', description="Go to Birch's Bag")),
+                next_state_fn=trans_area_and_dialogue(x_range=[6, 7, 8], y_range=[13, 14, 15], next_state='S20_INTERACT_BAG')
+            ),
+            'S20_INTERACT_BAG': BotState(
+                name='S20_INTERACT_BAG',
+                description='Interact with bag to trigger starter menu',
+                action_fn=action_clear_dialogue,
+                next_state_fn=trans_dialogue_contains("Choose a", 'S21_STARTER_SELECT')
+            ),
+            'S21_STARTER_SELECT': BotState(
+                name='S21_STARTER_SELECT',
                 description='Pokemon Selection from bag',
                 action_fn=action_special_starter,
-                next_state_fn=trans_in_battle('S18_FIRST_BATTLE')
+                next_state_fn=trans_in_battle('S22_FIRST_BATTLE')
             ),
-            'S18_FIRST_BATTLE': BotState(
-                name='S18_FIRST_BATTLE',
+            'S22_FIRST_BATTLE': BotState(
+                name='S22_FIRST_BATTLE',
                 description='First battle (Poochyena)',
                 action_fn=action_pass_to_battle_bot,
-                next_state_fn=trans_milestone_complete('STARTER_CHOSEN', 'S19_BIRCH_DIALOG_2')
+                next_state_fn=trans_milestone_complete('STARTER_CHOSEN', 'S23_BIRCH_DIALOG_2')
             ),
-            'S19_BIRCH_DIALOG_2': BotState(
-                name='S19_BIRCH_DIALOG_2',
+            'S23_BIRCH_DIALOG_2': BotState(
+                name='S23_BIRCH_DIALOG_2',
                 description='Dialogue with Birch after battle (in lab)',
                 action_fn=action_clear_dialogue,
-                next_state_fn=trans_dialogue_contains("NICKNAME", 'S20_NICKNAME')
+                next_state_fn=trans_dialogue_contains("NICKNAME", 'S24_NICKNAME')
             ),
-            'S20_NICKNAME': BotState(
-                name='S20_NICKNAME',
+            'S24_NICKNAME': BotState(
+                name='S24_NICKNAME',
                 description='Nickname starter screen',
                 action_fn=action_special_nickname,
-                next_state_fn=trans_no_dialogue_and_no_nickname_text('S21_LEAVE_LAB')
+                next_state_fn=trans_no_dialogue_and_no_nickname_text('S25_LEAVE_LAB')
             ),
-            'S21_LEAVE_LAB': BotState(
-                name='S21_LEAVE_LAB',
+            'S25_LEAVE_LAB': BotState(
+                name='S25_LEAVE_LAB',
                 description="Leave Birch's Lab",
                 action_fn=action_nav(NavigationGoal(x=5, y=8, map_location='BIRCHS_LAB', description="Exit Lab")),
                 next_state_fn=trans_location_contains('LITTLEROOT_TOWN', 'COMPLETED')
