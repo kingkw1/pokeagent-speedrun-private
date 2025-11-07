@@ -32,6 +32,7 @@ class NavigationGoal:
     y: int
     map_location: str
     description: str
+    should_interact: bool = None  # If None, infer from description keywords
 
 @dataclass
 class BotState:
@@ -206,6 +207,9 @@ class OpenerBot:
         """
         Auto-detect which state we should start in based on game progress.
         Used when loading from save states.
+        
+        IMPORTANT: Check LOCATION first (ground truth), then milestones.
+        Location tells us WHERE we are, milestones tell us WHAT we've done.
         """
         milestones = state_data.get('milestones', {})
         player_loc = state_data.get('player', {}).get('location', '')
@@ -215,39 +219,72 @@ class OpenerBot:
         print(f"🔍 [STATE DETECTION] Location: {player_loc}, Position: ({x}, {y})")
         print(f"🔍 [STATE DETECTION] Milestones: {list(milestones.keys())}")
         
-        # Check milestones in reverse order (most recent first)
-        if milestones.get('STARTER_CHOSEN', {}).get('completed', False):
-            return 'S23_BIRCH_DIALOG_2'  # After getting starter
+        # ========================================
+        # LOCATION CHECKS (Ground Truth - Check First!)
+        # ========================================
         
-        if milestones.get('BIRCH_SAVED', {}).get('completed', False):
-            return 'S22_FIRST_BATTLE'  # Just fought battle
-            
-        # Check location FIRST (location is ground truth)
-        # Route 101 - heading to Birch
+        # Route 101 - heading to Birch or already there
         if 'ROUTE 101' in player_loc or 'ROUTE_101' in player_loc or 'ROUTE101' in player_loc:
-            # On Route 101 - probably heading to Birch or bag
+            print(f"🔍 [STATE DETECTION] On Route 101!")
+            # Check if starter already chosen (battle or post-battle)
+            if milestones.get('STARTER_CHOSEN', {}).get('completed', False):
+                print(f"🔍 [STATE DETECTION] Starter chosen - in battle or post-battle")
+                return 'S22_FIRST_BATTLE'  # Battle state or after
+            # On Route 101 but no starter yet - heading to Birch/bag
             if y > 10:  # Near bag location (y=14)
+                print(f"🔍 [STATE DETECTION] Near bag location (y={y})")
                 return 'S19_NAV_TO_BAG'
             else:  # Just entered from town
+                print(f"🔍 [STATE DETECTION] Just entered Route 101 (y={y})")
                 return 'S18_BIRCH_DIALOG'
         
-        # Check for May's house before player's house (both contain "HOUSE")
+        # Birch's Lab
+        if 'BIRCHS_LAB' in player_loc or 'BIRCH' in player_loc:
+            print(f"🔍 [STATE DETECTION] In Birch's Lab!")
+            if milestones.get('STARTER_CHOSEN', {}).get('completed', False):
+                return 'S23_BIRCH_DIALOG_2'  # After getting starter
+            else:
+                return 'S20_INTERACT_BAG'  # Interacting with bag
+        
+        # Littleroot Town (OVERWORLD) - the critical case!
+        if 'LITTLEROOT' in player_loc and 'TOWN' in player_loc:
+            print(f"🔍 [STATE DETECTION] In Littleroot Town overworld!")
+            
+            # Check what we've completed to determine next step
+            if milestones.get('RIVAL_BEDROOM', {}).get('completed', False):
+                # We've been to May's room - now heading to NPC
+                print(f"🔍 [STATE DETECTION] Visited rival's bedroom, heading to NPC")
+                if y < 8:  # Near north edge of town
+                    print(f"🔍 [STATE DETECTION] Near north edge (y={y}), at NPC or heading to Route 101")
+                    return 'S16_NPC_DIALOG'  # At NPC or just passed
+                else:
+                    print(f"🔍 [STATE DETECTION] South part of town (y={y}), navigating to NPC")
+                    return 'S15_NAV_TO_NPC_NORTH'
+            elif milestones.get('RIVAL_HOUSE', {}).get('completed', False):
+                # We've been to rival house but not bedroom - probably navigating to May's room
+                print(f"🔍 [STATE DETECTION] Visited rival's house, heading to May's room or already there")
+                return 'S9_NAV_TO_MAYS_HOUSE'
+            elif milestones.get('PLAYER_BEDROOM', {}).get('completed', False):
+                # Been to our bedroom - heading to or inside rival's house
+                print(f"🔍 [STATE DETECTION] Been to our bedroom, heading to rival's house")
+                return 'S9_NAV_TO_MAYS_HOUSE'
+            else:
+                # In Littleroot but haven't done much - probably just started
+                print(f"🔍 [STATE DETECTION] Early in Littleroot Town")
+                return 'S4_MOM_DIALOG_1F'
+        
+        # Check for May's house (before player's house - both contain "HOUSE")
         if 'MAYS HOUSE' in player_loc or ('MAY' in player_loc and 'HOUSE' in player_loc):
-            # In May's house
+            print(f"🔍 [STATE DETECTION] In May's house!")
             if '2F' in player_loc:
                 return 'S11B_NAV_TO_POKEBALL'  # On 2F
             else:
                 return 'S10_MAYS_MOTHER_DIALOG'  # On 1F
         
-        if milestones.get('PLAYER_HOUSE_EXITED', {}).get('completed', False):
-            # Left house, in Littleroot Town heading to May's or north
-            if y < 5:  # Near north edge of town
-                return 'S15_NAV_TO_NPC_NORTH'
-            else:
-                return 'S9_NAV_TO_MAYS_HOUSE'
-        
-        # Check if we're in player's house (regardless of milestone - location is truth)
-        if ('PLAYERS_HOUSE' in player_loc or 'BRENDANS_HOUSE' in player_loc or 'BRENDAN' in player_loc) and 'HOUSE' in player_loc:
+        # Check if we're in player's house (Brendan's house)
+        if ('PLAYERS_HOUSE' in player_loc or 'BRENDANS_HOUSE' in player_loc or 
+            ('BRENDAN' in player_loc and 'HOUSE' in player_loc)):
+            print(f"🔍 [STATE DETECTION] In player's house!")
             if '2F' in player_loc:
                 # On 2nd floor - setting clock or leaving
                 return 'S6_NAV_TO_CLOCK'
@@ -255,20 +292,21 @@ class OpenerBot:
                 # On 1st floor - Mom dialogue or navigating to stairs
                 return 'S4_MOM_DIALOG_1F'
         
-        # Fallback milestone checks
-        if milestones.get('PLAYER_HOUSE_ENTERED', {}).get('completed', False):
-            # PLAYER_HOUSE_ENTERED set but not in house location - should transition
-            return 'S4_MOM_DIALOG_1F'
+        # Moving Van / Truck
+        if 'MOVING_VAN' in player_loc or 'VAN' in player_loc or 'TRUCK' in player_loc:
+            print(f"🔍 [STATE DETECTION] In moving van/truck!")
+            return 'S3_TRUCK_RIDE'
+        
+        # ========================================
+        # MILESTONE-ONLY CHECKS (Fallback if location unclear)
+        # ========================================
         
         if milestones.get('PLAYER_NAME_SET', {}).get('completed', False):
-            # Name is set - if in MOVING_VAN, exit it; otherwise skip to S4
-            if 'MOVING_VAN' in player_loc or 'VAN' in player_loc:
-                return 'S3_TRUCK_RIDE'
-            else:
-                # Name set but not in van - probably already in house
-                return 'S4_MOM_DIALOG_1F'
+            print(f"🔍 [STATE DETECTION] Name set but unclear location - defaulting to house")
+            return 'S4_MOM_DIALOG_1F'
         
         # Default to title screen if no milestones
+        print(f"🔍 [STATE DETECTION] No clear state detected - defaulting to title screen")
         return 'S0_TITLE_SCREEN'
         
     def _build_state_machine(self) -> Dict[str, BotState]:
@@ -318,26 +356,67 @@ class OpenerBot:
                 return [direction]
             return action_fn
 
-        def action_press_a_then_move(direction: str, a_presses: int = 10) -> Callable:
+        def action_clear_dialogue_then_try_move(direction: str) -> Callable:
             """
-            Press A for a fixed number of attempts (to clear dialogue), then move.
-            This is more robust than checking perception which can be unreliable.
+            Smart dialogue clearing with movement validation:
+            1. If strong dialogue indicators show active dialogue (text_box + prompt/context), press A
+            2. If weak/uncertain indicators, try to move 
+            3. If movement failed (position unchanged), dialogue must still be blocking - press A again
+            
+            This is robust against perception errors, looping dialogues, and stuck game_state flags.
+            
+            NOTE: We don't trust game_state='dialog' alone because it can stay stuck even after dialogue clears.
+            We require at least TWO indicators to confirm dialogue is active.
             
             Args:
-                direction: Direction to move after pressing A
-                a_presses: Number of times to press A before moving (default 10)
+                direction: Direction to move after dialogue is cleared
             """
             def action_fn(s, v):
-                # Get attempt counter from state machine
-                attempt = getattr(action_fn, '_attempt', 0)
-                action_fn._attempt = attempt + 1
+                # Check dialogue indicators
+                screen_context = v.get('screen_context', '').lower()
+                text_box_visible = v.get('visual_elements', {}).get('text_box_visible', False)
+                continue_prompt_visible = v.get('visual_elements', {}).get('continue_prompt_visible', False)
+                game_state = s.get('game', {}).get('game_state', '').lower()
                 
-                if attempt < a_presses:
-                    print(f"🔍 [ACTION_PRESS_A_THEN_MOVE] Attempt {attempt + 1}/{a_presses}: Pressing A")
+                # Count how many strong indicators say dialogue is active
+                # Strong indicators: text_box + continue_prompt, screen_context=dialogue
+                strong_indicators = 0
+                if text_box_visible and continue_prompt_visible:
+                    strong_indicators += 1
+                if screen_context == 'dialogue':
+                    strong_indicators += 1
+                
+                # Dialogue is clearly active if we have strong visual indicators
+                dialogue_clearly_active = strong_indicators >= 1
+                
+                # Get current position
+                pos = s.get('player', {}).get('position', {})
+                current_x, current_y = pos.get('x', -1), pos.get('y', -1)
+                
+                # Get last known position and action
+                last_pos = getattr(action_fn, '_last_pos', (current_x, current_y))
+                last_action = getattr(action_fn, '_last_action', None)
+                
+                # CASE 1: Dialogue is clearly active (strong visual evidence) - press A
+                if dialogue_clearly_active:
+                    action_fn._last_pos = (current_x, current_y)
+                    action_fn._last_action = 'A'
+                    print(f"🔍 [CLEAR_DIALOGUE_TRY_MOVE] Dialogue clearly active ({strong_indicators} indicators), pressing A (text_box={text_box_visible}, context={screen_context}, game_state={game_state}, prompt={continue_prompt_visible})")
                     return ['A']
-                else:
-                    print(f"🔍 [ACTION_PRESS_A_THEN_MOVE] Attempt {attempt + 1}: Moving {direction}")
-                    return [direction]
+                
+                # CASE 2: We tried to move last time but position didn't change - dialogue is blocking
+                if last_action == direction and last_pos == (current_x, current_y):
+                    action_fn._last_pos = (current_x, current_y)
+                    action_fn._last_action = 'A'
+                    print(f"🔍 [CLEAR_DIALOGUE_TRY_MOVE] Movement BLOCKED! Position unchanged ({current_x},{current_y}). Dialogue still active - pressing A")
+                    return ['A']
+                
+                # CASE 3: No strong dialogue indicators and (first attempt or movement succeeded) - try to move
+                action_fn._last_pos = (current_x, current_y)
+                action_fn._last_action = direction
+                print(f"🔍 [CLEAR_DIALOGUE_TRY_MOVE] No strong dialogue indicators (game_state={game_state} alone not trusted), trying to move {direction} from ({current_x},{current_y})")
+                return [direction]
+            
             return action_fn
 
         def action_nav(goal: NavigationGoal):
@@ -347,6 +426,12 @@ class OpenerBot:
                     return ['A']
                 return goal
             return nav_fn
+
+        def action_simple(actions: List[str]):
+            """Returns a simple action (like ['UP']) every time. No dialogue clearing."""
+            def simple_fn(s, v):
+                return actions
+            return simple_fn
 
         def action_special_naming(s, v):
             """Handles gender and name selection screens."""
@@ -485,6 +570,26 @@ class OpenerBot:
                     return next_state
                 return None
             return check_fn
+        
+        def trans_has_dialogue(next_state: str) -> Callable:
+            """Transition when dialogue IS active (inverse of trans_no_dialogue)."""
+            def check_fn(s, v):
+                screen_context = v.get('screen_context', '').lower()
+                text_box_visible = v.get('visual_elements', {}).get('text_box_visible', False)
+                continue_prompt_visible = v.get('visual_elements', {}).get('continue_prompt_visible', False)
+                
+                # Count strong indicators (don't trust game_state alone)
+                strong_indicators = 0
+                if text_box_visible and continue_prompt_visible:
+                    strong_indicators += 1
+                if screen_context == 'dialogue':
+                    strong_indicators += 1
+                
+                # Dialogue active if at least 1 strong indicator
+                if strong_indicators >= 1:
+                    return next_state
+                return None
+            return check_fn
             
         def trans_in_battle(next_state: str) -> Callable:
             """Transition when in battle."""
@@ -617,8 +722,8 @@ class OpenerBot:
             # === THE CRITICAL FIX: S6 -> S7 with area-based transition ===
             'S6_NAV_TO_CLOCK': BotState(
                 name='S6_NAV_TO_CLOCK',
-                description='Navigate to clock in 2F bedroom',
-                action_fn=action_nav(NavigationGoal(x=5, y=1, map_location='PLAYERS_HOUSE_2F', description="Interact with Clock")),
+                description='Navigate to clock in 2F bedroom and interact',
+                action_fn=action_nav(NavigationGoal(x=5, y=1, map_location='PLAYERS_HOUSE_2F', description="Interact with Clock", should_interact=True)),
                 # CRITICAL: Transition when in clock AREA and dialogue appears (not exact position)
                 # This handles the "adjacent-interact" bug where agent presses A from (6,1) or (5,2)
                 next_state_fn=trans_area_and_dialogue(x_range=[4, 5, 6], y_range=[1, 2], next_state='S7_SET_CLOCK')
@@ -657,14 +762,14 @@ class OpenerBot:
             ),
             'S11B_NAV_TO_POKEBALL': BotState(
                 name='S11B_NAV_TO_POKEBALL',
-                description='Navigate to Pokéball on 2F to trigger May',
-                action_fn=action_nav(NavigationGoal(x=5, y=4, map_location='MAYS_HOUSE_2F', description="Interact with Pokéball")),
+                description='Navigate to Pokéball on 2F and interact to trigger May',
+                action_fn=action_nav(NavigationGoal(x=5, y=4, map_location='MAYS_HOUSE_2F', description="Interact with Pokéball", should_interact=True)),
                 next_state_fn=trans_area_and_dialogue(x_range=[4, 5, 6], y_range=[3, 4, 5], next_state='S12_MAY_DIALOG')
             ),
             'S12_MAY_DIALOG': BotState(
                 name='S12_MAY_DIALOG',
-                description='May dialogue (2F) - press A 15 times, then move LEFT to exit area',
-                action_fn=action_press_a_then_move('LEFT', a_presses=15),  # Press A 15 times, then move LEFT
+                description='May dialogue (2F) - clear dialogue then move LEFT to exit area',
+                action_fn=action_clear_dialogue_then_try_move('LEFT'),
                 next_state_fn=trans_left_area_only(x_range=[4, 5, 6], y_range=[3, 4, 5], next_state='S13_NAV_TO_STAIRS_2F')
             ),
             'S13_NAV_TO_STAIRS_2F': BotState(
@@ -681,32 +786,32 @@ class OpenerBot:
             ),
             'S15_NAV_TO_NPC_NORTH': BotState(
                 name='S15_NAV_TO_NPC_NORTH',
-                description='Navigate north to NPC in Littleroot Town',
-                action_fn=action_nav(NavigationGoal(x=11, y=1, map_location='LITTLEROOT TOWN', description='Go to North NPC')),
+                description='Navigate north to NPC area - dialogue auto-triggers',
+                action_fn=action_nav(NavigationGoal(x=11, y=1, map_location='LITTLEROOT TOWN', description='Walk north (no interaction)', should_interact=False)),
                 next_state_fn=trans_area_and_dialogue(x_range=[10, 11, 12], y_range=[1, 2, 3], next_state='S16_NPC_DIALOG')
             ),
             'S16_NPC_DIALOG': BotState(
                 name='S16_NPC_DIALOG',
-                description='Brief NPC dialogue, then move north',
-                action_fn=action_clear_dialogue_then_move_away('UP'),
-                next_state_fn=trans_left_area_or_no_dialogue(x_range=[10, 11, 12], y_range=[1, 2, 3], next_state='S17_NAV_TO_ROUTE_101')
+                description='NPC dialogue - clear dialogue then move UP',
+                action_fn=action_clear_dialogue_then_try_move('UP'),
+                next_state_fn=trans_left_area_only(x_range=[10, 11, 12], y_range=[1, 2, 3], next_state='S17_NAV_TO_ROUTE_101')
             ),
             'S17_NAV_TO_ROUTE_101': BotState(
                 name='S17_NAV_TO_ROUTE_101',
-                description='Navigate north to Route 101 (map transition)',
-                action_fn=action_nav(NavigationGoal(x=11, y=0, map_location='LITTLEROOT TOWN', description='Go to Route 101')),
-                next_state_fn=trans_location_contains('ROUTE 101', 'S18_BIRCH_DIALOG')
+                description='Move UP to Route 101 - Birch cutscene will auto-trigger',
+                action_fn=action_simple(['UP']),  # Just move UP, dialogue auto-triggers after map transition
+                next_state_fn=trans_has_dialogue('S18_BIRCH_DIALOG')  # Wait for Birch's "H-help me!" dialogue
             ),
             'S18_BIRCH_DIALOG': BotState(
                 name='S18_BIRCH_DIALOG',
-                description='Dialogue with Birch on Route 101 (auto-trigger)',
-                action_fn=action_clear_dialogue,
-                next_state_fn=trans_no_dialogue('S19_NAV_TO_BAG')
+                description='Clear Birch cutscene dialogue on Route 101',
+                action_fn=action_clear_dialogue,  # Clear the auto-triggered cutscene
+                next_state_fn=trans_no_dialogue('S19_NAV_TO_BAG')  # Once cleared, go to bag
             ),
             'S19_NAV_TO_BAG': BotState(
                 name='S19_NAV_TO_BAG',
-                description="Navigate to Birch's bag on ground",
-                action_fn=action_nav(NavigationGoal(x=7, y=14, map_location='ROUTE 101', description="Go to Birch's Bag")),
+                description="Navigate to Birch's bag on ground and interact with it",
+                action_fn=action_nav(NavigationGoal(x=7, y=14, map_location='ROUTE 101', description="Interact with Birch's Bag", should_interact=True)),
                 next_state_fn=trans_area_and_dialogue(x_range=[6, 7, 8], y_range=[13, 14, 15], next_state='S20_INTERACT_BAG')
             ),
             'S20_INTERACT_BAG': BotState(

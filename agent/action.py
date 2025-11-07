@@ -207,9 +207,12 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
                     distance = abs(current_x - goal_x) + abs(current_y - goal_y)
                     if distance == 1:
                         # Adjacent to goal - but for stairs/warp tiles, we need to WALK ON, not interact
-                        # Only interact with A if the goal description suggests it (e.g., "interact", "talk")
-                        goal_desc_lower = (opener_action.description or "").lower()
-                        should_interact = any(keyword in goal_desc_lower for keyword in ['interact', 'talk', 'speak', 'check'])
+                        # Check explicit should_interact flag, or infer from description
+                        if opener_action.should_interact is not None:
+                            should_interact = opener_action.should_interact
+                        else:
+                            goal_desc_lower = (opener_action.description or "").lower()
+                            should_interact = any(keyword in goal_desc_lower for keyword in ['interact', 'talk', 'speak', 'check'])
                         
                         print(f"🔍 [NAV] Adjacent to goal. Description: '{opener_action.description}'")
                         print(f"🔍 [NAV] Should interact: {should_interact}")
