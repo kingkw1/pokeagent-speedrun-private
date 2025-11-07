@@ -299,6 +299,46 @@ class OpenerBot:
             if text_box_visible or screen_context == 'dialogue' or game_state == 'dialog' or continue_prompt_visible:
                 return ['A']
             return None
+        
+        def action_clear_dialogue_then_move_away(direction: str) -> Callable:
+            """
+            Clear dialogue if present, otherwise move in the specified direction.
+            Used to prevent re-triggering NPCs after dialogue ends.
+            """
+            def action_fn(s, v):
+                screen_context = v.get('screen_context', '').lower()
+                text_box_visible = v.get('visual_elements', {}).get('text_box_visible', False)
+                continue_prompt_visible = v.get('visual_elements', {}).get('continue_prompt_visible', False)
+                game_state = s.get('game', {}).get('game_state', '').lower()
+                
+                # If in dialogue, press A to clear
+                if text_box_visible or screen_context == 'dialogue' or game_state == 'dialog' or continue_prompt_visible:
+                    return ['A']
+                # Otherwise move away from NPC
+                return [direction]
+            return action_fn
+
+        def action_press_a_then_move(direction: str, a_presses: int = 10) -> Callable:
+            """
+            Press A for a fixed number of attempts (to clear dialogue), then move.
+            This is more robust than checking perception which can be unreliable.
+            
+            Args:
+                direction: Direction to move after pressing A
+                a_presses: Number of times to press A before moving (default 10)
+            """
+            def action_fn(s, v):
+                # Get attempt counter from state machine
+                attempt = getattr(action_fn, '_attempt', 0)
+                action_fn._attempt = attempt + 1
+                
+                if attempt < a_presses:
+                    print(f"🔍 [ACTION_PRESS_A_THEN_MOVE] Attempt {attempt + 1}/{a_presses}: Pressing A")
+                    return ['A']
+                else:
+                    print(f"🔍 [ACTION_PRESS_A_THEN_MOVE] Attempt {attempt + 1}: Moving {direction}")
+                    return [direction]
+            return action_fn
 
         def action_nav(goal: NavigationGoal):
             """Factory for navigation actions. Clears dialogue or returns NavGoal."""
@@ -493,6 +533,26 @@ class OpenerBot:
                     return next_state
                 return None
             return check_fn
+        
+        def trans_left_area_only(x_range: List[int], y_range: List[int], next_state: str) -> Callable:
+            """
+            Transition ONLY when player has physically left the area.
+            This is the most robust check - if dialogue is blocking, player can't move.
+            Once dialogue clears, player can move and will leave the area.
+            DO NOT use perception checks - they are unreliable due to filtering.
+            """
+            def check_fn(s, v):
+                pos = s.get('player', {}).get('position', {})
+                x, y = pos.get('x', -1), pos.get('y', -1)
+                
+                # Only transition if we've physically left the interaction area
+                left_area = x not in x_range or y not in y_range
+                
+                if left_area:
+                    print(f"🔍 [TRANS_LEFT_AREA_ONLY] Pos ({x},{y}) - left area, transitioning to {next_state}")
+                    return next_state
+                return None
+            return check_fn
 
         def trans_no_dialogue_and_not_in_battle(next_state: str) -> Callable:
             """Transition when dialogue is done AND not in battle."""
@@ -603,9 +663,9 @@ class OpenerBot:
             ),
             'S12_MAY_DIALOG': BotState(
                 name='S12_MAY_DIALOG',
-                description='May dialogue (2F)',
-                action_fn=action_clear_dialogue,
-                next_state_fn=trans_left_area_or_no_dialogue(x_range=[4, 5, 6], y_range=[3, 4, 5], next_state='S13_NAV_TO_STAIRS_2F')
+                description='May dialogue (2F) - press A 15 times, then move LEFT to exit area',
+                action_fn=action_press_a_then_move('LEFT', a_presses=15),  # Press A 15 times, then move LEFT
+                next_state_fn=trans_left_area_only(x_range=[4, 5, 6], y_range=[3, 4, 5], next_state='S13_NAV_TO_STAIRS_2F')
             ),
             'S13_NAV_TO_STAIRS_2F': BotState(
                 name='S13_NAV_TO_STAIRS_2F',
@@ -627,9 +687,9 @@ class OpenerBot:
             ),
             'S16_NPC_DIALOG': BotState(
                 name='S16_NPC_DIALOG',
-                description='Brief NPC dialogue',
-                action_fn=action_clear_dialogue,
-                next_state_fn=trans_no_dialogue('S17_NAV_TO_ROUTE_101')
+                description='Brief NPC dialogue, then move north',
+                action_fn=action_clear_dialogue_then_move_away('UP'),
+                next_state_fn=trans_left_area_or_no_dialogue(x_range=[10, 11, 12], y_range=[1, 2, 3], next_state='S17_NAV_TO_ROUTE_101')
             ),
             'S17_NAV_TO_ROUTE_101': BotState(
                 name='S17_NAV_TO_ROUTE_101',
