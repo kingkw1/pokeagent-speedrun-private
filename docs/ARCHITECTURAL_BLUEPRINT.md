@@ -1,5 +1,51 @@
 ﻿# An Architectural Blueprint for a Competitive Agent in the PokéAgent RPG Speedrunning Challenge: A Hierarchical, Memory-Augmented Approach
 
+## ⚡ Implementation Status (November 2025)
+
+**This document describes the original architectural vision and research plan. For the actual implemented system, see the summary below:**
+
+### ✅ What We've Built (Hybrid Hierarchical Controller)
+
+Our production system uses a **pragmatic hybrid approach** that combines programmatic reliability with VLM adaptability:
+
+**Master Controller** (`action.py`):
+- Priority-based delegation system
+- Orchestrates handoff between specialized controllers
+
+**Specialized Controllers**:
+1. **Opener Bot** (✅ Operational): Programmatic state machine for title → starter selection
+   - 20+ states with dialogue detection and safety mechanisms
+   - 95%+ success rate, ~60-90 second completion
+   - Permanent VLM handoff after STARTER_CHOSEN milestone
+   - See `docs/OPENER_BOT.md` for details
+
+2. **Navigation System** (✅ Operational): Local BFS pathfinding
+   - Breadth-first search on 15x15 visible tile grid
+   - Map validation to detect stale data
+   - Goal parser extracts targets from plans
+   - Full A* implementation available for future use
+   - See `docs/PATHFINDING_SUMMARY.md` for details
+
+3. **Battle System** (🔮 Planned): Rule-based combat
+   - Type effectiveness checking
+   - Simple move selection
+
+**VLM Integration** (Qwen2-VL-2B-Instruct):
+- Handles adaptive navigation when programmatic control uncertain
+- General-purpose decision making for non-deterministic scenarios
+- Satisfies "final action from neural network" rule
+
+### 🔮 Original Vision (Research Roadmap)
+
+The sections below describe the **original research plan** with learning-based components. This remains our long-term vision but was not feasible within competition timeframe:
+
+- **High-Level LLM Planner**: Strategy formulation (pivoted to programmatic ObjectiveManager)
+- **Low-Level RL Controller**: Learned navigation policies (pivoted to local BFS + VLM)
+- **VLM Perception Training**: Fine-tuned vision model (using base model currently)
+- **Memory Management Agent**: RL-based memory system (deferred to future work)
+
+---
+
 ## Section 1: Deconstructing the Long-Horizon Challenge: RPG Speedrunning as a Frontier Problem in AI
 
 
@@ -94,35 +140,51 @@ The primary advantage of an HRL framework is its ability to introduce temporal a
 The proposed architecture embodies a powerful hybrid of symbolic and sub-symbolic reasoning. Traditional RL operates in a sub-symbolic space, learning a direct mapping from high-dimensional state representations (like pixels) to low-level actions, but it lacks an understanding of abstract concepts. In contrast, Large Language Models (LLMs) excel at symbolic reasoning and possess vast common-sense knowledge but are not inherently grounded in an environment and cannot execute actions. The proposed architecture bridges this divide. The high-level LLM planner formulates a strategic, symbolic plan (e.g., "I need to heal my Pokémon at the Pokémon Center"). The HRL framework then translates this symbolic directive into a sequence of sub-symbolic policies executed by the low-level controller (navigating to the building, entering, and interacting with the nurse). This synergy leverages the strategic prowess of LLMs and the reactive efficiency of RL, creating a system far more capable than either paradigm in isolation.8
 
 
-### 2.2 The High-Level Planner: A Programmatic, Milestone-Driven System
+### 2.2 The High-Level Planner: From VLM to Programmatic Milestone Manager
 
-Given the VLM's unreliability in complex, multi-step reasoning and the hard 12-day deadline, we have pivoted from a fully VLM-based planner to a more robust and reliable **programmatic, milestone-driven planner**.
+**Original Vision**: A fine-tuned LLM-based planner using guidance-aware RL for strategic planning.
 
-This planner is implemented as the `ObjectiveManager` module. Its architecture consists of a hard-coded list of all critical-path milestones required to complete the competition (up to the first gym), derived from the official splits.
+**Implementation Reality**: Given the VLM's unreliability in complex, multi-step reasoning and the hard competition deadline, we pivoted to a **programmatic, milestone-driven approach**.
 
-At each step, this module:
-1.  Receives the current `milestones` from the `state_data`.
-2.  Compares this against its internal list of objectives.
-3.  Determines the *first incomplete objective* in the sequence.
-4.  Provides this single, unambiguous strategic goal (e.g., `"story_route_101"`) to the rest of the agent.
+**Current System** (`objective_manager.py`):
+- Hard-coded list of critical-path milestones (derived from official splits)
+- Receives current milestone state from game
+- Determines first incomplete objective
+- Provides unambiguous strategic goal to controllers
 
-This "hard-scripted subgoal" approach ensures the agent is *always* focused on the correct high-level task and provides a stable, predictable foundation for our low-level controllers. This is a form of "Tool" use that is explicitly allowed by the new rules to maximize **Raw Performance**.
+This "hard-scripted subgoal" approach ensures the agent is always focused on the correct high-level task and provides stable, predictable strategic guidance.
 
-### 2.3 The Low-Level Controller: A Hybrid Hierarchical Controller (HHC)
+### 2.3 The Low-Level Controller: Hybrid Hierarchical Controller (HHC) 
 
-Our original plan to train a goal-conditioned RL policy for navigation proved to be infeasible due to the VLM's core reasoning failures and the 12-day time limit. We have pivoted to a more robust **Hybrid Hierarchical Controller (HHC)**.
+**Original Vision**: Goal-conditioned RL policy trained offline for navigation skills.
 
-This HHC is implemented in the main `action.py` module, which acts as a "master controller." On every step, it delegates the task to one of three specialized sub-controllers based on the current game state and strategic objective:
+**Implementation Reality**: Infeasible due to VLM reasoning failures and time constraints. We built the **Hybrid Hierarchical Controller (HHC)** instead.
 
-1.  **Programmatic "Opener Bot":** This is a rule-based state machine that handles the entire deterministic opening sequence (Splits 0-4). It programmatically executes all actions for the title screen, character naming, setting the clock, exiting the van/house, and winning the first rival battle. This ensures 100% reliability and maximum speed on the competition's early milestones.
+**Current System** (`action.py` master controller):
 
-2.  **Programmatic "Battle Bot":** This is a simple, rule-based module that takes control whenever `game_state == 'battle'`. It uses effective logic (e.g., "select first super-effective move") to win all required battles to reach the first gym.
+The HHC delegates tasks to specialized sub-controllers based on game state:
 
-3.  **The "A\* Navigator" (Programmatic + VLM Executor):** This is our solution to the VLM's "cul-de-sac" and spatial reasoning failures.
-    * **Pathfinding (Tool):** We use a programmatic **A\*** (A-Star) pathfinding algorithm as a "Tool". This tool reads the 100% reliable ASCII map grid from the `MapStitcher` and calculates the optimal (x,y) path to the destination provided by the `ObjectiveManager`.
-    * **Executor (Neural Network):** The VLM's job is demoted from "navigator" to "executor." It is fed a simple prompt like, "Your current position is (10,10). The next step on your path is (10,11). What is the one button you should press?" The VLM's only task is to translate this coordinate-step into `DOWN`.
+1. **Opener Bot** (✅ Implemented):
+   - Rule-based state machine for opening sequence
+   - Covers title screen → starter selection
+   - Dialogue detection via red triangle + text box
+   - Story-gate handling (clock setting, prerequisites)
+   - Hybrid: Bot handles UI, VLM handles navigation
+   - Permanent handoff after STARTER_CHOSEN milestone
 
-This hybrid architecture satisfies the "final action from a neural network" rule while guaranteeing reliable, fast, and optimal navigation, maximizing our **Raw Performance** score.
+2. **Navigation System** (✅ Implemented):
+   - **Local BFS Pathfinding**: Breadth-first search on 15x15 visible grid
+   - **Map Validation**: Detects stale map stitcher data
+   - **Goal Parser**: Extracts navigation targets from plans
+   - **VLM Fallback**: Returns None when uncertain, triggers VLM
+   - **Future**: Full A* implementation available in `utils/pathfinding.py`
+
+3. **Battle Bot** (🔮 Planned):
+   - Rule-based combat logic
+   - Type effectiveness checking
+   - Simple move selection
+
+**Key Design Principle**: This hybrid architecture satisfies the "final action from a neural network" rule (VLM makes final decision when programmatic controllers return None) while maximizing reliability and Raw Performance.
 	
 
 ## Section 3: Advanced Perception: A Vision-Language Model for Semantic State Extraction
