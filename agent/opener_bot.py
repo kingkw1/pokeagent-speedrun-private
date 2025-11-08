@@ -606,16 +606,33 @@ class OpenerBot:
             
             Clock sequence:
             1. "The clock..." - press A
-            2. "Better set the clock..." - press A to set time
-            3. "Is this the correct time?" with Yes/No menu - press UP then A
+            2. "Better set it and start it!" - press A to set time
+            3. "Is this the correct time?" with Yes/No menu - Step 1: UP, Step 2: A
+            
+            Uses step-based approach for Yes/No menu (can't send two buttons in one frame).
             """
             dialogue = v.get('on_screen_text', {}).get('dialogue', '').upper()
             
+            # Initialize step counter for Yes/No menu
+            if not hasattr(action_special_clock, '_yesno_step'):
+                action_special_clock._yesno_step = 0
+            
             # Check if we're at the "Is this the correct time?" dialogue
             if "IS THIS" in dialogue and "CORRECT TIME" in dialogue:
-                # Yes/No menu - press UP to select Yes, then A to confirm
-                print(f"🕐 [CLOCK] Yes/No menu detected, pressing UP then A")
-                return ['UP', 'A']
+                # Yes/No menu - need to press UP then A (separate frames)
+                print(f"🕐 [CLOCK] Yes/No menu detected (step {action_special_clock._yesno_step})")
+                
+                if action_special_clock._yesno_step == 0:
+                    action_special_clock._yesno_step = 1
+                    print("🕐 [CLOCK] Step 1: Pressing UP to select YES")
+                    return ['UP']
+                else:
+                    action_special_clock._yesno_step = 0  # Reset for next time
+                    print("🕐 [CLOCK] Step 2: Pressing A to confirm")
+                    return ['A']
+            else:
+                # Reset step counter when not in Yes/No menu
+                action_special_clock._yesno_step = 0
             
             # For all other clock-related dialogue, just press A
             if "SET THE CLOCK" in dialogue or "IS THIS TIME" in dialogue or "THE CLOCK" in dialogue:
@@ -765,19 +782,23 @@ class OpenerBot:
             return check_fn
 
         def trans_no_dialogue(next_state: str) -> Callable:
-            """Transition when dialogue is no longer visible AND game state confirms not in dialog."""
+            """
+            Transition when dialogue is no longer visible (VISUAL check only).
+            Does NOT check game_state because it can get stuck as 'dialog' even after dialogue ends.
+            Relies on VLM perception which is more reliable for detecting actual dialogue boxes.
+            """
             def check_fn(s, v):
                 screen_context = v.get('screen_context', '').lower()
                 text_box_visible = v.get('visual_elements', {}).get('text_box_visible', False)
                 continue_prompt_visible = v.get('visual_elements', {}).get('continue_prompt_visible', False)
-                game_state = s.get('game', {}).get('game_state', '').lower()
                 
-                # Only transition if ALL FOUR conditions indicate no dialogue:
+                # Transition if NO visual indicators of dialogue:
                 # 1. No text box visible
                 # 2. Screen context is not 'dialogue' 
-                # 3. Game state is not 'dialog'
-                # 4. No continue prompt (red triangle) visible
-                if not text_box_visible and screen_context != 'dialogue' and game_state != 'dialog' and not continue_prompt_visible:
+                # 3. No continue prompt (red triangle) visible
+                # NOTE: Intentionally NOT checking game_state - it can get stuck
+                if not text_box_visible and screen_context != 'dialogue' and not continue_prompt_visible:
+                    print(f"🔍 [TRANS_NO_DIALOGUE] Visual checks passed: text_box={text_box_visible}, context={screen_context}, prompt={continue_prompt_visible}")
                     return next_state
                 return None
             return check_fn
