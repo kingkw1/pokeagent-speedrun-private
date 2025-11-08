@@ -386,11 +386,48 @@ class OpenerBot:
             return ['B']
 
         def action_clear_dialogue(s, v):
-            """Press A if dialogue is detected through any method."""
+            """
+            Press A if dialogue is detected, OR handle naming keyboard with B→START→A sequence.
+            This handles the intro naming screen that appears during Prof Birch dialogue.
+            
+            Naming keyboard sequence (like nicknaming):
+            1. Press B to clear any existing text
+            2. Press START to jump cursor to OK button
+            3. Press A to confirm and exit
+            """
             screen_context = v.get('screen_context', '').lower()
             text_box_visible = v.get('visual_elements', {}).get('text_box_visible', False)
             continue_prompt_visible = v.get('visual_elements', {}).get('continue_prompt_visible', False)
             game_state = s.get('game', {}).get('game_state', '').lower()
+            dialogue = (v.get('on_screen_text', {}).get('dialogue', '') or '').upper()
+            menu_title = (v.get('on_screen_text', {}).get('menu_title', '') or '').upper()
+            
+            # Initialize step counter for naming keyboard sequence
+            if not hasattr(action_clear_dialogue, '_naming_step'):
+                action_clear_dialogue._naming_step = 0
+            
+            # SPECIAL CASE: Detect naming keyboard screen
+            # Indicators: "YOUR NAME?" dialogue + still in TITLE_SEQUENCE
+            # Solution: B → START → A sequence to exit with default name
+            location = s.get('player', {}).get('location', '')
+            if 'YOUR NAME' in dialogue and 'TITLE_SEQUENCE' in location:
+                print(f"🎮 [S1_NAMING] Detected naming keyboard (step {action_clear_dialogue._naming_step})")
+                
+                if action_clear_dialogue._naming_step == 0:
+                    action_clear_dialogue._naming_step = 1
+                    print("🎮 [S1_NAMING] Step 1: Pressing B to clear any text")
+                    return ['B']
+                elif action_clear_dialogue._naming_step == 1:
+                    action_clear_dialogue._naming_step = 2
+                    print("🎮 [S1_NAMING] Step 2: Pressing START to jump to OK button")
+                    return ['START']
+                else:
+                    action_clear_dialogue._naming_step = 0  # Reset for next time
+                    print("🎮 [S1_NAMING] Step 3: Pressing A to confirm and exit")
+                    return ['A']
+            else:
+                # Reset step counter when not in naming keyboard
+                action_clear_dialogue._naming_step = 0
             
             # Press A if ANY indicator shows we're in dialogue
             if text_box_visible or screen_context == 'dialogue' or game_state == 'dialog' or continue_prompt_visible:
@@ -493,16 +530,74 @@ class OpenerBot:
             return simple_fn
 
         def action_special_naming(s, v):
-            """Handles gender and name selection screens."""
-            dialogue = v.get('on_screen_text', {}).get('dialogue', '').upper()
-            if "ARE YOU A BOY" in dialogue:
+            """
+            Handles gender and name selection screens.
+            
+            Sequence:
+            1. "Are you a boy or girl?" - Press A (selects BOY)
+            2. "What's your name?" - Press A ONCE to enter naming screen
+            3. Naming screen appears with keyboard - Wait for it to fully load
+            4. On keyboard screen - Press START to accept default name
+            5. "So it's [NAME]?" - Press A (confirms choice)
+            
+            CRITICAL: We check screen_context to know if we're IN the naming keyboard.
+            The naming keyboard shows screen_context='dialogue' with letters/grid visible.
+            """
+            dialogue = (v.get('on_screen_text', {}).get('dialogue', '') or '').upper()
+            screen_context = v.get('screen_context', '').lower()
+            menu_title = (v.get('on_screen_text', {}).get('menu_title', '') or '').upper()
+            
+            # Initialize state tracking
+            if not hasattr(action_special_naming, '_entered_naming_screen'):
+                action_special_naming._entered_naming_screen = False
+            if not hasattr(action_special_naming, '_naming_step'):
+                action_special_naming._naming_step = 0
+            
+            print(f"🎮 [NAMING DEBUG] dialogue='{dialogue[:50]}...', screen_context={screen_context}, menu_title='{menu_title[:30]}...', entered={action_special_naming._entered_naming_screen}")
+            
+            # Gender selection
+            if "ARE YOU A BOY" in dialogue or "BOY OR" in dialogue:
+                action_special_naming._entered_naming_screen = False
+                action_special_naming._naming_step = 0
+                print("🎮 [NAMING] Gender selection - pressing A")
                 return ['A']
-            if "YOUR NAME IS" in dialogue:
+            
+            # Name confirmation ("So it's..." or "Is this your name?")  
+            if ("SO IT" in dialogue or "IS THIS" in dialogue or "THAT'S A NICE" in dialogue) and "NAME" in dialogue:
+                action_special_naming._entered_naming_screen = False
+                action_special_naming._naming_step = 0
+                print("🎮 [NAMING] Name confirmation - pressing A")
+                return ['A']
+            
+            # Check if we're IN the naming keyboard (letters visible, can type)
+            # The keyboard shows as screen_context='dialogue' with a grid of letters
+            # We detect this by checking if "NAME" is in menu_title (top of screen shows name entry)
+            in_naming_keyboard = (screen_context == 'dialogue' and 
+                                 action_special_naming._entered_naming_screen and
+                                 ("NAME" in menu_title or len(menu_title) > 0))
+            
+            if in_naming_keyboard:
+                # We're inside the naming keyboard - press START to accept default
+                print(f"🎮 [NAMING] Inside keyboard (menu_title='{menu_title}'), pressing START to accept default")
+                action_special_naming._entered_naming_screen = False  # Reset for next time
                 return ['START']
-            if "IS THIS YOUR NAME" in dialogue:
+            
+            # "What's your name?" prompt - press A ONCE to enter naming screen
+            if "YOUR NAME" in dialogue and not action_special_naming._entered_naming_screen:
+                action_special_naming._entered_naming_screen = True
+                print("🎮 [NAMING] 'YOUR NAME?' prompt detected - pressing A to enter screen")
                 return ['A']
+            
+            # If we pressed A but naming screen hasn't appeared yet, wait
+            if action_special_naming._entered_naming_screen and "YOUR NAME" in dialogue:
+                print("🎮 [NAMING] Waiting for naming screen to load...")
+                return None  # Wait one frame for screen to change
+            
+            # General dialogue clearing (for other dialogue in this state)
             if v.get('visual_elements', {}).get('text_box_visible', False):
+                print("🎮 [NAMING] Clearing general dialogue with A")
                 return ['A']
+                
             return None
 
         def action_special_clock(s, v):
@@ -614,7 +709,10 @@ class OpenerBot:
         def trans_game_state_not(state_value: str, next_state: str) -> Callable:
             """Transition when game_state is NOT the given value."""
             def check_fn(s, v):
-                if s.get('game', {}).get('game_state', '').lower() != state_value.lower():
+                current_game_state = s.get('game', {}).get('game_state', '').lower()
+                print(f"🔍 [TRANS_GAME_STATE_NOT] Checking if game_state '{current_game_state}' != '{state_value}': {current_game_state != state_value.lower()}")
+                if current_game_state != state_value.lower():
+                    print(f"🔍 [TRANS_GAME_STATE_NOT] Transitioning to {next_state}")
                     return next_state
                 return None
             return check_fn
@@ -623,7 +721,10 @@ class OpenerBot:
             """Transition when dialogue contains specific text."""
             def check_fn(s, v):
                 dialogue = v.get('on_screen_text', {}).get('dialogue', '') or ''
-                if text.upper() in dialogue.upper():
+                contains_text = text.upper() in dialogue.upper()
+                print(f"🔍 [TRANS_DIALOGUE] Checking if '{text}' in '{dialogue[:50]}...': {contains_text}")
+                if contains_text:
+                    print(f"🔍 [TRANS_DIALOGUE] Transitioning to {next_state}")
                     return next_state
                 return None
             return check_fn
@@ -631,7 +732,10 @@ class OpenerBot:
         def trans_milestone_complete(milestone_id: str, next_state: str) -> Callable:
             """Transition when milestone is completed."""
             def check_fn(s, v):
-                if s.get('milestones', {}).get(milestone_id, {}).get('completed', False):
+                completed = s.get('milestones', {}).get(milestone_id, {}).get('completed', False)
+                print(f"🔍 [TRANS_MILESTONE] Checking milestone '{milestone_id}': completed={completed}")
+                if completed:
+                    print(f"🔍 [TRANS_MILESTONE] Milestone '{milestone_id}' complete! Transitioning to {next_state}")
                     return next_state
                 return None
             return check_fn
@@ -697,6 +801,95 @@ class OpenerBot:
                     return next_state
                 return None
             return check_fn
+        
+        def trans_detect_naming_screen(next_state: str) -> Callable:
+            """
+            Transition when we detect the actual naming/gender screen.
+            The naming screen has distinct characteristics:
+            - NOT in TITLE_SEQUENCE location anymore
+            - OR has specific menu_title
+            - OR dialogue contains gender question WITHOUT name already set
+            """
+            def check_fn(s, v):
+                location = s.get('player', {}).get('location', '')
+                dialogue = (v.get('on_screen_text', {}).get('dialogue', '') or '').upper()
+                menu_title = (v.get('on_screen_text', {}).get('menu_title', '') or '').upper()
+                player_name = s.get('player', {}).get('name', '')
+                name_milestone_done = s.get('milestones', {}).get('PLAYER_NAME_SET', {}).get('completed', False)
+                
+                # If name is already set, we missed the screen
+                if name_milestone_done:
+                    print(f"🔍 [TRANS_NAMING] Name already set ({player_name}), missed the naming screen!")
+                    return 'S3_TRUCK_RIDE'  # Skip directly to truck
+                
+                # Check for gender/naming screen indicators
+                # Gender question should appear when we're NOT just in title sequence anymore
+                if "BOY" in dialogue and "GIRL" in dialogue and 'TITLE_SEQUENCE' not in location:
+                    print(f"🔍 [TRANS_NAMING] Gender question detected outside title sequence!")
+                    return next_state
+                
+                # Naming keyboard has distinctive menu title
+                if "NAME" in menu_title and len(menu_title) > 3:
+                    print(f"🔍 [TRANS_NAMING] Naming screen menu detected: {menu_title}")
+                    return next_state
+                
+                return None
+            return check_fn
+        
+        def trans_name_set_plus_frames(s, v, frames_to_wait: int = 10):
+            """
+            Transition after PLAYER_NAME_SET milestone completes AND we've waited additional frames.
+            This handles the delay between name being set and location actually changing.
+            
+            Strategy:
+            1. Wait for PLAYER_NAME_SET milestone
+            2. Count frames after milestone completes
+            3. After N frames, check location and transition appropriately
+            """
+            name_milestone_done = s.get('milestones', {}).get('PLAYER_NAME_SET', {}).get('completed', False)
+            location = s.get('player', {}).get('location', '')
+            
+            # Initialize frame counter on first call
+            if not hasattr(trans_name_set_plus_frames, '_frames_since_name_set'):
+                trans_name_set_plus_frames._frames_since_name_set = 0
+                trans_name_set_plus_frames._name_was_set = False
+            
+            # Reset counter if milestone wasn't set before but is now
+            if name_milestone_done and not trans_name_set_plus_frames._name_was_set:
+                print(f"🔍 [S1_TRANS] PLAYER_NAME_SET milestone just completed! Starting frame counter.")
+                trans_name_set_plus_frames._frames_since_name_set = 0
+                trans_name_set_plus_frames._name_was_set = True
+            
+            # If name is set, increment counter
+            if name_milestone_done:
+                trans_name_set_plus_frames._frames_since_name_set += 1
+                frames_waited = trans_name_set_plus_frames._frames_since_name_set
+                print(f"🔍 [S1_TRANS] Name set, waited {frames_waited}/{frames_to_wait} frames. Location: '{location}'")
+                
+                # After waiting enough frames, check location and transition
+                if frames_waited >= frames_to_wait:
+                    print(f"🔍 [S1_TRANS] Waited {frames_to_wait} frames, checking location for transition...")
+                    
+                    # Check for truck/van
+                    if 'MOVING_VAN' in location or 'VAN' in location or 'TRUCK' in location:
+                        print(f"🔍 [S1_TRANS] ✅ Found truck/van in location! Transitioning to S3_TRUCK_RIDE")
+                        # Reset for next time
+                        trans_name_set_plus_frames._frames_since_name_set = 0
+                        trans_name_set_plus_frames._name_was_set = False
+                        return 'S3_TRUCK_RIDE'
+                    
+                    # Check for house
+                    if 'HOUSE 1F' in location or 'BRENDAN' in location:
+                        print(f"🔍 [S1_TRANS] ✅ Found house in location! Transitioning to S4_MOM_DIALOG_1F")
+                        # Reset for next time
+                        trans_name_set_plus_frames._frames_since_name_set = 0
+                        trans_name_set_plus_frames._name_was_set = False
+                        return 'S4_MOM_DIALOG_1F'
+                    
+                    # Still in TITLE_SEQUENCE after waiting - wait more
+                    print(f"🔍 [S1_TRANS] ⚠️ Still in '{location}' after {frames_waited} frames, continuing to wait...")
+            
+            return None
             
         def trans_in_battle(next_state: str) -> Callable:
             """Transition when in battle."""
@@ -791,13 +984,13 @@ class OpenerBot:
                 name='S0_TITLE_SCREEN',
                 description='Title screen',
                 action_fn=action_press_a,
-                next_state_fn=trans_game_state_not('title', 'S1_PROF_DIALOG')
+                next_state_fn=trans_has_dialogue('S1_PROF_DIALOG')
             ),
             'S1_PROF_DIALOG': BotState(
                 name='S1_PROF_DIALOG',
-                description='Professor Birch intro dialogue',
+                description='Professor Birch intro cutscene - press A until PLAYER_NAME_SET + 10 more frames',
                 action_fn=action_clear_dialogue,
-                next_state_fn=trans_dialogue_contains("ARE YOU A BOY", 'S2_GENDER_NAME_SELECT')
+                next_state_fn=lambda s, v: trans_name_set_plus_frames(s, v, frames_to_wait=10)
             ),
             'S2_GENDER_NAME_SELECT': BotState(
                 name='S2_GENDER_NAME_SELECT',
@@ -811,7 +1004,7 @@ class OpenerBot:
                 name='S3_TRUCK_RIDE',
                 description='Inside the moving van',
                 action_fn=action_nav(NavigationGoal(x=8, y=1, map_location='MOVING_VAN', description="Exit Van")),
-                next_state_fn=trans_location_contains('PLAYERS_HOUSE_1F', 'S4_MOM_DIALOG_1F')
+                next_state_fn=trans_location_contains('HOUSE 1F', 'S4_MOM_DIALOG_1F')  # Matches both PLAYERS_HOUSE_1F and BRENDANS_HOUSE_1F
             ),
             'S4_MOM_DIALOG_1F': BotState(
                 name='S4_MOM_DIALOG_1F',

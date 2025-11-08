@@ -456,11 +456,12 @@ What button should you press? Respond with ONE button name only: A, B, UP, DOWN,
                 try:
                     vlm_executor_response = vlm.get_text_query(executor_prompt, "OPENER_EXECUTOR")
                     
-                    # Parse VLM response (use same parsing logic as main action)
-                    valid_buttons = ['A', 'B', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'START', 'SELECT']
+                    # Parse VLM response - check longer buttons first to avoid substring matches
+                    # (e.g., 'START' contains 'A', 'RIGHT' contains 'R', etc.)
+                    valid_buttons = ['START', 'SELECT', 'DOWN', 'LEFT', 'RIGHT', 'UP', 'A', 'B']
                     vlm_response_upper = vlm_executor_response.upper().strip()
                     
-                    # Try to extract button from response
+                    # Try to extract button from response (checking longest first)
                     final_action = None
                     for button in valid_buttons:
                         if button in vlm_response_upper:
