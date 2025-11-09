@@ -562,6 +562,44 @@ def _astar_pathfind_with_grid_data(
             # Note: We include 'D' (doors) and 'S' (stairs) for pathfinding, but safety checks will filter dangerous ones
             return tile in ['.', '_', '~', 'D', 'S']
         
+        # Helper function to get movement cost for a tile
+        # This allows us to prefer paths that avoid tall grass (wild encounters)
+        # Can be configured for "training mode" later to SEEK grass instead
+        def get_tile_cost(pos: Tuple[int, int], avoid_grass: bool = True) -> float:
+            """
+            Calculate movement cost for a tile.
+            
+            Args:
+                pos: Tile position
+                avoid_grass: If True, penalize tall grass. If False, prefer it (training mode)
+            
+            Returns:
+                Movement cost (lower = preferred path)
+            """
+            if pos not in location_grid:
+                return 999  # Unknown/unwalkable tiles have very high cost
+            
+            tile = location_grid[pos]
+            
+            if avoid_grass:
+                # SPEEDRUN MODE: Minimize wild encounters
+                if tile == '~':  # Tall grass
+                    return 3.0  # 3x cost - strongly avoid
+                elif tile in ['.', '_']:  # Normal path
+                    return 1.0  # Standard cost
+                elif tile in ['D', 'S']:  # Doors, stairs
+                    return 1.5  # Slight penalty (might trigger events)
+                else:
+                    return 2.0  # Unknown walkable, slight penalty
+            else:
+                # TRAINING MODE: Seek wild encounters for leveling
+                if tile == '~':  # Tall grass
+                    return 0.5  # PREFER grass!
+                elif tile in ['.', '_']:  # Normal path
+                    return 1.0  # Standard cost
+                else:
+                    return 1.5
+        
         # A* pathfinding with Manhattan distance heuristic
         def manhattan_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> int:
             return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
@@ -571,6 +609,10 @@ def _astar_pathfind_with_grid_data(
         
         # Priority queue: (f_score, g_score, position, path)
         # f_score = g_score + heuristic
+        # NOTE: Currently using avoid_grass=True for speedrun mode
+        # TODO: Add training mode parameter that sets avoid_grass=False
+        #       This will make the agent SEEK grass tiles to level up Pokemon
+        #       Example: astar_pathfind(..., training_mode=True)
         start = rel_current_pos
         pq = [(manhattan_distance(start, closest_target), 0, start, [])]
         visited = {start}
@@ -592,8 +634,14 @@ def _astar_pathfind_with_grid_data(
                     path_preview = ' → '.join(path[:5])
                     if len(path) > 5:
                         path_preview += f" ... ({len(path)} steps)"
+                    
+                    # Count grass tiles in path for debugging
+                    grass_count = sum(1 for pos in visited if location_grid.get(pos) == '~')
+                    total_cost = g_score
+                    
                     print(f"✅ [A* MAP] Found path: {path_preview}")
                     print(f"   First step: {first_step}")
+                    print(f"   Path cost: {total_cost:.1f} (avoided {grass_count} grass tiles in search)")
                     return first_step
                 else:
                     print(f"⚠️ [A* MAP] Already at target")
@@ -618,7 +666,11 @@ def _astar_pathfind_with_grid_data(
                 
                 visited.add(neighbor)
                 new_path = path + [direction]
-                new_g_score = g_score + 1
+                
+                # Use tile cost instead of fixed cost of 1
+                # This makes A* prefer paths that avoid tall grass
+                tile_cost = get_tile_cost(neighbor, avoid_grass=True)
+                new_g_score = g_score + tile_cost
                 new_f_score = new_g_score + manhattan_distance(neighbor, closest_target)
                 
                 heapq.heappush(pq, (new_f_score, new_g_score, neighbor, new_path))
