@@ -492,13 +492,39 @@ What button should you press? Respond with ONE button name only: A, B, UP, DOWN,
                         logger.info(f"✅ [VLM EXECUTOR] OpenerBot→{bot_action_str}, VLM confirmed→{final_action[0]}")
                         return final_action
                     else:
-                        # VLM failed to parse - use bot's suggestion as failsafe
-                        logger.warning(f"⚠️ [VLM EXECUTOR] Could not parse VLM response '{vlm_executor_response[:50]}', using bot suggestion: {opener_action}")
-                        return opener_action
+                        # COMPETITION COMPLIANCE: VLM must provide valid response - retry with simpler prompt
+                        logger.warning(f"⚠️ [VLM EXECUTOR] Could not parse VLM response '{vlm_executor_response[:50]}', retrying")
+                        
+                        retry_prompt = f"""What button? Options: A, B, UP, DOWN, LEFT, RIGHT, START, SELECT
+
+Recommended: {bot_action_str}
+
+Answer with just the button name:"""
+                        
+                        retry_response = vlm.get_text_query(retry_prompt, "OPENER_EXECUTOR_RETRY")
+                        retry_upper = retry_response.upper().strip()
+                        
+                        # Try to parse retry response
+                        final_retry_action = None
+                        for button in valid_buttons:
+                            if button in retry_upper:
+                                final_retry_action = [button]
+                                break
+                        
+                        if final_retry_action:
+                            logger.info(f"✅ [VLM EXECUTOR RETRY] Got valid response: {final_retry_action[0]}")
+                            return final_retry_action
+                        else:
+                            # CRITICAL: No valid VLM response after retry - CRASH per competition rules
+                            error_msg = f"❌ [COMPLIANCE VIOLATION] VLM failed to provide valid button after 2 attempts. Response 1: '{vlm_executor_response[:100]}', Response 2: '{retry_response[:100]}'. Competition rules require final action from neural network. CANNOT PROCEED."
+                            logger.error(error_msg)
+                            raise RuntimeError(error_msg)
                         
                 except Exception as e:
-                    logger.error(f"❌ [VLM EXECUTOR] Error during VLM call: {e}, using bot suggestion: {opener_action}")
-                    return opener_action
+                    # COMPETITION COMPLIANCE: Cannot bypass VLM - must crash
+                    error_msg = f"❌ [COMPLIANCE VIOLATION] VLM executor failed: {e}. Competition rules require final action from neural network. CANNOT PROCEED."
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg) from e
             else:
                 # Opener bot returned None - fallback to VLM
                 logger.debug(f"🤖 [OPENER BOT] Fallback to VLM in state: {opener_bot.current_state_name}")
