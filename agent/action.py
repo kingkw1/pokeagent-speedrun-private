@@ -444,30 +444,92 @@ def _astar_pathfind_with_grid_data(
         print(f"   Absolute pos: {current_pos}, Relative pos: {rel_current_pos}")
         print(f"   Bounds: X:{bounds['min_x']}-{bounds['max_x']}, Y:{bounds['min_y']}-{bounds['max_y']}")
         
-        # Define target positions based on goal direction (using RELATIVE coords)
-        # Find the furthest walkable tiles in the goal direction
-        target_positions = []
+        # SMART TARGET SELECTION: Find tiles at the edge of exploration (frontier)
+        # These are walkable tiles adjacent to unknown '?' tiles in the goal direction
+        # This ensures we explore toward the goal rather than targeting unreachable extremes
         
-        if goal_direction.lower() in ['north', 'up']:
-            # Find minimum Y (northmost) walkable tiles
-            min_y = min(y for x, y in location_grid.keys())
-            target_positions = [(x, y) for x, y in location_grid.keys() 
-                              if y == min_y and location_grid[(x, y)] in ['.', '_', '~']]
-        elif goal_direction.lower() in ['south', 'down']:
-            # Find maximum Y (southmost) walkable tiles
-            max_y = max(y for x, y in location_grid.keys())
-            target_positions = [(x, y) for x, y in location_grid.keys() 
-                              if y == max_y and location_grid[(x, y)] in ['.', '_', '~']]
-        elif goal_direction.lower() in ['east', 'right']:
-            # Find maximum X (eastmost) walkable tiles
-            max_x = max(x for x, y in location_grid.keys())
-            target_positions = [(x, y) for x, y in location_grid.keys() 
-                              if x == max_x and location_grid[(x, y)] in ['.', '_', '~']]
-        elif goal_direction.lower() in ['west', 'left']:
-            # Find minimum X (westmost) walkable tiles  
-            min_x = min(x for x, y in location_grid.keys())
-            target_positions = [(x, y) for x, y in location_grid.keys() 
-                              if x == min_x and location_grid[(x, y)] in ['.', '_', '~']]
+        def is_frontier_tile(pos: Tuple[int, int], direction: str) -> bool:
+            """Check if a tile is on the frontier (adjacent to unknown in goal direction)"""
+            x, y = pos
+            tile = location_grid.get(pos)
+            
+            # Must be walkable
+            if tile not in ['.', '_', '~', 'D']:
+                return False
+            
+            # Check if there's unknown territory in the goal direction
+            if direction in ['north', 'up']:
+                # Check tiles to the north
+                for check_y in range(y - 3, y):  # Check 3 tiles north
+                    if (x, check_y) not in location_grid or location_grid.get((x, check_y)) == '?':
+                        return True
+            elif direction in ['south', 'down']:
+                for check_y in range(y + 1, y + 4):
+                    if (x, check_y) not in location_grid or location_grid.get((x, check_y)) == '?':
+                        return True
+            elif direction in ['east', 'right']:
+                for check_x in range(x + 1, x + 4):
+                    if (check_x, y) not in location_grid or location_grid.get((check_x, y)) == '?':
+                        return True
+            elif direction in ['west', 'left']:
+                for check_x in range(x - 3, x):
+                    if (check_x, y) not in location_grid or location_grid.get((check_x, y)) == '?':
+                        return True
+            
+            return False
+        
+        # Find frontier tiles in the goal direction
+        target_positions = []
+        player_x, player_y = rel_current_pos
+        
+        for (x, y), tile in location_grid.items():
+            # Only consider walkable tiles
+            if tile not in ['.', '_', '~', 'D']:
+                continue
+            
+            # Check if in the goal direction from player
+            is_in_direction = False
+            if goal_direction.lower() in ['north', 'up'] and y < player_y:
+                is_in_direction = True
+            elif goal_direction.lower() in ['south', 'down'] and y > player_y:
+                is_in_direction = True
+            elif goal_direction.lower() in ['east', 'right'] and x > player_x:
+                is_in_direction = True
+            elif goal_direction.lower() in ['west', 'left'] and x < player_x:
+                is_in_direction = True
+            
+            # If in direction and on frontier, add it
+            if is_in_direction and is_frontier_tile((x, y), goal_direction):
+                distance = abs(x - player_x) + abs(y - player_y)
+                target_positions.append((distance, x, y))
+        
+        # Sort by distance and take closest frontier tiles
+        if target_positions:
+            target_positions.sort()
+            # Keep tiles within reasonable distance
+            max_distance = min(15, target_positions[0][0] + 10) if target_positions else 15
+            target_positions = [(x, y) for dist, x, y in target_positions if dist <= max_distance]
+            print(f"🎯 [A* FRONTIER] Found {len(target_positions)} frontier tiles in direction '{goal_direction}'")
+            print(f"   Targeting exploration edge (tiles adjacent to unknown)")
+        else:
+            # Fallback: No frontier found, target extreme edge (old behavior)
+            print(f"⚠️ [A* FRONTIER] No frontier tiles found, using extreme edge as fallback")
+            if goal_direction.lower() in ['north', 'up']:
+                min_y = min(y for x, y in location_grid.keys())
+                target_positions = [(x, y) for x, y in location_grid.keys() 
+                                  if y == min_y and location_grid[(x, y)] in ['.', '_', '~']]
+            elif goal_direction.lower() in ['south', 'down']:
+                max_y = max(y for x, y in location_grid.keys())
+                target_positions = [(x, y) for x, y in location_grid.keys() 
+                                  if y == max_y and location_grid[(x, y)] in ['.', '_', '~']]
+            elif goal_direction.lower() in ['east', 'right']:
+                max_x = max(x for x, y in location_grid.keys())
+                target_positions = [(x, y) for x, y in location_grid.keys() 
+                                  if x == max_x and location_grid[(x, y)] in ['.', '_', '~']]
+            elif goal_direction.lower() in ['west', 'left']:
+                min_x = min(x for x, y in location_grid.keys())
+                target_positions = [(x, y) for x, y in location_grid.keys() 
+                                  if x == min_x and location_grid[(x, y)] in ['.', '_', '~']]
         
         if not target_positions:
             print(f"⚠️ [A* MAP] No valid target positions in direction '{goal_direction}'")
@@ -1840,13 +1902,30 @@ What button should be pressed? Answer with just the button name (UP/DOWN/LEFT/RI
                         player_x = current_position.get('x', 0)
                         player_y = current_position.get('y', 0)
                         
-                        # Check if coordinates look like they're in the same system
-                        coords_compatible = (bounds['min_x'] <= player_x <= bounds['max_x'] and
-                                           bounds['min_y'] <= player_y <= bounds['max_y'])
+                        # Check if server provided translated grid coordinates
+                        origin_offset = current_area.get('origin_offset')
+                        player_grid_pos = current_area.get('player_grid_pos')
+                        
+                        if origin_offset and player_grid_pos:
+                            # Use translated grid coordinates
+                            player_grid_x, player_grid_y = player_grid_pos
+                            print(f"🗺️ [A* MAP] Using translated coordinates:")
+                            print(f"   Local position: ({player_x}, {player_y})")
+                            print(f"   Origin offset: ({origin_offset['x']}, {origin_offset['y']})")
+                            print(f"   Grid position: ({player_grid_x}, {player_grid_y})")
+                            coords_compatible = (bounds['min_x'] <= player_grid_x <= bounds['max_x'] and
+                                               bounds['min_y'] <= player_grid_y <= bounds['max_y'])
+                        else:
+                            # Fallback to raw coordinates (will likely fail)
+                            print(f"⚠️ [A* MAP] No coordinate translation available, using raw position")
+                            player_grid_x = player_x
+                            player_grid_y = player_y
+                            coords_compatible = (bounds['min_x'] <= player_x <= bounds['max_x'] and
+                                               bounds['min_y'] <= player_y <= bounds['max_y'])
                         
                         if not coords_compatible:
                             print(f"⚠️ [A* MAP] Coordinate system mismatch detected!")
-                            print(f"   Player position: ({player_x}, {player_y})")
+                            print(f"   Player grid position: ({player_grid_x}, {player_grid_y})")
                             print(f"   Map stitcher bounds: X:{bounds['min_x']}-{bounds['max_x']}, Y:{bounds['min_y']}-{bounds['max_y']}")
                             print(f"   This indicates stale map stitcher data from a previous session")
                             print(f"   Falling back to local pathfinding (15x15 tiles)")
@@ -1858,8 +1937,8 @@ What button should be pressed? Answer with just the button name (UP/DOWN/LEFT/RI
                             else:
                                 print(f"⚠️ [LOCAL A*] Pathfinding failed, using simple direction mapping")
                         else:
-                            current_pos = (player_x, player_y)
-                            current_pos = (player_x, player_y)
+                            # Use grid coordinates for pathfinding
+                            current_pos = (player_grid_x, player_grid_y)
                         
                             # Convert serializable grid back to tuple keys
                             location_grid = {}

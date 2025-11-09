@@ -963,15 +963,33 @@ async def get_comprehensive_state():
                     for (x, y), tile in location_grid.items():
                         grid_serializable[f"{x},{y}"] = tile
                 
-                # Get explored bounds for coordinate conversion
+                # Get explored bounds and origin offset for coordinate conversion
                 bounds = None
+                origin_offset = None
+                player_grid_pos = None
+                matching_area = None
+                
                 for area in map_stitcher.map_areas.values():
                     if area.location_name and area.location_name.lower() == current_location.lower():
+                        matching_area = area
                         if hasattr(area, 'explored_bounds'):
                             bounds = area.explored_bounds
                             logger.info(f"🗺️ [SERVER A*] Found bounds for {current_location}: {bounds}")
                         else:
                             logger.warning(f"⚠️ [SERVER A*] Area {current_location} has no explored_bounds")
+                        
+                        # Get origin offset for coordinate translation
+                        if hasattr(area, 'origin_offset'):
+                            origin_offset = area.origin_offset
+                            # Calculate player's grid position
+                            if player_coords:
+                                player_grid_pos = (
+                                    player_coords[0] + origin_offset['x'],
+                                    player_coords[1] + origin_offset['y']
+                                )
+                                logger.info(f"🗺️ [SERVER A*] Origin offset: {origin_offset}")
+                                logger.info(f"🗺️ [SERVER A*] Player local pos: {player_coords}")
+                                logger.info(f"🗺️ [SERVER A*] Player grid pos: {player_grid_pos}")
                         break
                 
                 if bounds is None:
@@ -986,7 +1004,9 @@ async def get_comprehensive_state():
                         "connections": connections,
                         "player_pos": player_coords,
                         "grid": grid_serializable,  # Add the grid data!
-                        "bounds": bounds  # Add bounds for coordinate conversion
+                        "bounds": bounds,  # Add bounds for coordinate conversion
+                        "origin_offset": origin_offset,  # ← NEW: For coordinate translation
+                        "player_grid_pos": player_grid_pos  # ← NEW: Translated position
                     },
                     "player_local_pos": player_coords
                 }
