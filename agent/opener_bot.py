@@ -394,6 +394,9 @@ class OpenerBot:
             1. Press B to clear any existing text
             2. Press START to jump cursor to OK button
             3. Press A to confirm and exit
+            
+            IMPORTANT: Does NOT rely solely on game_state='dialog' because it can get stuck.
+            Requires visual confirmation (text_box or screen_context) to keep pressing A.
             """
             screen_context = v.get('screen_context', '').lower()
             text_box_visible = v.get('visual_elements', {}).get('text_box_visible', False)
@@ -429,9 +432,54 @@ class OpenerBot:
                 # Reset step counter when not in naming keyboard
                 action_clear_dialogue._naming_step = 0
             
-            # Press A if ANY indicator shows we're in dialogue
-            if text_box_visible or screen_context == 'dialogue' or game_state == 'dialog' or continue_prompt_visible:
+            # Press A if we have VISUAL confirmation of dialogue
+            # NOTE: Don't press A based on game_state alone - it can get stuck
+            # Require at least one visual indicator (text_box, screen_context, or continue_prompt)
+            has_visual_dialogue = text_box_visible or screen_context == 'dialogue' or continue_prompt_visible
+            
+            if has_visual_dialogue:
                 return ['A']
+            elif game_state == 'dialog':
+                # Visual indicators say no dialogue, but game_state stuck as 'dialog'
+                # This is a known issue - don't press A, let transition logic handle it
+                print(f"⚠️ [CLEAR_DIALOGUE] game_state='dialog' but no visual indicators - not pressing A (likely stuck state)")
+                return None
+            
+            return None
+        
+        def action_clear_dialogue_persistent(s, v):
+            """
+            Press A to clear dialogue, including multi-page dialogues.
+            
+            Unlike action_clear_dialogue, this function will KEEP PRESSING A even when
+            visual indicators are clear but game_state='dialog' is stuck. This is needed
+            for NPCs with multi-page dialogue (like "..." continuation pages) where:
+            1. First page shows real dialogue
+            2. Press A → VLM hallucinates on next page
+            3. Visual indicators clear but game_state still 'dialog'
+            4. Need to press A again to advance past "..." page
+            
+            This prevents premature transitions while dialogue is still active.
+            """
+            screen_context = v.get('screen_context', '').lower()
+            text_box_visible = v.get('visual_elements', {}).get('text_box_visible', False)
+            continue_prompt_visible = v.get('visual_elements', {}).get('continue_prompt_visible', False)
+            game_state = s.get('game', {}).get('game_state', '').lower()
+            
+            # Press A if we have visual confirmation OR if game_state says dialogue is active
+            # This handles both visible dialogue and hidden pages (like "...")
+            has_visual_dialogue = text_box_visible or screen_context == 'dialogue' or continue_prompt_visible
+            
+            if has_visual_dialogue:
+                print(f"💬 [PERSISTENT_DIALOGUE] Visual dialogue detected, pressing A")
+                return ['A']
+            elif game_state == 'dialog':
+                # Game memory says dialogue active - keep pressing A even without visuals
+                # This catches "..." pages that VLM hallucinates as HUD text
+                print(f"💬 [PERSISTENT_DIALOGUE] game_state='dialog', pressing A (may be hidden page)")
+                return ['A']
+            
+            # Only return None if BOTH visual AND memory say dialogue is done
             return None
         
         def action_clear_dialogue_then_move_away(direction: str) -> Callable:
@@ -781,26 +829,65 @@ class OpenerBot:
                 return None
             return check_fn
 
-        def trans_no_dialogue(next_state: str) -> Callable:
+        def trans_no_dialogue(next_state: str, min_wait_steps: int = 2) -> Callable:
             """
-            Transition when dialogue is no longer visible (VISUAL check only).
-            Does NOT check game_state because it can get stuck as 'dialog' even after dialogue ends.
-            Relies on VLM perception which is more reliable for detecting actual dialogue boxes.
+            Transition when dialogue is FULLY cleared - both visually AND in game memory.
+            
+            CRITICAL: Must check BOTH conditions:
+            1. Visual indicators (VLM can hallucinate, so check all indicators)
+            2. Game memory state (player cannot move while game_state='dialog')
+            
+            ESCAPE MECHANISM: If visuals are clear but game_state is stuck as 'dialog',
+            force transition after waiting min_wait_steps to allow action to complete.
+            This prevents premature transitions during multi-page dialogues while still
+            escaping truly stuck states.
+            
+            Args:
+                next_state: State to transition to
+                min_wait_steps: Minimum steps to wait when visuals clear but game_state stuck
             """
             def check_fn(s, v):
                 screen_context = v.get('screen_context', '').lower()
                 text_box_visible = v.get('visual_elements', {}).get('text_box_visible', False)
                 continue_prompt_visible = v.get('visual_elements', {}).get('continue_prompt_visible', False)
+                game_state = s.get('game', {}).get('game_state', '')
                 
-                # Transition if NO visual indicators of dialogue:
-                # 1. No text box visible
-                # 2. Screen context is not 'dialogue' 
-                # 3. No continue prompt (red triangle) visible
-                # NOTE: Intentionally NOT checking game_state - it can get stuck
-                if not text_box_visible and screen_context != 'dialogue' and not continue_prompt_visible:
-                    print(f"🔍 [TRANS_NO_DIALOGUE] Visual checks passed: text_box={text_box_visible}, context={screen_context}, prompt={continue_prompt_visible}")
+                # Transition if dialogue is FULLY cleared:
+                # 1. No visual indicators (text_box, dialogue context, continue prompt)
+                # 2. Game memory state is NOT 'dialog' (player can actually move)
+                visuals_clear = not text_box_visible and screen_context != 'dialogue' and not continue_prompt_visible
+                memory_clear = game_state != 'dialog'
+                
+                # Initialize counter for stuck detection
+                if not hasattr(check_fn, '_stuck_steps'):
+                    check_fn._stuck_steps = 0
+                
+                # Track how many steps visuals have been clear while game_state stuck
+                if visuals_clear and not memory_clear:
+                    check_fn._stuck_steps += 1
+                else:
+                    check_fn._stuck_steps = 0
+                
+                # CASE 1: Both clear - normal transition
+                if visuals_clear and memory_clear:
+                    check_fn._stuck_steps = 0  # Reset counter
+                    print(f"🔍 [TRANS_NO_DIALOGUE] Dialogue fully cleared! visual={visuals_clear}, game_state={game_state}")
                     return next_state
-                return None
+                
+                # CASE 2: Visuals clear but game_state stuck - wait min_wait_steps before forcing
+                # This gives action_clear_dialogue_persistent time to complete multi-page dialogues
+                elif visuals_clear and not memory_clear:
+                    if check_fn._stuck_steps >= min_wait_steps:
+                        print(f"⚠️ [TRANS_NO_DIALOGUE] Stuck for {check_fn._stuck_steps} steps (game_state={game_state}) - forcing transition!")
+                        check_fn._stuck_steps = 0
+                        return next_state
+                    else:
+                        print(f"🔍 [TRANS_NO_DIALOGUE] Visuals clear but game_state={game_state} - waiting ({check_fn._stuck_steps}/{min_wait_steps})")
+                        return None
+                
+                # CASE 3: Visuals still show dialogue - keep waiting
+                else:
+                    return None
             return check_fn
         
         def trans_has_dialogue(next_state: str) -> Callable:
@@ -1029,9 +1116,9 @@ class OpenerBot:
             ),
             'S4_MOM_DIALOG_1F': BotState(
                 name='S4_MOM_DIALOG_1F',
-                description='Mom dialogue after truck ride (1F)',
-                action_fn=action_clear_dialogue,
-                next_state_fn=trans_no_dialogue('S5_NAV_TO_STAIRS_1F')
+                description='Mom dialogue after truck ride (1F) - multi-page dialogue',
+                action_fn=action_clear_dialogue_persistent,  # Use persistent for multi-page dialogue
+                next_state_fn=trans_no_dialogue('S5_NAV_TO_STAIRS_1F', min_wait_steps=3)
             ),
             'S5_NAV_TO_STAIRS_1F': BotState(
                 name='S5_NAV_TO_STAIRS_1F',
@@ -1071,9 +1158,9 @@ class OpenerBot:
             ),
             'S10_MAYS_MOTHER_DIALOG': BotState(
                 name='S10_MAYS_MOTHER_DIALOG',
-                description="May's mother dialogue (1F)",
-                action_fn=action_clear_dialogue,
-                next_state_fn=trans_no_dialogue('S11_NAV_TO_STAIRS_MAYS_HOUSE')
+                description="May's mother dialogue (1F) - multi-page with '...' continuation",
+                action_fn=action_clear_dialogue_persistent,  # Use persistent to handle multi-page dialogue
+                next_state_fn=trans_no_dialogue('S11_NAV_TO_STAIRS_MAYS_HOUSE', min_wait_steps=3)  # Wait 3 steps for multi-page dialogue
             ),
             'S11_NAV_TO_STAIRS_MAYS_HOUSE': BotState(
                 name='S11_NAV_TO_STAIRS_MAYS_HOUSE',
