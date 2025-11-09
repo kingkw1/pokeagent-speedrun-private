@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 # Store tuples of (x, y, map_location) for the last 10 positions
 _recent_positions = deque(maxlen=10)
 
+# Global map stitcher instance for A* pathfinding
+# This will be updated from server state data
+_client_map_stitcher = None
+
 def format_observation_for_action(observation):
     """Format observation data for use in action prompts"""
     if isinstance(observation, dict) and 'visual_data' in observation:
@@ -147,7 +151,7 @@ def _local_pathfind_from_tiles(state_data: Dict[str, Any], goal_direction: str) 
         position = player_data.get('position', {})
         current_x = position.get('x')
         current_y = position.get('y')
-        current_location = player_data.get('map_location', '')
+        current_location = player_data.get('location', '')
         
         # Get tiles from state (15x15 grid centered on player)
         map_info = state_data.get('map', {})
@@ -348,6 +352,191 @@ def _validate_map_stitcher_bounds(map_stitcher, player_pos: Tuple[int, int], loc
         return False
 
 
+def _astar_pathfind_with_grid_data(
+    location_grid: dict,
+    bounds: dict,
+    current_pos: Tuple[int, int], 
+    location: str,
+    goal_direction: str,
+    recent_positions: Optional[deque] = None
+) -> Optional[str]:
+    """
+    A* pathfinding using map grid data from the server.
+    
+    This is SUPERIOR to _local_pathfind_from_tiles because:
+    - Uses COMPLETE explored map (not just 15x15 view)
+    - Sees entire room/area layout
+    - Can plan around obstacles globally
+    - Integrates warp avoidance with position history
+    
+    Args:
+        location_grid: Dictionary mapping (x, y) tuples to tile symbols
+        bounds: Dictionary with min_x, max_x, min_y, max_y for coordinate conversion
+        current_pos: Player's current (x, y) position IN ABSOLUTE WORLD COORDINATES
+        location: Current location name
+        goal_direction: Target direction ('north', 'south', 'east', 'west')
+        recent_positions: Deque of recent (x, y, location) tuples for warp avoidance
+    
+    Returns:
+        First step direction ('UP', 'DOWN', 'LEFT', 'RIGHT') or None if no path
+    """
+    try:
+        from collections import deque
+        import heapq
+        
+        # Location grid is already provided as parameter (no need to fetch from map_stitcher)
+        if not location_grid:
+            print(f"⚠️ [A* MAP] No grid data provided")
+            return None
+        
+        # Bounds are already provided as parameter
+        current_x, current_y = current_pos
+        
+        # Convert absolute coords to relative coords
+        rel_current_x = current_x - bounds['min_x']
+        rel_current_y = current_y - bounds['min_y']
+        rel_current_pos = (rel_current_x, rel_current_y)
+        
+        # Check if current position is in the grid
+        if rel_current_pos not in location_grid:
+            print(f"⚠️ [A* MAP] Current position {current_pos} (rel {rel_current_pos}) not in explored grid")
+            print(f"   Bounds: X:{bounds['min_x']}-{bounds['max_x']}, Y:{bounds['min_y']}-{bounds['max_y']}")
+            return None
+        
+        print(f"✅ [A* MAP] Using map stitcher grid with {len(location_grid)} explored tiles")
+        print(f"   Absolute pos: {current_pos}, Relative pos: {rel_current_pos}")
+        print(f"   Bounds: X:{bounds['min_x']}-{bounds['max_x']}, Y:{bounds['min_y']}-{bounds['max_y']}")
+        
+        # Define target positions based on goal direction (using RELATIVE coords)
+        # Find the furthest walkable tiles in the goal direction
+        target_positions = []
+        
+        if goal_direction.lower() in ['north', 'up']:
+            # Find minimum Y (northmost) walkable tiles
+            min_y = min(y for x, y in location_grid.keys())
+            target_positions = [(x, y) for x, y in location_grid.keys() 
+                              if y == min_y and location_grid[(x, y)] in ['.', '_', '~']]
+        elif goal_direction.lower() in ['south', 'down']:
+            # Find maximum Y (southmost) walkable tiles
+            max_y = max(y for x, y in location_grid.keys())
+            target_positions = [(x, y) for x, y in location_grid.keys() 
+                              if y == max_y and location_grid[(x, y)] in ['.', '_', '~']]
+        elif goal_direction.lower() in ['east', 'right']:
+            # Find maximum X (eastmost) walkable tiles
+            max_x = max(x for x, y in location_grid.keys())
+            target_positions = [(x, y) for x, y in location_grid.keys() 
+                              if x == max_x and location_grid[(x, y)] in ['.', '_', '~']]
+        elif goal_direction.lower() in ['west', 'left']:
+            # Find minimum X (westmost) walkable tiles  
+            min_x = min(x for x, y in location_grid.keys())
+            target_positions = [(x, y) for x, y in location_grid.keys() 
+                              if x == min_x and location_grid[(x, y)] in ['.', '_', '~']]
+        
+        if not target_positions:
+            print(f"⚠️ [A* MAP] No valid target positions in direction '{goal_direction}'")
+            return None
+        
+        print(f"🎯 [A* MAP] Found {len(target_positions)} potential targets in direction '{goal_direction}'")
+        
+        # Helper function to check if position should be avoided (warp detection)
+        def should_avoid_position(rel_pos: Tuple[int, int]) -> bool:
+            if not recent_positions:
+                return False
+            
+            # Convert relative pos to absolute for comparison
+            abs_x = rel_pos[0] + bounds['min_x']
+            abs_y = rel_pos[1] + bounds['min_y']
+            
+            # Check if this position matches a recent position with different location
+            for recent_x, recent_y, recent_loc in recent_positions:
+                if recent_x == abs_x and recent_y == abs_y and recent_loc != location:
+                    print(f"🚫 [A* WARP AVOID] Skipping rel {rel_pos} (abs {abs_x},{abs_y}) - recent warp position from '{recent_loc}'")
+                    return True
+            return False
+        
+        # Helper function to check if tile is walkable
+        def is_walkable(pos: Tuple[int, int]) -> bool:
+            if pos not in location_grid:
+                return False
+            tile = location_grid[pos]
+            # Walkable: path, grass, doors, stairs
+            # Note: We include 'D' (doors) and 'S' (stairs) for pathfinding, but safety checks will filter dangerous ones
+            return tile in ['.', '_', '~', 'D', 'S']
+        
+        # A* pathfinding with Manhattan distance heuristic
+        def manhattan_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> int:
+            return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
+        
+        # Find closest target to minimize search space
+        closest_target = min(target_positions, key=lambda t: manhattan_distance(rel_current_pos, t))
+        
+        # Priority queue: (f_score, g_score, position, path)
+        # f_score = g_score + heuristic
+        start = rel_current_pos
+        pq = [(manhattan_distance(start, closest_target), 0, start, [])]
+        visited = {start}
+        
+        directions_map = {
+            (0, -1): 'UP',
+            (0, 1): 'DOWN',
+            (-1, 0): 'LEFT',
+            (1, 0): 'RIGHT'
+        }
+        
+        while pq:
+            f_score, g_score, current, path = heapq.heappop(pq)
+            
+            # Check if we reached any target
+            if current in target_positions:
+                if path:
+                    first_step = path[0]
+                    path_preview = ' → '.join(path[:5])
+                    if len(path) > 5:
+                        path_preview += f" ... ({len(path)} steps)"
+                    print(f"✅ [A* MAP] Found path: {path_preview}")
+                    print(f"   First step: {first_step}")
+                    return first_step
+                else:
+                    print(f"⚠️ [A* MAP] Already at target")
+                    return None
+            
+            # Explore neighbors
+            for (dx, dy), direction in directions_map.items():
+                nx, ny = current[0] + dx, current[1] + dy
+                neighbor = (nx, ny)
+                
+                # Skip if already visited
+                if neighbor in visited:
+                    continue
+                
+                # Skip if not walkable
+                if not is_walkable(neighbor):
+                    continue
+                
+                # Skip if should avoid (warp detection)
+                if should_avoid_position(neighbor):
+                    continue
+                
+                visited.add(neighbor)
+                new_path = path + [direction]
+                new_g_score = g_score + 1
+                new_f_score = new_g_score + manhattan_distance(neighbor, closest_target)
+                
+                heapq.heappush(pq, (new_f_score, new_g_score, neighbor, new_path))
+        
+        # No path found
+        print(f"⚠️ [A* MAP] No path found to {goal_direction}")
+        print(f"   Explored {len(visited)} tiles")
+        print(f"   Target positions checked: {len(target_positions)}")
+        return None
+        
+    except Exception as e:
+        print(f"❌ [A* MAP] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
 def action_step(memory_context, current_plan, latest_observation, frame, state_data, recent_actions, vlm, visual_dialogue_active=False):
     """
     Decide and perform the next action button(s) based on memory, plan, observation, and comprehensive state.
@@ -368,7 +557,7 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     print("=" * 80)
     
     # Track current position to avoid immediate backtracking through warps
-    global _recent_positions, _steps_since_building_exit, _last_map_location, _avoid_direction
+    global _recent_positions
     try:
         player_data = state_data.get('player', {})
         position = player_data.get('position', {})
@@ -1288,6 +1477,51 @@ Answer with just the button name:"""
                 
                 print(f"🗺️ [MOVEMENT DEBUG] Extracted {len(walkable_options)} walkable options: {[opt['direction'] for opt in walkable_options]}")
                 
+                # WARP AVOIDANCE: Filter out recently visited warp positions (safety net)
+                if _recent_positions and len(_recent_positions) >= 2:
+                    current_x = player_data.get('position', {}).get('x')
+                    current_y = player_data.get('position', {}).get('y')
+                    current_location_key = player_data.get('location', '')
+                    
+                    # Get the most recent previous location (before current)
+                    prev_location = None
+                    for px, py, ploc in reversed(list(_recent_positions)):
+                        if ploc != current_location_key:
+                            prev_location = ploc
+                            break
+                    
+                    if prev_location and current_x is not None and current_y is not None:
+                        # Filter out directions that would warp back to previous location
+                        filtered_options = []
+                        for opt in walkable_options:
+                            direction = opt['direction']
+                            details = opt['details']
+                            
+                            # Extract target coordinates from details like "(7, 16) [D] WALKABLE"
+                            import re
+                            coord_match = re.search(r'\(\s*(\d+),\s*(\d+)\)', details)
+                            if coord_match:
+                                target_x = int(coord_match.group(1))
+                                target_y = int(coord_match.group(2))
+                                
+                                # Check if this position was recently visited with a different location
+                                leads_to_prev = False
+                                for rx, ry, rloc in _recent_positions:
+                                    if rx == target_x and ry == target_y and rloc != current_location_key:
+                                        leads_to_prev = True
+                                        print(f"🚫 [WARP AVOID] Filtering {direction} at ({target_x}, {target_y}) - recent warp target")
+                                        break
+                                
+                                if not leads_to_prev:
+                                    filtered_options.append(opt)
+                            else:
+                                # Can't parse coordinates, keep option
+                                filtered_options.append(opt)
+                        
+                        if len(filtered_options) < len(walkable_options) and filtered_options:
+                            print(f"✅ [WARP AVOID] Filtered {len(walkable_options) - len(filtered_options)} warp-back options")
+                            walkable_options = filtered_options
+                
                 # Format movement preview with original full details
                 movement_preview_text = f"\n{movement_preview_text}\n"
                 print(f"🗺️ [MOVEMENT DEBUG] Formatted movement preview: '{movement_preview_text}'")
@@ -1327,11 +1561,48 @@ Answer with just the button name:"""
                                 walkable_directions.append(direction)
                     
                     if walkable_directions:
-                        # Choose first walkable direction that isn't the stuck one
+                        # COMPETITION COMPLIANCE: Must go through VLM executor
+                        # Anti-stuck provides SUGGESTION, but VLM makes final decision
                         alternative_direction = next((d for d in walkable_directions if d != stuck_direction), walkable_directions[0])
-                        print(f"✅ [ANTI-STUCK] Overriding VLM: choosing {alternative_direction} instead of {stuck_direction}")
-                        logger.info(f"[ACTION] Anti-stuck override: {alternative_direction} (was stuck on {stuck_direction})")
-                        return [alternative_direction]
+                        print(f"🚨 [ANTI-STUCK] Detected stuck pattern on {stuck_direction}")
+                        print(f"💡 [ANTI-STUCK] Suggesting alternative: {alternative_direction}")
+                        
+                        # Pass suggestion to VLM for final decision
+                        vlm_stuck_prompt = f"""CRITICAL: Agent is stuck!
+
+Agent has pressed {stuck_direction} 5 times in a row but hasn't moved.
+Movement analysis shows {stuck_direction} is BLOCKED (likely a ledge or obstacle).
+
+Walkable alternatives: {', '.join(walkable_directions)}
+
+RECOMMENDATION: Press {alternative_direction} to unstuck
+
+What button should be pressed? Answer with just the button name (UP/DOWN/LEFT/RIGHT/A/B):"""
+                        
+                        try:
+                            vlm_response = vlm.get_text_query(vlm_stuck_prompt, "ANTI_STUCK_EXECUTOR")
+                            vlm_upper = vlm_response.upper().strip()
+                            
+                            # Parse VLM response
+                            valid_directions = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'A', 'B']
+                            final_action = None
+                            for direction in valid_directions:
+                                if direction in vlm_upper:
+                                    final_action = [direction]
+                                    break
+                            
+                            if final_action:
+                                logger.info(f"✅ [VLM ANTI-STUCK] VLM approved action: {final_action[0]}")
+                                print(f"✅ [VLM ANTI-STUCK] VLM decision: {final_action[0]}")
+                                return final_action
+                            else:
+                                # VLM didn't respond with valid direction - use suggestion but this shouldn't happen
+                                logger.warning(f"⚠️ [VLM ANTI-STUCK] Could not parse VLM response, using suggestion: {alternative_direction}")
+                                return [alternative_direction]
+                        except Exception as e:
+                            logger.error(f"❌ [VLM ANTI-STUCK] VLM call failed: {e}")
+                            # Emergency fallback - at least we tried to use VLM
+                            return [alternative_direction]
     
     # Build action prompt with multiple-choice format if we have walkable options
     if walkable_options and len(walkable_options) > 0:
@@ -1421,113 +1692,333 @@ Answer with just the button name:"""
         location = state_data.get('player', {}).get('location', '')
         
         # ============================================================================
-        # A* PATHFINDING - Goal-driven navigation from planning module
+        # NAVIGATION SUGGESTION SYSTEM (3-Layer Architecture)
         # ============================================================================
-        # Extract navigation goal from strategic plan (NO hardcoded location checks!)
+        # Layer 1: PLANNING MODULE (planning.py + objective_manager.py)
+        #   - Maintains high-level storyline objectives (e.g., "Get starter Pokemon")
+        #   - Uses ObjectiveManager to track milestone-based progression
+        #   - Generates strategic plans via VLM when objectives change
+        #   - Output: current_plan = "Step 1: Exit lab. Step 2: Go to Route 101..."
+        #
+        # Layer 2: GOAL PARSER (utils/goal_parser.py)
+        #   - Parses strategic plan text to extract navigation targets
+        #   - Identifies direction hints (north, south, east, west)
+        #   - Output: navigation_goal = {"target": "ROUTE_101", "direction_hint": "north"}
+        #
+        # Layer 3: NAVIGATION SUGGESTION (this section)
+        #   - Maps direction hints to specific numbered options
+        #   - Applies safety checks (door avoidance, warp detection)
+        #   - Provides fallback suggestions when direct path blocked
+        #   - Output: suggested_option_num = 2 (with reasoning)
+        #
+        # Layer 4: LOCAL A* PATHFINDING (CURRENTLY DISABLED)
+        #   - Function: _local_pathfind_from_tiles() (lines 128-304)
+        #   - Uses BFS on 15x15 visible tile grid to find paths
+        #   - Would compute exact movement sequences to reach goal
+        #   - DISABLED because: Too rigid, doesn't integrate with VLM decisions
+        #   - Future integration:
+        #     * A* computes path → [UP, UP, RIGHT, UP]
+        #     * We suggest FIRST step only → suggested_option_num = 1 (UP)
+        #     * VLM makes final decision with full context
+        #     * Next step, recompute path (dynamic, responds to changes)
+        #
+        # Current Flow:
+        #   1. Planning generates: "Go to Oldale Town (north)"
+        #   2. Goal parser extracts: {"target": "OLDALE_TOWN", "direction_hint": "north"}
+        #   3. Navigation suggestion maps: "north" → UP direction
+        #   4. Safety checks: Is UP option safe? (not a door/warp)
+        #   5. If safe: suggest_option_num = 1 (UP)
+        #      If unsafe: perpendicular fallback (RIGHT/LEFT)
+        #   6. VLM sees: "Goal: OLDALE_TOWN (NORTH)\nSuggested: 1\n1. UP [.]\n2. DOWN..."
+        #   7. VLM makes final decision (competition compliance)
+        # ============================================================================
+        
+        suggested_option_num = None
+        suggestion_reason = ""
+        
         try:
             from utils.goal_parser import get_goal_parser
-            from utils.pathfinding import find_direction_to_goal
-            from utils.state_formatter import _get_map_stitcher_instance
             
             goal_parser = get_goal_parser()
             
-            # Extract goal from current plan
+            # Extract goal from current plan (Layer 2: Goal Parser)
             navigation_goal = goal_parser.extract_goal_from_plan(
                 plan=current_plan if current_plan else "",
                 current_location=location,
-                current_objective=None  # TODO: Pass actual objective when available
+                current_objective=None
             )
             
             if navigation_goal and navigation_goal.get('confidence', 0) >= 0.6:
                 print(f"🎯 [GOAL PARSER] Extracted navigation goal: {navigation_goal}")
                 
-                # Get map stitcher singleton (we'll validate it below)
-                map_stitcher = _get_map_stitcher_instance()
+                # Layer 3: Map direction hint to cardinal direction
+                direction_hint = navigation_goal.get('direction_hint', '').lower()
                 
-                if map_stitcher:
-                    player_pos = player_data.get('position', {})
-                    current_x = player_pos.get('x')
-                    current_y = player_pos.get('y')
+                # Map hints to cardinal directions
+                hint_to_direction = {
+                    'north': 'UP',
+                    'south': 'DOWN', 
+                    'east': 'RIGHT',
+                    'west': 'LEFT',
+                    'up': 'UP',
+                    'down': 'DOWN',
+                    'left': 'LEFT',
+                    'right': 'RIGHT'
+                }
+                
+                # Layer 3.5: Try A* pathfinding with map stitcher (ENHANCED NAVIGATION)
+                # This provides BETTER navigation than simple direction mapping because:
+                # - Uses complete explored map (not just 15x15 local view)
+                # - Can route around obstacles globally
+                # - Integrates warp avoidance with position history
+                # Competition Compliance: A* provides SUGGESTION, VLM makes final decision
+                astar_direction = None
+                
+                # Get map stitcher data from state (sent by server as JSON-serializable data)
+                stitched_map_info = state_data.get('map', {}).get('stitched_map_info')
+                
+                print(f"🗺️ [A* DEBUG] stitched_map_info present: {stitched_map_info is not None}")
+                if stitched_map_info:
+                    print(f"🗺️ [A* DEBUG] available: {stitched_map_info.get('available')}")
+                    print(f"🗺️ [A* DEBUG] direction_hint: {direction_hint}")
+                
+                if stitched_map_info and stitched_map_info.get('available') and direction_hint:
+                    current_area = stitched_map_info.get('current_area', {})
+                    grid_serializable = current_area.get('grid')
+                    bounds = current_area.get('bounds')
                     
-                    if current_x is not None and current_y is not None:
-                        # CRITICAL: Validate map stitcher bounds before using pathfinding
-                        # Competition split states may have stale singleton data from unrelated runs
-                        if not _validate_map_stitcher_bounds(map_stitcher, (current_x, current_y), location):
-                            print(f"🔄 [PATHFINDING] Map stitcher validation failed - using LOCAL A* with visible tiles")
+                    print(f"🗺️ [A* DEBUG] grid present: {grid_serializable is not None}, size: {len(grid_serializable) if grid_serializable else 0}")
+                    print(f"🗺️ [A* DEBUG] bounds present: {bounds is not None}, value: {bounds}")
+                    print(f"🗺️ [A* DEBUG] current_position: ({current_position.get('x')}, {current_position.get('y')})")
+                    
+                    if grid_serializable and bounds:
+                        print(f"🗺️ [A* MAP] Map stitcher data available, attempting pathfinding to '{direction_hint}'")
+                        
+                        # CRITICAL FIX: The map stitcher uses ABSOLUTE world coordinates from when
+                        # the split was saved, but current_position uses RELATIVE coordinates.
+                        # We need to check if the player position makes sense with the bounds.
+                        
+                        # Validate that current position is within bounds
+                        # Use the already-extracted current_position from earlier in the function
+                        player_x = current_position.get('x', 0)
+                        player_y = current_position.get('y', 0)
+                        
+                        # Check if coordinates look like they're in the same system
+                        coords_compatible = (bounds['min_x'] <= player_x <= bounds['max_x'] and
+                                           bounds['min_y'] <= player_y <= bounds['max_y'])
+                        
+                        if not coords_compatible:
+                            print(f"⚠️ [A* MAP] Coordinate system mismatch detected!")
+                            print(f"   Player position: ({player_x}, {player_y})")
+                            print(f"   Map stitcher bounds: X:{bounds['min_x']}-{bounds['max_x']}, Y:{bounds['min_y']}-{bounds['max_y']}")
+                            print(f"   This indicates stale map stitcher data from a previous session")
+                            print(f"   Falling back to local pathfinding (15x15 tiles)")
                             
-                            # Use lightweight local pathfinding with just the 15x15 visible grid
-                            direction_hint = navigation_goal.get('direction_hint', '')
-                            if direction_hint:
-                                local_direction = _local_pathfind_from_tiles(state_data, direction_hint)
-                                if local_direction:
-                                    print(f"✅ [LOCAL A*] Using direction: {local_direction}")
-                                    print(f"🚀 [LOCAL A*] Bypassing VLM with local pathfinding")
-                                    return [local_direction]
-                                else:
-                                    print(f"⚠️ [LOCAL A*] No path found, falling back to VLM")
+                            # Use local tile-based pathfinding instead
+                            astar_direction = _local_pathfind_from_tiles(state_data, direction_hint)
+                            if astar_direction:
+                                print(f"✅ [LOCAL A*] Pathfinding succeeded: {astar_direction}")
                             else:
-                                print(f"⚠️ [PATHFINDING] No direction hint in goal, can't use local A*")
-
+                                print(f"⚠️ [LOCAL A*] Pathfinding failed, using simple direction mapping")
                         else:
-                            # Map stitcher is valid - could use full A* pathfinding here
-                            # For now, still use local A* as it's working well
-                            print(f"✅ [PATHFINDING] Map stitcher is valid")
-                            direction_hint = navigation_goal.get('direction_hint', '')
-                            if direction_hint:
-                                local_direction = _local_pathfind_from_tiles(state_data, direction_hint)
-                                if local_direction:
-                                    print(f"✅ [LOCAL A*] Using direction: {local_direction}")
-                                    return [local_direction]
-                                else:
-                                    print(f"⚠️ [LOCAL A*] No path found, falling back to VLM")
+                            current_pos = (player_x, player_y)
+                            current_pos = (player_x, player_y)
+                        
+                            # Convert serializable grid back to tuple keys
+                            location_grid = {}
+                            for key, value in grid_serializable.items():
+                                x, y = map(int, key.split(','))
+                                location_grid[(x, y)] = value
+                            
+                            print(f"🗺️ [A* MAP] Using grid with {len(location_grid)} tiles, bounds X:{bounds['min_x']}-{bounds['max_x']}, Y:{bounds['min_y']}-{bounds['max_y']}")
+                            
+                            # Call A* pathfinding with the grid data and bounds
+                            astar_direction = _astar_pathfind_with_grid_data(
+                                location_grid=location_grid,
+                                bounds=bounds,
+                                current_pos=current_pos,
+                                location=location,
+                                goal_direction=direction_hint,
+                                recent_positions=_recent_positions
+                            )
+                            
+                            if astar_direction:
+                                print(f"✅ [A* MAP] Pathfinding succeeded: {astar_direction}")
+                            else:
+                                print(f"⚠️ [A* MAP] Pathfinding failed, falling back to simple direction mapping")
+                    else:
+                        print(f"⚠️ [A* MAP] Missing grid data or bounds")
+                elif not stitched_map_info or not stitched_map_info.get('available'):
+                    print(f"⚠️ [A* MAP] Map stitcher data not available in state_data")
+                elif not direction_hint:
+                    print(f"⚠️ [A* MAP] No direction hint from goal parser")
+
+                
+                # Use A* result if available, otherwise use simple direction mapping
+                preferred_direction = astar_direction if astar_direction else hint_to_direction.get(direction_hint)
+                
+                if preferred_direction:
+                    # Find which numbered option matches this direction
+                    for i, opt in enumerate(all_options, 1):
+                        if opt['direction'] == preferred_direction:
+                            # Check if this option is safe (not a warp-back)
+                            is_safe = True
+                            details = opt.get('details', '')
+                            
+                            # Safety check 1: Milestone-based detection
+                            # If we just got starter and we're outside lab, don't suggest going back in
+                            milestones = state_data.get('milestones', {})
+                            starter_chosen = milestones.get('STARTER_CHOSEN', False)
+                            current_location_str = player_data.get('location', '')
+                            
+                            if starter_chosen and 'TOWN' in current_location_str and ('[D]' in details or 'Door' in details):
+                                # We're in a TOWN with starter - don't suggest entering buildings yet
+                                # (We just exited the lab, need to head to routes first)
+                                is_safe = False
+                                print(f"⚠️ [NAV SUGGESTION] Option {i} ({preferred_direction}) is a door - skipping (just got starter, should explore routes first)")
+                            
+                            # Safety check 2: Recent position history (if available)
+                            elif '[D]' in details or 'Door' in details:
+                                # Extract coordinates
+                                import re
+                                coord_match = re.search(r'\(\s*(\d+),\s*(\d+)\)', details)
+                                if coord_match and _recent_positions and len(_recent_positions) >= 2:
+                                    target_x = int(coord_match.group(1))
+                                    target_y = int(coord_match.group(2))
+                                    
+                                    # Check if this leads back to where we just were
+                                    for rx, ry, rloc in _recent_positions:
+                                        if rx == target_x and ry == target_y and rloc != current_location_str:
+                                            is_safe = False
+                                            print(f"⚠️ [NAV SUGGESTION] Option {i} ({preferred_direction}) is a door back to '{rloc}' - skipping")
+                                            break
+                            
+                            if is_safe:
+                                suggested_option_num = i
+                                suggestion_reason = f"Goal is {navigation_goal.get('target', 'unknown')} to the {direction_hint}"
+                                print(f"💡 [NAV SUGGESTION] Recommending option {i} ({preferred_direction}) - {suggestion_reason}")
+                            break
+                    
+                    if not suggested_option_num:
+                        print(f"⚠️ [NAV SUGGESTION] Preferred direction {preferred_direction} not available or unsafe")
+                        
+                        # SMART FALLBACK: If we want to go in a direction but can't, suggest lateral movement
+                        # Priority: Move perpendicular to goal direction to navigate around obstacles
+                        current_loc = player_data.get('location', '')
+                        if preferred_direction and current_loc and 'TOWN' in current_loc:
+                            fallback_priority = []
+                            
+                            # Define perpendicular directions based on goal
+                            if preferred_direction in ['UP', 'DOWN']:
+                                # Goal is north/south - try going east/west first
+                                fallback_priority = ['RIGHT', 'LEFT', 'DOWN', 'UP']
+                            elif preferred_direction in ['LEFT', 'RIGHT']:
+                                # Goal is east/west - try going north/south first
+                                fallback_priority = ['UP', 'DOWN', 'RIGHT', 'LEFT']
+                            
+                            # Try fallback directions in priority order
+                            for fallback_dir in fallback_priority:
+                                for i, opt in enumerate(all_options, 1):
+                                    if opt['direction'] == fallback_dir:
+                                        details = opt.get('details', '')
+                                        # Make sure it's not a door
+                                        if '[D]' not in details and 'Door' not in details:
+                                            suggested_option_num = i
+                                            suggestion_reason = f"Navigate around obstacle by going {fallback_dir}"
+                                            print(f"💡 [NAV SUGGESTION FALLBACK] {preferred_direction} blocked - suggesting {fallback_dir} (option {i}) to explore around")
+                                            break
+                                if suggested_option_num:
+                                    break
         except Exception as e:
-            logger.warning(f"[PATHFINDING] Error: {e}")
+            logger.warning(f"[NAV SUGGESTION] Error: {e}")
             import traceback
             traceback.print_exc()
         
-        if 'MOVING_VAN' in location.upper():
-            # In the moving van - goal is to find and exit through the door
-            goal = "Exit the moving van through the door"
-            if 'RIGHT' in available_directions:
-                instruction = "The door is to the RIGHT (EAST). Choose RIGHT to exit the van."
-            elif 'LEFT' in available_directions or 'UP' in available_directions or 'DOWN' in available_directions:
-                instruction = "Explore the van to find the door. Try different directions."
+        # ============================================================================
+        # GOAL EXTRACTION: Get current goal from planning module
+        # ============================================================================
+        # The planning module (via ObjectiveManager) maintains high-level goals
+        # The goal_parser extracts direction hints from these goals
+        # We use this to provide context in the prompt
+        
+        goal_context = ""
+        if navigation_goal and navigation_goal.get('target'):
+            target = navigation_goal['target']
+            direction = navigation_goal.get('direction_hint', '')
+            if direction:
+                goal_context = f"Goal: {target} ({direction.upper()})"
             else:
-                instruction = "No clear path. Try moving to find the exit."
+                goal_context = f"Goal: {target}"
+        elif 'MOVING_VAN' in location.upper():
+            goal_context = "Goal: Exit van"
         elif 'HOUSE' in location.upper() or 'ROOM' in location.upper():
-            # Inside a building - look for stairs or doors
-            goal = "Exit the building"
-            if 'DOWN' in available_directions:
-                instruction = "Stairs/exit might be DOWN. Try DOWN to exit."
-            else:
-                instruction = "Look for stairs or a door to exit. Explore the room."
+            goal_context = "Goal: Exit building"
+        elif 'LAB' in location.upper():
+            goal_context = "Goal: Exit lab"
         else:
-            # Overworld - A* pathfinding already tried above, this is VLM fallback
-            goal = "Navigate to Oldale Town (NORTH)"
-            instruction = "Head north. Avoid doors/warps marked [D] unless necessary."
+            # Generic overworld
+            goal_context = "Goal: Explore"
+        
+        # ============================================================================
+        # INSTRUCTION: Build based on suggestion and oscillation state
+        # ============================================================================
+        if oscillation_warning:
+            # Agent is stuck in loop - emphasize trying new direction
+            instruction = f"{goal_context}\n⚠️ Stuck in loop - try NEW direction\nPick option:"
+        elif suggested_option_num:
+            # Navigation system recommends a specific option - MAKE IT VERY CLEAR
+            instruction = f"{goal_context}\n**PATHFINDING RECOMMENDATION: Choose option {suggested_option_num}** ({suggestion_reason})\nPick option:"
+        else:
+            # No suggestion available
+            instruction = f"{goal_context}\nPick option:"
 
         
-        action_prompt = f"""{goal}
+        action_prompt = f"""{instruction}
 
-Position: ({current_x}, {current_y})
-{instruction}
-
-{oscillation_warning}
-
-Options:
 """
+        # SMART REORDERING: If no suggestion, put doors last to reduce chance VLM picks them
+        display_options = all_options.copy()
+        if not suggested_option_num:
+            # Separate doors from non-doors
+            door_options = []
+            non_door_options = []
+            
+            for opt in display_options:
+                details = opt.get('details', '')
+                if '[D]' in details or 'Door' in details:
+                    door_options.append(opt)
+                else:
+                    non_door_options.append(opt)
+            
+            # Reorder: non-doors first, doors last
+            if door_options and non_door_options:
+                display_options = non_door_options + door_options
+                print(f"🔄 [SMART REORDER] No suggestion available - moved {len(door_options)} door(s) to end of list")
+        
         # Add numbered options for all options (movement + interact)
-        print(f"🔍 [PROMPT BUILDER DEBUG] Building numbered list from {len(all_options)} options:")
-        for i, option in enumerate(all_options, 1):
-            action_prompt_line = f"{i}. {option['direction']} - {option['details']}\n"
+        # FORMAT: {number}. {direction} [{tile_symbol}]
+        # Tile symbols: [D]=door, [.]=path, [~]=grass, [≈]=water, [S]=stairs, [#]=blocked
+        print(f"🔍 [PROMPT BUILDER DEBUG] Building numbered list from {len(display_options)} options:")
+        for i, option in enumerate(display_options, 1):
+            # Extract tile symbol from details (if available)
+            details = option.get('details', '')
+            tile_symbol = ''
+            
+            # Look for tile symbol in brackets: [D], [.], [~], etc.
+            import re
+            bracket_match = re.search(r'\[(.)\]', details)
+            if bracket_match:
+                tile_symbol = f" [{bracket_match.group(1)}]"
+            
+            # Build option line: "1. UP [D]" or "1. UP" if no symbol
+            action_prompt_line = f"{i}. {option['direction']}{tile_symbol}\n"
             print(f"   Adding to prompt: '{action_prompt_line.strip()}'")
             action_prompt += action_prompt_line
         
-        action_prompt += f"""
-Answer with just the number (1-{len(all_options)})."""
+        action_prompt += f"\nAnswer: """
         
-        # Store all_options for parsing later
-        walkable_options = all_options
+        # Store display_options for parsing later (they're now reordered)
+        walkable_options = display_options
     else:
         # FALLBACK: Original free-form prompt when no movement options available
         action_prompt = f"""Playing Pokemon Emerald. Screen: {visual_context}

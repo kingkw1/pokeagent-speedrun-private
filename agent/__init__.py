@@ -155,14 +155,18 @@ class Agent:
                     visual_data = perception_output.get('visual_data', {})
                     visual_elements = visual_data.get('visual_elements', {})
                     text_box_visible = visual_elements.get('text_box_visible', None)
+                    screen_context = visual_data.get('screen_context', '')
+                    
+                    print(f"🔍 [DIALOGUE DETECTION] text_box_visible={text_box_visible}, screen_context='{screen_context}'")
                     
                     # Primary: Trust VLM's text_box_visible flag
                     if text_box_visible is not None:
                         visual_dialogue_active = text_box_visible
                     else:
                         # Fallback: Check screen_context as backup indicator
-                        screen_context = visual_data.get('screen_context', '')
                         visual_dialogue_active = (screen_context == 'dialogue')
+                    
+                    print(f"🔍 [DIALOGUE DETECTION] Result: visual_dialogue_active={visual_dialogue_active}")
                 
                 self.context['visual_dialogue_active'] = visual_dialogue_active
                 logger.info(f"[AGENT] Visual dialogue detection: {visual_dialogue_active}")

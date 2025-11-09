@@ -945,7 +945,7 @@ async def get_comprehensive_state():
         if map_stitcher:
             # Get the location grid and connections
             if current_location and current_location != "Unknown":
-                location_grid = map_stitcher.get_location_grid(current_location)
+                location_grid = map_stitcher.get_location_grid(current_location, simplified=True)
                 connections = []
                 
                 # Get connections for this location
@@ -956,12 +956,37 @@ async def get_comprehensive_state():
                         "to_pos": list(their_coords)
                     })
                 
+                # Convert location_grid to JSON-serializable format
+                # location_grid is Dict[Tuple[int, int], str] - convert tuples to strings
+                grid_serializable = {}
+                if location_grid:
+                    for (x, y), tile in location_grid.items():
+                        grid_serializable[f"{x},{y}"] = tile
+                
+                # Get explored bounds for coordinate conversion
+                bounds = None
+                for area in map_stitcher.map_areas.values():
+                    if area.location_name and area.location_name.lower() == current_location.lower():
+                        if hasattr(area, 'explored_bounds'):
+                            bounds = area.explored_bounds
+                            logger.info(f"🗺️ [SERVER A*] Found bounds for {current_location}: {bounds}")
+                        else:
+                            logger.warning(f"⚠️ [SERVER A*] Area {current_location} has no explored_bounds")
+                        break
+                
+                if bounds is None:
+                    logger.warning(f"⚠️ [SERVER A*] No matching area found for {current_location}")
+                
+                logger.info(f"🗺️ [SERVER A*] Sending grid with {len(grid_serializable)} tiles, bounds={bounds}")
+                
                 state["map"]["stitched_map_info"] = {
                     "available": True,
                     "current_area": {
                         "name": current_location,
                         "connections": connections,
-                        "player_pos": player_coords
+                        "player_pos": player_coords,
+                        "grid": grid_serializable,  # Add the grid data!
+                        "bounds": bounds  # Add bounds for coordinate conversion
                     },
                     "player_local_pos": player_coords
                 }
@@ -1021,6 +1046,7 @@ async def get_comprehensive_state():
         
         # Remove MapStitcher instance to avoid serialization issues
         # The instance is only for internal use by state_formatter
+        # The client will reconstruct its own map stitcher from the map data
         if "_map_stitcher_instance" in state.get("map", {}):
             del state["map"]["_map_stitcher_instance"]
         

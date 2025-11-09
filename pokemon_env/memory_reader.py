@@ -3041,12 +3041,12 @@ class PokemonEmeraldReader:
             base_name = os.path.splitext(os.path.basename(filename))[0]
             state_map_file = os.path.join(state_dir, f"{base_name}_map_stitcher.json")
             
-            # Copy state map to cache if it exists
+            # Copy state map to cache if it exists, otherwise reset to empty
             if os.path.exists(state_map_file) and os.path.getsize(state_map_file) > 0:
                 shutil.copy2(state_map_file, cache_map_file)
             # print( Copied state map from {state_map_file} to cache {cache_map_file}")
-            elif not os.path.exists(cache_map_file):
-                # Create empty cache file if neither exists
+            else:
+                # No state-specific map file - reset cache to empty to avoid stale data
             # print( No state map found, creating empty cache file {cache_map_file}")
                 with open(cache_map_file, 'w') as f:
                     import json

@@ -236,6 +236,57 @@ JSON response:"""
                             if re.match(pattern, dialogue_str, re.IGNORECASE):
                                 return True
                         
+                        # Pattern 3: VLM hallucination - describing the scene instead of reading dialogue
+                        # Real dialogue is short character speech. Hallucinations are narrative descriptions.
+                        # Examples: "You are in the middle of a forest. You can see a path leading..."
+                        #           "You are now on Route 101. You have 3000 coins..."
+                        #           "You are currently at position (7, 7). You have $3000 in your bank..."
+                        hallucination_indicators = [
+                            'you can see',
+                            'you are in',
+                            'you are on',
+                            'you are now',
+                            'you are currently',
+                            'you have',
+                            'there is a',
+                            'there are',
+                            'standing in the middle',
+                            'group of trees',
+                            'middle of a forest',
+                            'small black and white pokemon',
+                            'in the forest',
+                            'path leading',
+                            'in your bank',
+                            'in your party',
+                        ]
+                        
+                        dialogue_lower = dialogue_str.lower()
+                        hallucination_count = sum(1 for indicator in hallucination_indicators if indicator in dialogue_lower)
+                        
+                        # If 2+ hallucination indicators, it's likely a scene description, not real dialogue
+                        if hallucination_count >= 2:
+                            return True
+                        
+                        # ENHANCED: Check for game state narration patterns
+                        # These are dead giveaways that the VLM is describing the game state, not reading dialogue
+                        game_state_patterns = [
+                            'you have $',           # "You have $3000"
+                            'you have 1 pokemon',   # "You have 1 Pokemon in your party"
+                            'currently at position', # "You are currently at position (7, 7)"
+                            'in your bank',         # "You have $3000 in your bank"
+                            'in your party',        # "You have 1 Pokemon in your party"
+                            'in the overworld',     # "You are currently in the overworld"
+                        ]
+                        
+                        for pattern in game_state_patterns:
+                            if pattern in dialogue_lower:
+                                return True
+                        
+                        # Also check length - real dialogue boxes are usually concise (under 200 chars)
+                        # Scene descriptions tend to be longer and more detailed
+                        if len(dialogue_str) > 150 and any(indicator in dialogue_lower for indicator in ['you can see', 'you are in', 'there is', 'there are']):
+                            return True
+                        
                         return False
                     
                     if is_hud_text(visual_data):
