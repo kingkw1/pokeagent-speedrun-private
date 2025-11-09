@@ -16,10 +16,6 @@ logger = logging.getLogger(__name__)
 # Track recent positions to avoid immediate backtracking through warps
 # Store tuples of (x, y, map_location) for the last 10 positions
 _recent_positions = deque(maxlen=10)
-# Track steps since last warp/building exit to avoid immediate re-entry
-_steps_since_building_exit = 0
-_last_map_location = None
-_avoid_direction = None  # Direction to avoid after exiting (e.g., 'UP' if we exited by going DOWN)
 
 def format_observation_for_action(observation):
     """Format observation data for use in action prompts"""
@@ -164,16 +160,6 @@ def _local_pathfind_from_tiles(state_data: Dict[str, Any], goal_direction: str) 
         grid_size = len(raw_tiles)
         center = grid_size // 2
         
-        # Check if we should avoid a specific direction (recently exited a building)
-        global _steps_since_building_exit, _avoid_direction
-        avoid_direction = _avoid_direction if _steps_since_building_exit < 5 else None
-        
-        if avoid_direction:
-            print(f"🚫 [LOCAL A*] Recently exited building ({_steps_since_building_exit} steps ago)")
-            print(f"🚫 [LOCAL A*] Will avoid going {avoid_direction} (opposite of exit direction)")
-        else:
-            print(f"✅ [LOCAL A*] No direction avoidance active")
-        
         # Helper to check if tile is walkable
         def is_walkable(y, x):
             if not (0 <= y < grid_size and 0 <= x < grid_size):
@@ -263,15 +249,10 @@ def _local_pathfind_from_tiles(state_data: Dict[str, Any], goal_direction: str) 
             if (y, x) in target_positions:
                 if path:
                     first_step = path[0]
-                    # Check if this path starts with the avoid direction - if so, keep searching
-                    if avoid_direction and first_step == avoid_direction:
-                        print(f"🚫 [WARP AVOIDANCE] Found path starting with {avoid_direction} (avoided), continuing search...")
-                        # Don't return, keep exploring for alternate paths
-                    else:
-                        # Valid path found!
-                        print(f"✅ [LOCAL A*] Found path to {goal_direction} edge: {' -> '.join(path)}")
-                        print(f"   First step: {first_step}")
-                        return first_step
+                    # Valid path found!
+                    print(f"✅ [LOCAL A*] Found path to {goal_direction} edge: {' -> '.join(path)}")
+                    print(f"   First step: {first_step}")
+                    return first_step
                 else:
                     # Already at target? shouldn't happen
                     print(f"⚠️ [LOCAL A*] Already at target position")
@@ -293,11 +274,6 @@ def _local_pathfind_from_tiles(state_data: Dict[str, Any], goal_direction: str) 
                 if leads_to_recent_position(ny, nx):
                     continue
                 
-                # Skip if this is the first step and it's the avoid direction
-                if not path and avoid_direction and dir_name == avoid_direction:
-                    print(f"🚫 [LOCAL A*] Skipping first step {dir_name} (avoided direction)")
-                    continue
-                
                 visited.add((ny, nx))
                 new_path = path + [dir_name]
                 queue.append(((ny, nx), new_path))
@@ -306,16 +282,11 @@ def _local_pathfind_from_tiles(state_data: Dict[str, Any], goal_direction: str) 
         print(f"⚠️ [LOCAL A*] No path found toward {goal_direction}")
         print(f"   Checked {len(target_positions)} target positions on edge")
         print(f"   Explored {len(visited)} tiles")
-        if avoid_direction:
-            print(f"   Note: Avoided first step in direction {avoid_direction}")
         
-        # Fallback: just pick any walkable direction that doesn't lead to recent position or avoid direction
+        # Fallback: just pick any walkable direction that doesn't lead to recent position
         print(f"🔄 [LOCAL A*] Trying fallback direction selection...")
         for dir_name, dx, dy in directions:
             ny, nx = center + dy, center + dx
-            if dir_name == avoid_direction:
-                print(f"   Skipping {dir_name} (avoid direction)")
-                continue
             if is_walkable(ny, nx) and not leads_to_recent_position(ny, nx):
                 print(f"   ✅ Fallback: choosing {dir_name} (first walkable, non-recent)")
                 return dir_name
@@ -403,117 +374,31 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         position = player_data.get('position', {})
         current_x = position.get('x')
         current_y = position.get('y')
-        location = player_data.get('location', '')  # Fixed: was 'map_location', should be 'location'
+        location = player_data.get('location', '')
         
-        print(f"📍 [WARP TRACKING] Current position: ({current_x}, {current_y}) @ '{location}'")
-        print(f"📍 [WARP TRACKING] Last location: '{_last_map_location}'")
-        print(f"📍 [WARP TRACKING] Steps since exit: {_steps_since_building_exit}")
-        print(f"📍 [WARP TRACKING] Avoid direction: {_avoid_direction}")
-        
-        # Detect building exits (location name changes from "X BUILDING" to "X")
-        if _last_map_location and location != _last_map_location:
-            print(f"🔍 [WARP TRACKING] Location changed: '{_last_map_location}' → '{location}'")
-            
-            # Check if we just exited a building (went from indoors to outdoors)
-            last_was_building = any(keyword in _last_map_location.upper() for keyword in 
-                                   ['LAB', 'HOUSE', 'CENTER', 'MART', 'GYM', 'ROOM'])
-            current_is_outdoors = not any(keyword in location.upper() for keyword in 
-                                         ['LAB', 'HOUSE', 'CENTER', 'MART', 'GYM', 'ROOM'])
-            
-            print(f"🔍 [WARP TRACKING] Last was building: {last_was_building}, Current is outdoors: {current_is_outdoors}")
-            
-            if last_was_building and current_is_outdoors:
-                _steps_since_building_exit = 0
-                
-                # Determine exit direction by comparing the LAST position with current position
-                # _recent_positions[-1] should be the position we just left (inside building)
-                if len(_recent_positions) >= 1:
-                    prev_x, prev_y, prev_loc = _recent_positions[-1]
-                    print(f"🔍 [WARP TRACKING] Previous position: ({prev_x}, {prev_y}) @ '{prev_loc}'")
-                    
-                    # Calculate movement direction (from previous to current)
-                    dx = current_x - prev_x
-                    dy = current_y - prev_y
-                    
-                    print(f"🔍 [WARP TRACKING] Movement delta: dx={dx}, dy={dy}")
-                    
-                    # Reverse the direction to get the avoid direction (opposite of exit direction)
-                    if dy < 0:
-                        _avoid_direction = 'DOWN'  # Exited by going UP (negative y), avoid going DOWN
-                        print(f"🔍 [WARP TRACKING] Exited UP (dy={dy}), will avoid DOWN")
-                    elif dy > 0:
-                        _avoid_direction = 'UP'  # Exited by going DOWN (positive y), avoid going UP
-                        print(f"🔍 [WARP TRACKING] Exited DOWN (dy={dy}), will avoid UP")
-                    elif dx < 0:
-                        _avoid_direction = 'RIGHT'  # Exited by going LEFT (negative x), avoid going RIGHT
-                        print(f"🔍 [WARP TRACKING] Exited LEFT (dx={dx}), will avoid RIGHT")
-                    elif dx > 0:
-                        _avoid_direction = 'LEFT'  # Exited by going RIGHT (positive x), avoid going LEFT
-                        print(f"🔍 [WARP TRACKING] Exited RIGHT (dx={dx}), will avoid LEFT")
-                    else:
-                        _avoid_direction = None
-                        print(f"🔍 [WARP TRACKING] No movement detected (dx=dy=0), no avoid direction set")
-                else:
-                    _avoid_direction = None
-                    print(f"🔍 [WARP TRACKING] Not enough position history, no avoid direction set")
-                
-                print(f"🚪 [WARP TRACKING] ✅ Detected building exit: '{_last_map_location}' → '{location}'")
-                print(f"🚪 [WARP TRACKING] Exit direction avoid: {_avoid_direction} (will persist for 5 steps)")
-            else:
-                _steps_since_building_exit += 1
-                print(f"🔍 [WARP TRACKING] Not a building exit, incrementing counter to {_steps_since_building_exit}")
-        else:
-            _steps_since_building_exit += 1
-        
-        # Clear avoid direction after 5 steps
-        if _steps_since_building_exit >= 5:
-            if _avoid_direction:
-                print(f"✅ [WARP TRACKING] Cleared avoid direction '{_avoid_direction}' (5 steps passed)")
-            _avoid_direction = None
-        
-        _last_map_location = location
-        
+        # Add current position to recent positions buffer (for warp detection)
         if current_x is not None and current_y is not None and location:
             current_pos_key = (current_x, current_y, location)
             # Only add if it's a new position (not the same as the last one)
             if not _recent_positions or _recent_positions[-1] != current_pos_key:
                 _recent_positions.append(current_pos_key)
-                print(f"📍 [POSITION TRACKING] ✅ Added position: ({current_x}, {current_y}) @ {location}")
-                print(f"📍 [POSITION TRACKING] Buffer size: {len(_recent_positions)} positions")
-                if _avoid_direction:
-                    print(f"📍 [POSITION TRACKING] 🚫 Currently avoiding direction: {_avoid_direction}")
-            else:
-                print(f"📍 [POSITION TRACKING] ⏭️  Position unchanged, not adding duplicate")
     except Exception as e:
-        print(f"⚠️ [POSITION TRACKING] ❌ Error tracking position: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"⚠️ [POSITION TRACKING] Error tracking position: {e}")
     
     # 🤖 PRIORITY 0: OPENER BOT - Programmatic State Machine (Splits 0-4)
     # Handles deterministic early game states with high reliability using memory state
     # and milestone tracking as primary signals. Returns None to fallback to VLM.
     try:
-        print("🔍 [ACTION_STEP] About to import NavigationGoal...")
         from agent.opener_bot import NavigationGoal
-        print("🔍 [ACTION_STEP] NavigationGoal imported successfully")
-        
-        print("🔍 [ACTION_STEP] About to call get_opener_bot()...")
         opener_bot = get_opener_bot()
-        print(f"🔍 [ACTION_STEP] Got opener bot: {opener_bot}")
-        
         visual_data = latest_observation.get('visual_data', {}) if isinstance(latest_observation, dict) else {}
-        print(f"🔍 [ACTION_STEP] Extracted visual_data, calling should_handle...")
         
         should_handle = opener_bot.should_handle(state_data, visual_data)
-        print(f"🔍 [ACTION_STEP] should_handle returned: {should_handle}")
         
         if should_handle:
-            print(f"🔍 [ACTION_STEP] should_handle is True, calling get_action...")
             opener_action = opener_bot.get_action(state_data, visual_data, current_plan)
-            print(f"🔍 [ACTION_STEP] get_action returned: {opener_action}")
             
             if opener_action is not None:
-                print(f"🔍 [ACTION_STEP] opener_action is not None, processing...")
                 bot_state = opener_bot.get_state_summary()
                 
                 # Check if it's a NavigationGoal
