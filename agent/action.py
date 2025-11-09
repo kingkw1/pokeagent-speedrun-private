@@ -1,9 +1,7 @@
 import logging
 import random
 import sys
-import logging
-import random
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 from collections import deque
 from agent.system_prompt import system_prompt
 from agent.opener_bot import get_opener_bot
@@ -129,7 +127,7 @@ def get_menu_navigation_moves(menu_state, options, current, target):
     
     # ... other menu types ...
 
-def _local_pathfind_from_tiles(state_data: Dict[str, Any], goal_direction: str) -> Optional[str]:
+def _local_pathfind_from_tiles(state_data: Dict[str, Any], goal_direction: str, recent_actions: Optional[List[str]] = None) -> Optional[str]:
     """
     Pathfinding using BFS on the 15x15 visible tile grid.
     Finds the best first step toward target positions along the goal direction edge.
@@ -138,6 +136,7 @@ def _local_pathfind_from_tiles(state_data: Dict[str, Any], goal_direction: str) 
     Args:
         state_data: Current game state with 'map']['tiles'] containing 15x15 grid
         goal_direction: Direction hint like 'north', 'south', etc.
+        recent_actions: List of recent actions for oscillation detection
     
     Returns:
         Direction string ('UP', 'DOWN', 'LEFT', 'RIGHT') or None if no path
@@ -287,18 +286,56 @@ def _local_pathfind_from_tiles(state_data: Dict[str, Any], goal_direction: str) 
         print(f"   Checked {len(target_positions)} target positions on edge")
         print(f"   Explored {len(visited)} tiles")
         
-        # Fallback: just pick any walkable direction that doesn't lead to recent position
-        print(f"🔄 [LOCAL A*] Trying fallback direction selection...")
-        for dir_name, dx, dy in directions:
+        # Fallback: SMART direction selection to escape dead-ends
+        # Check recent actions for oscillation patterns
+        recent_set = set(recent_actions[-10:]) if recent_actions and len(recent_actions) >= 10 else set(recent_actions or [])
+        oscillating_horizontal = 'LEFT' in recent_set and 'RIGHT' in recent_set
+        oscillating_vertical = 'UP' in recent_set and 'DOWN' in recent_set
+        
+        print(f"🔄 [LOCAL A*] SMART fallback - Oscillation check: H={oscillating_horizontal}, V={oscillating_vertical}")
+        
+        goal_dir_upper = goal_direction.upper()
+        
+        # Determine fallback order based on goal and oscillation
+        if 'NORTH' in goal_dir_upper or 'SOUTH' in goal_dir_upper or goal_direction in ['north', 'south']:
+            # Goal is vertical
+            if oscillating_horizontal:
+                # Stuck oscillating horizontally - try vertical escape
+                print(f"   🔄 Detected horizontal oscillation, prioritizing vertical movement")
+                fallback_order = ['DOWN', 'UP', 'RIGHT', 'LEFT'] if goal_direction == 'south' else ['UP', 'DOWN', 'RIGHT', 'LEFT']
+            else:
+                # Normal: try horizontal first to explore
+                fallback_order = ['RIGHT', 'LEFT', 'DOWN', 'UP'] if goal_direction == 'south' else ['RIGHT', 'LEFT', 'UP', 'DOWN']
+        else:
+            # Goal is horizontal
+            if oscillating_vertical:
+                # Stuck oscillating vertically - try horizontal escape
+                print(f"   🔄 Detected vertical oscillation, prioritizing horizontal movement")
+                fallback_order = ['LEFT', 'RIGHT', 'UP', 'DOWN'] if 'WEST' in goal_dir_upper else ['RIGHT', 'LEFT', 'UP', 'DOWN']
+            else:
+                # Normal: try vertical first to explore
+                fallback_order = ['UP', 'DOWN', 'LEFT', 'RIGHT'] if 'WEST' in goal_dir_upper else ['UP', 'DOWN', 'RIGHT', 'LEFT']
+        
+        # Try directions in smart order
+        for dir_name in fallback_order:
+            # Find dx, dy for this direction
+            dx, dy = 0, 0
+            for d_name, d_dx, d_dy in directions:
+                if d_name == dir_name:
+                    dx, dy = d_dx, d_dy
+                    break
+            
             ny, nx = center + dy, center + dx
-            if is_walkable(ny, nx) and not leads_to_recent_position(ny, nx):
-                print(f"   ✅ Fallback: choosing {dir_name} (first walkable, non-recent)")
+            walkable = is_walkable(ny, nx)
+            recent = leads_to_recent_position(ny, nx)
+            
+            if walkable and not recent:
+                print(f"   ✅ SMART Fallback: choosing {dir_name}")
                 return dir_name
             else:
-                walkable = is_walkable(ny, nx)
-                recent = leads_to_recent_position(ny, nx)
                 print(f"   ❌ {dir_name}: walkable={walkable}, leads_to_recent={recent}")
         
+        print(f"   ⚠️ No walkable fallback directions found!")
         return None
         
     except Exception as e:
@@ -1815,7 +1852,7 @@ What button should be pressed? Answer with just the button name (UP/DOWN/LEFT/RI
                             print(f"   Falling back to local pathfinding (15x15 tiles)")
                             
                             # Use local tile-based pathfinding instead
-                            astar_direction = _local_pathfind_from_tiles(state_data, direction_hint)
+                            astar_direction = _local_pathfind_from_tiles(state_data, direction_hint, recent_actions)
                             if astar_direction:
                                 print(f"✅ [LOCAL A*] Pathfinding succeeded: {astar_direction}")
                             else:
