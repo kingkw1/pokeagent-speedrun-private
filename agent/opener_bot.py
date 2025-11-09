@@ -132,12 +132,6 @@ class OpenerBot:
         """
         print(f"🤖 [OPENER BOT SHOULD_HANDLE] Current state: {self.current_state_name}")
         
-        # Special case: If COMPLETED but we're actually still in the lab, re-detect state
-        if self.current_state_name == 'COMPLETED':
-            player_loc = state_data.get('player', {}).get('location', '')
-            print(f"[OPENER BOT SHOULD_HANDLE] COMPLETED - OpenerBot permanently done. VLM will handle everything now. (Location: {player_loc})")
-            return False
-        
         # Check if we've completed the opener sequence
         milestones = state_data.get('milestones', {})
         starter_chosen = milestones.get('STARTER_CHOSEN', {}).get('completed', False)
@@ -147,6 +141,22 @@ class OpenerBot:
         print(f"🤖 [OPENER BOT DEBUG] 'PROFESSOR BIRCHS LAB' in player_loc: {'PROFESSOR BIRCHS LAB' in player_loc}")
         print(f"🤖 [OPENER BOT DEBUG] player_loc repr: {repr(player_loc)}")
         
+        # CRITICAL FIX: Even if we're in COMPLETED state, re-activate if we're still in lab with starter
+        # This handles the nicknaming sequence which happens AFTER starter is chosen
+        if self.current_state_name == 'COMPLETED' and starter_chosen and 'PROFESSOR BIRCHS LAB' in player_loc:
+            print(f"[OPENER BOT] REACTIVATING - In lab with starter, need to complete nickname/exit sequence!")
+            # Re-detect state to handle nickname screen
+            detected_state = self._detect_starting_state(state_data)
+            print(f"[OPENER BOT] Re-detected state: {detected_state}")
+            self._transition_to_state(detected_state)
+            return True
+        
+        # If COMPLETED and not in the special case above, stay completed
+        if self.current_state_name == 'COMPLETED':
+            print(f"[OPENER BOT SHOULD_HANDLE] COMPLETED - OpenerBot permanently done. VLM will handle everything now. (Location: {player_loc})")
+            return False
+        
+        # Check if we should transition to COMPLETED (outside lab after getting starter)
         if starter_chosen:
             if 'PROFESSOR BIRCHS LAB' not in player_loc:
                 print(f"[OPENER BOT] Starter chosen and outside lab (PROFESSOR BIRCHS LAB not in '{player_loc}'). Handing off to VLM.")
@@ -305,7 +315,27 @@ class OpenerBot:
                 print(f"🔍 [STATE DETECTION] No starter yet - returning S20_INTERACT_BAG")
                 return 'S20_INTERACT_BAG'  # Interacting with bag
         
-        # Littleroot Town (OVERWORLD) - the critical case!
+        # Check for May's house BEFORE Littleroot Town check (both contain "LITTLEROOT TOWN")
+        if 'MAYS HOUSE' in player_loc or ('MAY' in player_loc and 'HOUSE' in player_loc):
+            print(f"🔍 [STATE DETECTION] In May's house!")
+            if '2F' in player_loc:
+                return 'S11B_NAV_TO_POKEBALL'  # On 2F
+            else:
+                return 'S10_MAYS_MOTHER_DIALOG'  # On 1F
+        
+        # Check if we're in player's house (Brendan's house) BEFORE Littleroot Town check
+        if ('PLAYERS_HOUSE' in player_loc or 'BRENDANS_HOUSE' in player_loc or 
+            ('BRENDAN' in player_loc and 'HOUSE' in player_loc)):
+            print(f"🔍 [STATE DETECTION] In player's house!")
+            if '2F' in player_loc:
+                # On 2nd floor - setting clock or leaving
+                return 'S6_NAV_TO_CLOCK'
+            else:
+                # On 1st floor - Mom dialogue or navigating to stairs
+                return 'S4_MOM_DIALOG_1F'
+        
+        # Littleroot Town (OVERWORLD) - only matches if NOT in a specific building
+        # This check must come AFTER house checks since location names include "LITTLEROOT TOWN"
         if 'LITTLEROOT' in player_loc and 'TOWN' in player_loc:
             print(f"🔍 [STATE DETECTION] In Littleroot Town overworld!")
             
@@ -331,25 +361,7 @@ class OpenerBot:
                 # In Littleroot but haven't done much - probably just started
                 print(f"🔍 [STATE DETECTION] Early in Littleroot Town")
                 return 'S4_MOM_DIALOG_1F'
-        
-        # Check for May's house (before player's house - both contain "HOUSE")
-        if 'MAYS HOUSE' in player_loc or ('MAY' in player_loc and 'HOUSE' in player_loc):
-            print(f"🔍 [STATE DETECTION] In May's house!")
-            if '2F' in player_loc:
-                return 'S11B_NAV_TO_POKEBALL'  # On 2F
-            else:
-                return 'S10_MAYS_MOTHER_DIALOG'  # On 1F
-        
-        # Check if we're in player's house (Brendan's house)
-        if ('PLAYERS_HOUSE' in player_loc or 'BRENDANS_HOUSE' in player_loc or 
-            ('BRENDAN' in player_loc and 'HOUSE' in player_loc)):
-            print(f"🔍 [STATE DETECTION] In player's house!")
-            if '2F' in player_loc:
-                # On 2nd floor - setting clock or leaving
-                return 'S6_NAV_TO_CLOCK'
-            else:
-                # On 1st floor - Mom dialogue or navigating to stairs
-                return 'S4_MOM_DIALOG_1F'
+
         
         # Moving Van / Truck
         if 'MOVING_VAN' in player_loc or 'VAN' in player_loc or 'TRUCK' in player_loc:

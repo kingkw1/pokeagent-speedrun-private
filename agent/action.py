@@ -443,11 +443,31 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
                     if dialogue:
                         visual_context_brief += f" (dialogue: {dialogue[:50]}...)" if len(dialogue) > 50 else f" (dialogue: {dialogue})"
                 
+                # Add step-based context for multi-step sequences
+                step_context = ""
+                if bot_state_name == 'S24_NICKNAME':
+                    # Nickname uses B→START→A sequence
+                    step_num = getattr(opener_bot.states.get('S24_NICKNAME').action_fn, '_nickname_step', 0)
+                    step_context = f"\nSEQUENCE STEP {step_num+1}/3: Press {bot_action_str} (Full sequence: B→START→A to skip nickname)"
+                elif bot_state_name == 'S2_GENDER_NAME_SELECT':
+                    # Name selection just uses START once when in keyboard
+                    if bot_action_str == 'START':
+                        step_context = f"\nACTION: Press START to accept default name (inside naming keyboard)"
+                    else:
+                        step_context = f"\nACTION: Navigate character naming sequence"
+                elif bot_state_name == 'S7_SET_CLOCK':
+                    # Clock uses UP→A sequence for Yes/No menu
+                    step_num = getattr(opener_bot.states.get('S7_SET_CLOCK').action_fn, '_yesno_step', 0)
+                    if step_num == 0:
+                        step_context = f"\nSEQUENCE STEP 1/2: Press UP to select YES in clock confirmation menu"
+                    else:
+                        step_context = f"\nSEQUENCE STEP 2/2: Press A to confirm YES in clock confirmation menu"
+                
                 executor_prompt = f"""Playing Pokemon Emerald. You are executing a decision from the programmatic opener controller.
 
 CURRENT STATE: {visual_context_brief}
 OPENER BOT STATE: {bot_state_name}
-RECOMMENDED ACTION: {bot_action_str}
+RECOMMENDED ACTION: {bot_action_str}{step_context}
 
 The opener bot has analyzed the deterministic opening sequence and recommends pressing {bot_action_str}.
 
