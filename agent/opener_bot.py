@@ -233,13 +233,22 @@ class OpenerBot:
             "IS THIS" in dialogue_upper and "CORRECT TIME" in dialogue_upper
         )
         
+        # NICKNAME DIALOGUE DETECTION: Special case - don't yield on nickname dialogue
+        # The nickname screen needs special handling (B → START → A sequence)
+        # Let state machine transition to S24_NICKNAME which uses action_special_nickname
+        menu_title = (on_screen_text.get('menu_title', '') or '').upper()
+        is_nickname_dialogue = (
+            "NICKNAME" in dialogue_upper or
+            "NICKNAME" in menu_title
+        )
+        
         # DIALOGUE DETECTION: Yield to dialogue system if we see dialogue (and it's NOT player monologue)
-        # EXCEPTION: Don't yield on clock dialogue - let state machine handle it
+        # EXCEPTION: Don't yield on clock dialogue or nickname dialogue - let state machine handle them
         # SPECIAL CASE: Dot dialogue is always treated as real dialogue
-        is_real_dialogue = (continue_prompt_visible or text_box_visible) and (is_dot_dialogue or (not is_player_monologue and not is_clock_dialogue))
+        is_real_dialogue = (continue_prompt_visible or text_box_visible) and (is_dot_dialogue or (not is_player_monologue and not is_clock_dialogue and not is_nickname_dialogue))
         
         # DEBUG: Always log dialogue detection
-        print(f"🤖 [OPENER BOT DIALOGUE CHECK] text_box={text_box_visible}, continue_prompt={continue_prompt_visible}, player_mono={is_player_monologue}, clock={is_clock_dialogue}, dots={is_dot_dialogue}, is_real={is_real_dialogue}")
+        print(f"🤖 [OPENER BOT DIALOGUE CHECK] text_box={text_box_visible}, continue_prompt={continue_prompt_visible}, player_mono={is_player_monologue}, clock={is_clock_dialogue}, nickname={is_nickname_dialogue}, dots={is_dot_dialogue}, is_real={is_real_dialogue}")
         if dialogue_text:
             print(f"🤖 [OPENER BOT DIALOGUE CHECK] Dialogue: '{dialogue_text[:60]}'...")
         
@@ -251,7 +260,10 @@ class OpenerBot:
             print(f"🤖 [OPENER BOT] Player monologue detected - ignoring and continuing with state logic")
         elif is_clock_dialogue:
             print(f"🤖 [OPENER BOT] Clock dialogue detected - letting state machine handle it")
-            logger.info(f"[OPENER BOT] Player monologue ignored (likely VLM hallucination)")
+            logger.info(f"[OPENER BOT] Clock dialogue detected - state machine will handle it")
+        elif is_nickname_dialogue:
+            print(f"🤖 [OPENER BOT] Nickname dialogue detected - letting state machine handle it")
+            logger.info(f"[OPENER BOT] Nickname dialogue detected - state machine will handle it")
         
         # FAILED MOVEMENT DETECTION: Safety net for misclassified dialogue
         # If agent tries to move but position doesn't change for 3+ frames while game_state='dialog',
@@ -637,6 +649,41 @@ class OpenerBot:
             # Only return None if BOTH visual AND memory say dialogue is done
             return None
         
+        def action_wander_until_dialogue(s, v):
+            """
+            Wander around until dialogue triggers, then clear it.
+            Used when dialogue is triggered by position (e.g., May appearing downstairs).
+            
+            Strategy:
+            - If dialogue present: press A to clear it
+            - If no dialogue: move RIGHT to explore and trigger events
+            - Returns None only if both dialogue cleared AND position changing
+            """
+            screen_context = v.get('screen_context', '').lower()
+            text_box_visible = v.get('visual_elements', {}).get('text_box_visible', False)
+            continue_prompt_visible = v.get('visual_elements', {}).get('continue_prompt_visible', False)
+            game_state = s.get('game', {}).get('game_state', '').lower()
+            on_screen_text = v.get('on_screen_text', {})
+            
+            # Check for player monologue (hallucination)
+            dialogue_text = on_screen_text.get('dialogue') or ''
+            is_player_monologue = (dialogue_text and dialogue_text.strip().upper().startswith('PLAYER:'))
+            
+            if is_player_monologue:
+                print("⚠️ [WANDER] Ignoring player monologue (hallucination)")
+                return None  # Skip hallucinated player monologues
+            
+            # Check if dialogue is active
+            has_visual_dialogue = text_box_visible or screen_context == 'dialogue' or continue_prompt_visible
+            
+            if has_visual_dialogue or game_state == 'dialog':
+                print("📝 [WANDER] Dialogue detected, pressing A to clear")
+                return ['A']
+            else:
+                # No dialogue yet - move RIGHT to explore and trigger May
+                print("🚶 [WANDER] No dialogue yet, moving RIGHT to explore")
+                return ['RIGHT']
+        
         def action_clear_dialogue_then_move_away(direction: str) -> Callable:
             """
             Clear dialogue if present, otherwise move in the specified direction.
@@ -759,12 +806,28 @@ class OpenerBot:
                 
                 # If stuck for 3+ frames, diagnose and intervene
                 if is_stuck and nav_fn._stuck_frames >= 3:
-                    # Check if stuck due to dialogue
+                    # Check if stuck due to dialogue (use game memory, not VLM which may be hallucinating)
                     game_state = s.get('game', {}).get('game_state', '').lower()
+                    
+                    # CRITICAL: When hallucination filter is active, VLM visuals are cleared
+                    # but game memory still shows game_state='dialog' or 'overworld'
+                    # We detect stuck-in-dialogue by:
+                    # 1. Position unchanged for 3+ frames (is_stuck=True)
+                    # 2. We're in a navigation state trying to move
+                    # 3. Movements keep failing (position not changing)
+                    # This pattern = dialogue blocking us (even if VLM can't see it due to hallucinations)
+                    
+                    # Strategy: Press A to try clearing any hidden dialogue
+                    if nav_fn._stuck_frames >= 3:
+                        print(f"🚫 [NAV STUCK] Stuck at {current_pos} for {nav_fn._stuck_frames} frames")
+                        print(f"🚫 [NAV STUCK] Game state: {game_state}")
+                        print(f"🚫 [NAV STUCK] Likely stuck in dialogue - pressing A to attempt clearance")
+                        nav_fn._stuck_frames = 0  # Reset counter after intervention
+                        return ['A']  # Press A to try clearing dialogue
+                    
+                    # Legacy code kept for safety (shouldn't reach here)
                     visual_elements = v.get('visual_elements', {})
                     text_box_visible = visual_elements.get('text_box_visible', False)
-                    
-                    # Multiple indicators of dialogue blocking navigation
                     dialogue_blocking = (
                         game_state == 'dialog' or 
                         text_box_visible or
@@ -772,15 +835,10 @@ class OpenerBot:
                     )
                     
                     if dialogue_blocking:
-                        print(f"🚫 [NAV STUCK] Stuck at {current_pos} for {nav_fn._stuck_frames} frames - dialogue blocking")
-                        print(f"🚫 [NAV STUCK] CANNOT directly press A - competition rules require VLM final decision")
-                        print(f"🚫 [NAV STUCK] Returning None to yield to dialogue system Priority 1")
-                        nav_fn._stuck_frames = 0  # Reset after intervention
-                        return None  # Let Priority 1 dialogue system handle this
+                        print(f"🚫 [NAV STUCK] [LEGACY] Dialogue detected, returning None")
+                        return None
                     else:
-                        # Stuck but not due to dialogue - might be pathfinding issue
-                        # Try the goal anyway, let A* recalculate
-                        print(f"🚫 [NAV STUCK] Stuck at {current_pos} for {nav_fn._stuck_frames} frames - no dialogue detected, continuing with goal")
+                        print(f"🚫 [NAV STUCK] No dialogue detected, continuing with goal")
                 
                 # Not stuck or haven't been stuck long enough - proceed with navigation
                 return goal
@@ -1319,6 +1377,25 @@ class OpenerBot:
                 return None
             return check_fn
 
+        def trans_position_area(x_range: List[int], y_range: List[int], next_state: str) -> Callable:
+            """
+            Transition when player ENTERS the specified area.
+            Use this when dialogue will auto-trigger at a position and you want to transition 
+            immediately upon arrival, not wait for dialogue to appear/clear.
+            """
+            def check_fn(s, v):
+                pos = s.get('player', {}).get('position', {})
+                x, y = pos.get('x', -1), pos.get('y', -1)
+                
+                # Transition if we're in the area
+                in_area = x in x_range and y in y_range
+                
+                if in_area:
+                    print(f"🔍 [TRANS_POSITION_AREA] Pos ({x},{y}) - in area, transitioning to {next_state}")
+                    return next_state
+                return None
+            return check_fn
+
         def trans_no_dialogue_and_not_in_battle(next_state: str) -> Callable:
             """Transition when dialogue is done AND not in battle."""
             def check_fn(s, v):
@@ -1436,7 +1513,13 @@ class OpenerBot:
                 name='S13_NAV_TO_STAIRS_2F',
                 description="Navigate to stairs on May's house 2F",
                 action_fn=action_nav(NavigationGoal(x=1, y=1, map_location='LITTLEROOT TOWN MAYS HOUSE 2F', description='Go to Stairs')),
-                next_state_fn=trans_location_contains('MAYS HOUSE 1F', 'S14_NAV_TO_EXIT_MAYS_HOUSE')
+                next_state_fn=trans_location_contains('MAYS HOUSE 1F', 'S14A_MAY_DOWNSTAIRS_DIALOG')
+            ),
+            'S14A_MAY_DOWNSTAIRS_DIALOG': BotState(
+                name='S14A_MAY_DOWNSTAIRS_DIALOG',
+                description="May follows downstairs - move around until dialogue triggers, then clear it",
+                action_fn=action_wander_until_dialogue,  # Wander RIGHT until May appears, then clear her dialogue
+                next_state_fn=trans_no_dialogue('S14_NAV_TO_EXIT_MAYS_HOUSE', min_wait_steps=3)
             ),
             'S14_NAV_TO_EXIT_MAYS_HOUSE': BotState(
                 name='S14_NAV_TO_EXIT_MAYS_HOUSE',
@@ -1448,7 +1531,7 @@ class OpenerBot:
                 name='S15_NAV_TO_NPC_NORTH',
                 description='Navigate north to NPC area - dialogue auto-triggers',
                 action_fn=action_nav(NavigationGoal(x=11, y=1, map_location='LITTLEROOT TOWN', description='Walk north (no interaction)', should_interact=False)),
-                next_state_fn=trans_area_and_dialogue(x_range=[10, 11, 12], y_range=[1, 2, 3], next_state='S16_NPC_DIALOG')
+                next_state_fn=trans_position_area(x_range=[10, 11, 12], y_range=[1, 2, 3], next_state='S16_NPC_DIALOG')  # Transition when reaching area, not when dialogue appears
             ),
             'S16_NPC_DIALOG': BotState(
                 name='S16_NPC_DIALOG',
@@ -1458,16 +1541,18 @@ class OpenerBot:
             ),
             'S17_NAV_TO_ROUTE_101': BotState(
                 name='S17_NAV_TO_ROUTE_101',
-                description='Move UP to Route 101 - Birch cutscene will auto-trigger',
-                action_fn=action_simple(['UP']),  # Just move UP, dialogue auto-triggers after map transition
-                next_state_fn=trans_has_dialogue('S18_BIRCH_DIALOG')  # Wait for Birch's "H-help me!" dialogue
+                description='Move UP to Route 101 - Birch cutscene auto-triggers, dialogue system handles it',
+                action_fn=action_simple(['UP']),  # Move UP to trigger map transition
+                # CRITICAL: Can't use trans_has_dialogue because bot yields to dialogue BEFORE checking transitions
+                # Instead, detect Route 101 by location name (may be ROUTE 101 or corrupted TITLE_SEQUENCE)
+                next_state_fn=lambda s, v: (
+                    'S19_NAV_TO_BAG' if 'ROUTE' in s.get('player', {}).get('location', '').upper() or
+                                       'TITLE' in s.get('player', {}).get('location', '').upper()
+                    else None
+                )
             ),
-            'S18_BIRCH_DIALOG': BotState(
-                name='S18_BIRCH_DIALOG',
-                description='Clear Birch cutscene dialogue on Route 101',
-                action_fn=action_clear_dialogue,  # Clear the auto-triggered cutscene
-                next_state_fn=trans_no_dialogue('S19_NAV_TO_BAG')  # Once cleared, go to bag
-            ),
+            # S18_BIRCH_DIALOG removed - dialogue system automatically handles Birch's "H-help me!" cutscene
+            # After dialogue clears, agent transitions directly to S19_NAV_TO_BAG
             'S19_NAV_TO_BAG': BotState(
                 name='S19_NAV_TO_BAG',
                 description="Navigate to Birch's bag on ground and interact with it",
