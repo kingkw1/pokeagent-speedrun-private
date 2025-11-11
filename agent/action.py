@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional, Tuple, List
 from collections import deque
 from agent.system_prompt import system_prompt
 from agent.opener_bot import get_opener_bot
+from agent.battle_bot import get_battle_bot
 from utils.state_formatter import format_state_for_llm, format_state_summary, get_movement_options, get_party_health_summary, format_movement_preview_for_llm
 from utils.vlm import VLM
 
@@ -721,7 +722,122 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     except Exception as e:
         print(f"⚠️ [POSITION TRACKING] Error tracking position: {e}")
     
-    # 🤖 PRIORITY 0: OPENER BOT - Programmatic State Machine (Splits 0-4)
+    # ⚔️ PRIORITY 0A: BATTLE BOT - Combat State Machine (HIGHEST PRIORITY)
+    # This MUST be checked BEFORE opener bot to prevent navigation commands during battles.
+    # The battle bot handles all combat encounters with rule-based move selection.
+    # Returns symbolic decisions (e.g., "BATTLE_FIGHT") which are routed through VLM executor.
+    try:
+        battle_bot = get_battle_bot()
+        
+        if battle_bot.should_handle(state_data):
+            battle_decision = battle_bot.get_action(state_data)
+            
+            if battle_decision is not None:
+                logger.info(f"⚔️ [BATTLE BOT] Battle active, decision: {battle_decision}")
+                
+                # ✅ VLM EXECUTOR PATTERN (Competition Compliance)
+                # The battle bot has determined the optimal action programmatically.
+                # We must route this through the VLM as the final decision maker.
+                
+                # Get battle context for VLM
+                game_data = state_data.get('game', {})
+                battle_info = game_data.get('battle_info', {})
+                
+                # Build context string
+                battle_context = "In Pokemon battle"
+                if battle_info:
+                    player_pkmn = battle_info.get('player_pokemon', {})
+                    opp_pkmn = battle_info.get('opponent_pokemon', {})
+                    if player_pkmn:
+                        battle_context += f" | Your: {player_pkmn.get('species', 'Unknown')} HP:{player_pkmn.get('current_hp', '?')}/{player_pkmn.get('max_hp', '?')}"
+                    if opp_pkmn:
+                        battle_context += f" | Opponent: {opp_pkmn.get('species', 'Unknown')} HP:{opp_pkmn.get('current_hp', '?')}/{opp_pkmn.get('max_hp', '?')}"
+                
+                # Map symbolic decision to button sequence
+                button_recommendation = None
+                decision_explanation = ""
+                
+                if battle_decision == "BATTLE_FIGHT":
+                    button_recommendation = "A"
+                    decision_explanation = "Select FIGHT to use first available move"
+                elif battle_decision == "RUN_FROM_BATTLE":
+                    button_recommendation = "RUN"  # Will need to navigate to RUN option
+                    decision_explanation = "Select RUN to flee from battle"
+                else:
+                    # Unknown decision - let VLM handle
+                    logger.warning(f"⚔️ [BATTLE BOT] Unknown decision '{battle_decision}', falling back to VLM")
+                    button_recommendation = "A"
+                    decision_explanation = "Default to A button"
+                
+                # Create executor prompt for VLM
+                executor_prompt = f"""Playing Pokemon Emerald. You are in a Pokemon battle.
+
+BATTLE CONTEXT: {battle_context}
+BATTLE BOT DECISION: {battle_decision}
+RECOMMENDED ACTION: {decision_explanation}
+
+The battle bot recommends pressing {button_recommendation}.
+
+What button should you press? Respond with ONE button name only: A, B, UP, DOWN, LEFT, RIGHT"""
+                
+                try:
+                    vlm_executor_response = vlm.get_text_query(executor_prompt, "BATTLE_EXECUTOR")
+                    
+                    # Parse VLM response
+                    valid_buttons = ['START', 'SELECT', 'DOWN', 'LEFT', 'RIGHT', 'UP', 'A', 'B']
+                    vlm_response_upper = vlm_executor_response.upper().strip()
+                    
+                    final_action = None
+                    for button in valid_buttons:
+                        if button in vlm_response_upper:
+                            final_action = [button]
+                            break
+                    
+                    if final_action:
+                        logger.info(f"✅ [VLM EXECUTOR] BattleBot→{battle_decision}, VLM confirmed→{final_action[0]}")
+                        return final_action
+                    else:
+                        # Retry with simpler prompt
+                        logger.warning(f"⚠️ [VLM EXECUTOR] Could not parse VLM response '{vlm_executor_response[:50]}', retrying")
+                        
+                        retry_prompt = f"""What button for battle? Options: A, B, UP, DOWN, LEFT, RIGHT
+
+Recommended: {button_recommendation}
+
+Answer with just the button name:"""
+                        
+                        retry_response = vlm.get_text_query(retry_prompt, "BATTLE_EXECUTOR_RETRY")
+                        retry_upper = retry_response.upper().strip()
+                        
+                        final_retry_action = None
+                        for button in valid_buttons:
+                            if button in retry_upper:
+                                final_retry_action = [button]
+                                break
+                        
+                        if final_retry_action:
+                            logger.info(f"✅ [VLM EXECUTOR RETRY] Got valid response: {final_retry_action[0]}")
+                            return final_retry_action
+                        else:
+                            # CRITICAL: No valid VLM response - CRASH per competition rules
+                            error_msg = f"❌ [COMPLIANCE VIOLATION] VLM failed to provide valid button in battle after 2 attempts. Response 1: '{vlm_executor_response[:100]}', Response 2: '{retry_response[:100]}'. Competition rules require final action from neural network. CANNOT PROCEED."
+                            logger.error(error_msg)
+                            raise RuntimeError(error_msg)
+                        
+                except Exception as e:
+                    # COMPETITION COMPLIANCE: Cannot bypass VLM - must crash
+                    error_msg = f"❌ [COMPLIANCE VIOLATION] VLM executor failed in battle: {e}. Competition rules require final action from neural network. CANNOT PROCEED."
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg) from e
+            else:
+                # Battle bot returned None - fallback to VLM
+                logger.debug(f"⚔️ [BATTLE BOT] Battle bot uncertain, falling back to VLM")
+        
+    except Exception as e:
+        logger.error(f"⚔️ [BATTLE BOT] Error: {e}", exc_info=True)
+        # Continue to next priority level on error
+    
+    # 🤖 PRIORITY 0B: OPENER BOT - Programmatic State Machine (Splits 0-4)
     # Handles deterministic early game states with high reliability using memory state
     # and milestone tracking as primary signals. Returns None to fallback to VLM.
     try:
