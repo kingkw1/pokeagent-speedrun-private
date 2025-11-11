@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 # Store tuples of (x, y, map_location) for the last 10 positions
 _recent_positions = deque(maxlen=10)
 
+# Track dismissed player monologues to avoid spamming A on them
+_dismissed_monologues = set()
+
 def format_observation_for_action(observation):
     """Format observation data for use in action prompts"""
     if isinstance(observation, dict) and 'visual_data' in observation:
@@ -704,8 +707,10 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     print("🎯 [ACTION_STEP] CALLED - Starting action decision process")
     print("=" * 80)
     
+    # Declare global variables at the start of the function
+    global _recent_positions, _dismissed_monologues
+    
     # Track current position to avoid immediate backtracking through warps
-    global _recent_positions
     try:
         player_data = state_data.get('player', {})
         position = player_data.get('position', {})
@@ -1067,14 +1072,29 @@ Answer with just the button name:"""
     # 🔺 PRIORITY 1A: RED TRIANGLE INDICATOR (MOST RELIABLE)
     # The red triangle ❤️ at end of dialogue is the PERFECT signal for "press A"
     # This is much more reliable than text_box_visible alone
+    # BUT: Must check for player monologue to avoid false positives!
     if isinstance(latest_observation, dict) and 'visual_data' in latest_observation:
         visual_elements = latest_observation.get('visual_data', {}).get('visual_elements', {})
+        on_screen_text = latest_observation.get('visual_data', {}).get('on_screen_text', {})
         continue_prompt_visible = visual_elements.get('continue_prompt_visible', False)
         
         if continue_prompt_visible:
             current_location = state_data.get('player', {}).get('location', '')
             
-            if current_location in DIALOGUE_DETECTION_BLACKLIST:
+            # CRITICAL: Check if this is player monologue before pressing A
+            dialogue_text = on_screen_text.get('dialogue', '')
+            speaker = on_screen_text.get('speaker', '')
+            
+            # Player monologue ONLY detects "Player:" prefix in dialogue text
+            # Do NOT use speaker field - it's unreliable (Mom talking TO Casey shows speaker="CASEY")
+            is_player_monologue = (dialogue_text and dialogue_text.strip().upper().startswith('PLAYER:'))
+            
+            if is_player_monologue:
+                # Player monologues are likely VLM hallucinations - ignore them
+                logger.info(f"🔺 [CONTINUE PROMPT] Player monologue detected - ignoring (likely hallucination)")
+                print(f"⚠️ [DIALOGUE] Player monologue detected - ignoring (likely VLM hallucination)")
+                # Don't return anything, fall through to check other priorities
+            elif current_location in DIALOGUE_DETECTION_BLACKLIST:
                 logger.warning(f"🔺 [CONTINUE PROMPT] Red triangle detected but location '{current_location}' is blacklisted - ignoring")
                 print(f"⚠️ [DIALOGUE] Ignoring continue prompt in {current_location} (known false positive)")
             else:
@@ -1082,11 +1102,10 @@ Answer with just the button name:"""
                 print(f"🔺 [DIALOGUE] Red triangle ❤️ visible, pressing A to continue")
                 return ["A"]
     
-    # 🔺 PRIORITY 1B: FALLBACK - TEXT BOX WITHOUT RED TRIANGLE
-    # If text_box_visible but NO red triangle, wait (text is still scrolling)
-    # Only press A if we're confident dialogue is complete AND waiting for input
-    # NOTE: We could remove this fallback entirely and rely only on red triangle,
-    # but keep it for backwards compatibility with locations that don't show triangle
+    # 🔺 PRIORITY 1B: FALLBACK - TEXT BOX DETECTION
+    # Simple rule: If we see dialogue (text box visible), press A to advance
+    # UNLESS it's player monologue (which we must ignore completely)
+    # The VLM sees the full rendered text, so we can trust it's ready for input
     if visual_dialogue_active:
         current_location = state_data.get('player', {}).get('location', '')
         
@@ -1094,20 +1113,25 @@ Answer with just the button name:"""
             logger.warning(f"💬 [DIALOGUE] VLM detected dialogue but location '{current_location}' is blacklisted - ignoring false positive")
             print(f"⚠️ [DIALOGUE] Ignoring VLM dialogue in {current_location} (known false positive)")
         else:
-            # Check if red triangle is explicitly false (not just missing)
-            visual_elements = latest_observation.get('visual_data', {}).get('visual_elements', {})
-            continue_prompt = visual_elements.get('continue_prompt_visible')
+            # CRITICAL: Check for player monologue BEFORE pressing A
+            visual_data = latest_observation.get('visual_data', {})
+            on_screen_text = visual_data.get('on_screen_text', {})
+            dialogue_text = on_screen_text.get('dialogue', '')
             
-            # Only press A if: triangle is True OR triangle info is missing (backwards compat)
-            if continue_prompt is False:
-                print(f"⏳ [DIALOGUE] Text box visible but no red triangle - waiting for text to finish scrolling")
-                logger.info("[DIALOGUE] Waiting for continue prompt to appear")
-                return None  # Don't press A yet, wait for red triangle
+            # Player monologue ONLY detects "Player:" prefix in dialogue text
+            # Do NOT use speaker field - it's unreliable (Mom talking TO Casey shows speaker="CASEY")
+            is_player_monologue = (dialogue_text and dialogue_text.strip().upper().startswith('PLAYER:'))
             
-            # Triangle info missing - use old behavior as fallback
-            logger.info(f"💬 [DIALOGUE] Text box visible (no triangle info) - pressing A")
-            print(f"💬 [DIALOGUE] VLM visual detection: dialogue box active, pressing A")
-            return ["A"]
+            if is_player_monologue:
+                # Player monologues are likely VLM hallucinations - ignore them
+                logger.info(f"💬 [DIALOGUE 1B] Player monologue detected - ignoring (likely hallucination)")
+                print(f"💬 [DIALOGUE 1B] Player monologue detected - ignoring (likely VLM hallucination)")
+                # Don't return anything, fall through to check other priorities
+            else:
+                # Press A immediately - VLM can see the text is rendered
+                logger.info(f"💬 [DIALOGUE 1B] Dialogue visible - pressing A to advance")
+                print(f"💬 [DIALOGUE] Text box visible, pressing A to advance")
+                return ["A"]
     
     # 🚨 PRIORITY 2: NEW GAME MENU DETECTION
     # Must happen before ANY other logic to prevent override conflicts

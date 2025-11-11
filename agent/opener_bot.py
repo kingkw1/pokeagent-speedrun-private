@@ -59,8 +59,13 @@ import logging
 import time
 from typing import Dict, Any, List, Optional, Callable, Union
 from dataclasses import dataclass
+from collections import deque
 
 logger = logging.getLogger(__name__)
+
+# Global tracker for dismissed player monologues (shared across all functions)
+# This prevents VLM hallucinations from causing infinite loops
+_dismissed_monologues = set()
 
 @dataclass
 class NavigationGoal:
@@ -172,11 +177,57 @@ class OpenerBot:
                    current_plan: str = "") -> Union[List[str], NavigationGoal, None]:
         """
         Main stateful logic loop:
-        1. Get current state
-        2. Check safety fallbacks
-        3. Check if state's transition condition is met (if yes, transition)
-        4. Execute current state's action
+        1. Check for dialogue override (yield to dialogue system)
+        2. Get current state
+        3. Check safety fallbacks
+        4. Check if state's transition condition is met (if yes, transition)
+        5. Execute current state's action
         """
+        # CRITICAL: Check for active NPC dialogue FIRST
+        # If dialogue is active, YIELD to dialogue detection system (Priority 1)
+        # This prevents the opener bot from spamming A during actual NPC conversations
+        visual_elements = visual_data.get('visual_elements', {})
+        on_screen_text = visual_data.get('on_screen_text', {})
+        
+        # Check for REAL dialogue indicators (not player's internal monologue)
+        continue_prompt_visible = visual_elements.get('continue_prompt_visible', False)
+        text_box_visible = visual_elements.get('text_box_visible', False)
+        dialogue_text = on_screen_text.get('dialogue', '')
+        speaker = on_screen_text.get('speaker', '')
+        
+        # Player monologue detection - ONLY check dialogue text prefix
+        # Do NOT use speaker field - unreliable (Mom talking TO Casey shows speaker="CASEY")
+        is_player_monologue = (dialogue_text and dialogue_text.strip().upper().startswith('PLAYER:'))
+        
+        # CLOCK DIALOGUE DETECTION: Special case - don't yield on clock dialogue
+        # The clock needs special handling (UP then A for Yes/No menu)
+        # Let state machine transition to S7_SET_CLOCK which uses action_special_clock
+        dialogue_upper = dialogue_text.upper()
+        is_clock_dialogue = (
+            "THE CLOCK" in dialogue_upper or
+            "SET IT AND START IT" in dialogue_upper or
+            "IS THIS" in dialogue_upper and "CORRECT TIME" in dialogue_upper
+        )
+        
+        # DIALOGUE DETECTION: Yield to dialogue system if we see dialogue (and it's NOT player monologue)
+        # EXCEPTION: Don't yield on clock dialogue - let state machine handle it
+        is_real_dialogue = (continue_prompt_visible or text_box_visible) and not is_player_monologue and not is_clock_dialogue
+        
+        # DEBUG: Always log dialogue detection
+        print(f"🤖 [OPENER BOT DIALOGUE CHECK] text_box={text_box_visible}, continue_prompt={continue_prompt_visible}, player_mono={is_player_monologue}, clock={is_clock_dialogue}, is_real={is_real_dialogue}")
+        if dialogue_text:
+            print(f"🤖 [OPENER BOT DIALOGUE CHECK] Dialogue: '{dialogue_text[:60]}'...")
+        
+        if is_real_dialogue:
+            print(f"🤖 [OPENER BOT] YIELDING to dialogue system (speaker: {speaker}, continue_prompt: {continue_prompt_visible})")
+            logger.info(f"[OPENER BOT] Dialogue active, yielding to Priority 1 dialogue detection")
+            return None  # Let dialogue detection (Priority 1) handle this
+        elif is_player_monologue:
+            print(f"🤖 [OPENER BOT] Player monologue detected - ignoring and continuing with state logic")
+        elif is_clock_dialogue:
+            print(f"🤖 [OPENER BOT] Clock dialogue detected - letting state machine handle it")
+            logger.info(f"[OPENER BOT] Player monologue ignored (likely VLM hallucination)")
+        
         # Debug: Show what data we received
         player_pos = state_data.get('player', {}).get('position', {})
         player_loc = state_data.get('player', {}).get('location', '')
@@ -417,6 +468,18 @@ class OpenerBot:
             dialogue = (v.get('on_screen_text', {}).get('dialogue', '') or '').upper()
             menu_title = (v.get('on_screen_text', {}).get('menu_title', '') or '').upper()
             
+            # CRITICAL: Check if this is player monologue BEFORE pressing A
+            # Player's internal thoughts have "Player:" prefix in dialogue text
+            # Do NOT use speaker field - it's unreliable (Mom talking TO Casey shows speaker="CASEY")
+            dialogue_text = v.get('on_screen_text', {}).get('dialogue', '')
+            is_player_monologue = (dialogue_text and dialogue_text.strip().upper().startswith('PLAYER:'))
+            
+            if is_player_monologue:
+                # Player monologues - don't press A, likely VLM hallucination
+                # Let stuck detection in action_nav handle it if navigation is blocked
+                print("💬 [CLEAR_DIALOGUE] Player monologue detected - ignoring (likely VLM hallucination)")
+                return None
+            
             # Initialize step counter for naming keyboard sequence
             if not hasattr(action_clear_dialogue, '_naming_step'):
                 action_clear_dialogue._naming_step = 0
@@ -472,11 +535,27 @@ class OpenerBot:
             4. Need to press A again to advance past "..." page
             
             This prevents premature transitions while dialogue is still active.
+            
+            CRITICAL: Must check for player monologue to avoid spamming A on internal thoughts!
             """
             screen_context = v.get('screen_context', '').lower()
             text_box_visible = v.get('visual_elements', {}).get('text_box_visible', False)
             continue_prompt_visible = v.get('visual_elements', {}).get('continue_prompt_visible', False)
             game_state = s.get('game', {}).get('game_state', '').lower()
+            
+            # Check for player monologue BEFORE pressing A
+            on_screen_text = v.get('on_screen_text', {})
+            dialogue_text = on_screen_text.get('dialogue', '')
+            
+            # Player monologue ONLY detects "Player:" prefix in dialogue text
+            # Do NOT use speaker field - it's unreliable (Mom talking TO Casey shows speaker="CASEY")
+            is_player_monologue = (dialogue_text and dialogue_text.strip().upper().startswith('PLAYER:'))
+            
+            if is_player_monologue:
+                # Player monologues - don't press A, likely VLM hallucination
+                # Let the state machine transition when dialogue actually clears
+                print(f"💬 [PERSISTENT_DIALOGUE] Player monologue detected - ignoring (likely VLM hallucination)")
+                return None
             
             # Press A if we have visual confirmation OR if game_state says dialogue is active
             # This handles both visible dialogue and hidden pages (like "...")
@@ -576,11 +655,72 @@ class OpenerBot:
             return action_fn
 
         def action_nav(goal: NavigationGoal):
-            """Factory for navigation actions. Clears dialogue or returns NavGoal."""
+            """
+            Factory for navigation actions with stuck detection.
+            
+            Strategy:
+            1. Always attempt navigation first (ignore VLM dialogue reports)
+            2. Track position history to detect being stuck
+            3. Only clear dialogue when stuck AND dialogue is detected in game state
+            4. This prevents reacting to VLM hallucinations while handling real dialogue blocks
+            """
             def nav_fn(s, v):
-                if v.get('visual_elements', {}).get('text_box_visible', False):
-                    return ['A']
+                # Initialize position tracking
+                if not hasattr(nav_fn, '_position_history'):
+                    nav_fn._position_history = deque(maxlen=5)
+                if not hasattr(nav_fn, '_stuck_frames'):
+                    nav_fn._stuck_frames = 0
+                if not hasattr(nav_fn, '_last_navigation_attempt'):
+                    nav_fn._last_navigation_attempt = None
+                
+                # Get current position
+                player_data = s.get('player', {})
+                position = player_data.get('position', {})
+                current_pos = (position.get('x'), position.get('y'), player_data.get('location'))
+                
+                # Track position history
+                nav_fn._position_history.append(current_pos)
+                
+                # Check if stuck (same position for 3+ consecutive frames)
+                is_stuck = False
+                if len(nav_fn._position_history) >= 3:
+                    recent_positions = list(nav_fn._position_history)[-3:]
+                    if all(pos == current_pos for pos in recent_positions):
+                        is_stuck = True
+                        nav_fn._stuck_frames += 1
+                    else:
+                        nav_fn._stuck_frames = 0
+                else:
+                    nav_fn._stuck_frames = 0
+                
+                # If stuck for 3+ frames, diagnose and intervene
+                if is_stuck and nav_fn._stuck_frames >= 3:
+                    # Check if stuck due to dialogue
+                    game_state = s.get('game', {}).get('game_state', '').lower()
+                    visual_elements = v.get('visual_elements', {})
+                    text_box_visible = visual_elements.get('text_box_visible', False)
+                    
+                    # Multiple indicators of dialogue blocking navigation
+                    dialogue_blocking = (
+                        game_state == 'dialog' or 
+                        text_box_visible or
+                        v.get('screen_context', '').lower() == 'dialogue'
+                    )
+                    
+                    if dialogue_blocking:
+                        print(f"🚫 [NAV STUCK] Stuck at {current_pos} for {nav_fn._stuck_frames} frames - dialogue blocking")
+                        print(f"🚫 [NAV STUCK] CANNOT directly press A - competition rules require VLM final decision")
+                        print(f"🚫 [NAV STUCK] Returning None to yield to dialogue system Priority 1")
+                        nav_fn._stuck_frames = 0  # Reset after intervention
+                        return None  # Let Priority 1 dialogue system handle this
+                    else:
+                        # Stuck but not due to dialogue - might be pathfinding issue
+                        # Try the goal anyway, let A* recalculate
+                        print(f"🚫 [NAV STUCK] Stuck at {current_pos} for {nav_fn._stuck_frames} frames - no dialogue detected, continuing with goal")
+                
+                # Not stuck or haven't been stuck long enough - proceed with navigation
                 return goal
+            
             return nav_fn
 
         def action_simple(actions: List[str]):
@@ -849,6 +989,9 @@ class OpenerBot:
             1. Visual indicators (VLM can hallucinate, so check all indicators)
             2. Game memory state (player cannot move while game_state='dialog')
             
+            PLAYER MONOLOGUE HANDLING: If VLM reports "Player: ..." dialogue, this is
+            likely a hallucination. Treat it as NO dialogue for transition purposes.
+            
             ESCAPE MECHANISM: If visuals are clear but game_state is stuck as 'dialog',
             force transition after waiting min_wait_steps to allow action to complete.
             This prevents premature transitions during multi-page dialogues while still
@@ -863,6 +1006,19 @@ class OpenerBot:
                 text_box_visible = v.get('visual_elements', {}).get('text_box_visible', False)
                 continue_prompt_visible = v.get('visual_elements', {}).get('continue_prompt_visible', False)
                 game_state = s.get('game', {}).get('game_state', '')
+                
+                # CRITICAL: Check for player monologue (VLM hallucination)
+                # Player monologue ONLY detects "Player:" prefix in dialogue text
+                dialogue_text = v.get('on_screen_text', {}).get('dialogue', '')
+                is_player_monologue = (dialogue_text and dialogue_text.strip().upper().startswith('PLAYER:'))
+                
+                # If player monologue detected, treat all visual indicators as false (likely hallucination)
+                if is_player_monologue:
+                    print(f"🔍 [TRANS_NO_DIALOGUE] Player monologue detected - treating as no dialogue (likely VLM hallucination)")
+                    text_box_visible = False
+                    continue_prompt_visible = False
+                    if screen_context == 'dialogue':
+                        screen_context = 'overworld'
                 
                 # Transition if dialogue is FULLY cleared:
                 # 1. No visual indicators (text_box, dialogue context, continue prompt)
@@ -1023,13 +1179,33 @@ class OpenerBot:
             """
             Transition when in specific AREA and dialogue appears.
             CRITICAL FIX: Handles "adjacent-interact" bug by checking area, not exact position.
+            ALSO: Ignores player monologue hallucinations - only real NPC dialogue triggers transition.
             """
             def check_fn(s, v):
                 pos = s.get('player', {}).get('position', {})
                 x, y = pos.get('x', -1), pos.get('y', -1)
-                if x in x_range and y in y_range and v.get('visual_elements', {}).get('text_box_visible', False):
-                    return next_state
-                return None
+                
+                # Check if in area
+                in_area = x in x_range and y in y_range
+                if not in_area:
+                    return None
+                
+                # Check for dialogue
+                text_box_visible = v.get('visual_elements', {}).get('text_box_visible', False)
+                if not text_box_visible:
+                    return None
+                
+                # CRITICAL: Ignore player monologue hallucinations
+                dialogue_text = v.get('on_screen_text', {}).get('dialogue', '')
+                is_player_monologue = dialogue_text.strip().upper().startswith('PLAYER:')
+                
+                if is_player_monologue:
+                    print(f"🔍 [TRANS_AREA_DIALOGUE] Player monologue detected - ignoring (likely VLM hallucination)")
+                    return None
+                
+                # Real dialogue in the area - transition!
+                print(f"🔍 [TRANS_AREA_DIALOGUE] In area, real dialogue detected - transitioning to {next_state}")
+                return next_state
             return check_fn
         
         def trans_left_area_or_no_dialogue(x_range: List[int], y_range: List[int], next_state: str) -> Callable:
@@ -1130,7 +1306,7 @@ class OpenerBot:
                 name='S4_MOM_DIALOG_1F',
                 description='Mom dialogue after truck ride (1F) - multi-page dialogue',
                 action_fn=action_clear_dialogue_persistent,  # Use persistent for multi-page dialogue
-                next_state_fn=trans_no_dialogue('S5_NAV_TO_STAIRS_1F', min_wait_steps=3)
+                next_state_fn=trans_no_dialogue('S5_NAV_TO_STAIRS_1F')
             ),
             'S5_NAV_TO_STAIRS_1F': BotState(
                 name='S5_NAV_TO_STAIRS_1F',
@@ -1296,14 +1472,13 @@ class OpenerBot:
         On 1F: Uses waypoint navigation to avoid table obstacle.
         - From mom's position (4,5), go RIGHT to (8,5) to clear the table
         - Then go DOWN to door at (4,7)
+        
+        NOTE: Dialogue clearing is handled by get_action's early return logic.
+        Do NOT clear dialogue here - it bypasses VLM executor and doesn't check for player monologues.
         """
         player_location = state_data.get('player', {}).get('location', '')
         player_pos = state_data.get('player', {}).get('position', {})
         x, y = player_pos.get('x', 0), player_pos.get('y', 0)
-        
-        # Clear any dialogue first
-        if visual_data.get('visual_elements', {}).get('text_box_visible', False):
-            return ['A']
         
         if '2F' in player_location:
             # Phase 1: Navigate to stairs on 2F (walk-on tile at 7, 1)

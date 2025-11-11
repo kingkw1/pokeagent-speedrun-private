@@ -150,6 +150,8 @@ CRITICAL RULES:
 - If you see a red triangle ❤️ at end of dialogue, set continue_prompt_visible = true
 - DO NOT copy prompt text into the JSON - analyze the actual image
 - If no dialogue box, set dialogue = null and text_box_visible = false
+- IMPORTANT: Player's internal thoughts (e.g., "Player: What should I do?") are NOT dialogue boxes - set text_box_visible = false for these
+- Only set text_box_visible = true for NPC dialogue boxes (when an NPC is speaking to you)
 - Return only real observations from THIS image
 
 JSON response:"""
