@@ -15,10 +15,6 @@ logger = logging.getLogger(__name__)
 # Store tuples of (x, y, map_location) for the last 10 positions
 _recent_positions = deque(maxlen=10)
 
-# Global map stitcher instance for A* pathfinding
-# This will be updated from server state data
-_client_map_stitcher = None
-
 def format_observation_for_action(observation):
     """Format observation data for use in action prompts"""
     if isinstance(observation, dict) and 'visual_data' in observation:
