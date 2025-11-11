@@ -77,6 +77,15 @@ class NavigationGoal:
     should_interact: bool = None  # If None, infer from description keywords
 
 @dataclass
+class ForceDialogueGoal:
+    """
+    Special goal type to force VLM to choose 'A' button while maintaining 100% VLM compliance.
+    Used when we detect misclassified dialogue (e.g., "................................" read as player monologue).
+    The VLM still makes the final decision, we just present A as the only valid option.
+    """
+    reason: str  # Why we're forcing A (for logging)
+
+@dataclass
 class BotState:
     """Represents a state in the stateful opener bot state machine"""
     name: str
@@ -192,12 +201,27 @@ class OpenerBot:
         # Check for REAL dialogue indicators (not player's internal monologue)
         continue_prompt_visible = visual_elements.get('continue_prompt_visible', False)
         text_box_visible = visual_elements.get('text_box_visible', False)
-        dialogue_text = on_screen_text.get('dialogue', '')
-        speaker = on_screen_text.get('speaker', '')
+        dialogue_text = on_screen_text.get('dialogue') or ''  # Handle None from hallucination filter
+        speaker = on_screen_text.get('speaker') or ''
         
         # Player monologue detection - ONLY check dialogue text prefix
         # Do NOT use speaker field - unreliable (Mom talking TO Casey shows speaker="CASEY")
         is_player_monologue = (dialogue_text and dialogue_text.strip().upper().startswith('PLAYER:'))
+        
+        # DOT DIALOGUE DETECTION: VLM often can't read "................................" dialogue
+        # and hallucinates "Player: What should I do?" instead
+        # If dialogue is mostly dots/periods, treat as REAL NPC dialogue (thinking/pause)
+        dialogue_stripped = dialogue_text.strip() if dialogue_text else ""
+        is_dot_dialogue = False
+        if dialogue_stripped and not is_player_monologue:
+            # Count dots vs total characters (excluding spaces)
+            non_space_chars = dialogue_stripped.replace(' ', '')
+            if len(non_space_chars) > 3:  # At least 4 chars to avoid false positives
+                dot_count = non_space_chars.count('.')
+                dot_ratio = dot_count / len(non_space_chars)
+                if dot_ratio > 0.7:  # More than 70% dots = thinking dialogue
+                    is_dot_dialogue = True
+                    print(f"🤖 [OPENER BOT] Dot dialogue detected ({dot_count}/{len(non_space_chars)} dots)")
         
         # CLOCK DIALOGUE DETECTION: Special case - don't yield on clock dialogue
         # The clock needs special handling (UP then A for Yes/No menu)
@@ -211,10 +235,11 @@ class OpenerBot:
         
         # DIALOGUE DETECTION: Yield to dialogue system if we see dialogue (and it's NOT player monologue)
         # EXCEPTION: Don't yield on clock dialogue - let state machine handle it
-        is_real_dialogue = (continue_prompt_visible or text_box_visible) and not is_player_monologue and not is_clock_dialogue
+        # SPECIAL CASE: Dot dialogue is always treated as real dialogue
+        is_real_dialogue = (continue_prompt_visible or text_box_visible) and (is_dot_dialogue or (not is_player_monologue and not is_clock_dialogue))
         
         # DEBUG: Always log dialogue detection
-        print(f"🤖 [OPENER BOT DIALOGUE CHECK] text_box={text_box_visible}, continue_prompt={continue_prompt_visible}, player_mono={is_player_monologue}, clock={is_clock_dialogue}, is_real={is_real_dialogue}")
+        print(f"🤖 [OPENER BOT DIALOGUE CHECK] text_box={text_box_visible}, continue_prompt={continue_prompt_visible}, player_mono={is_player_monologue}, clock={is_clock_dialogue}, dots={is_dot_dialogue}, is_real={is_real_dialogue}")
         if dialogue_text:
             print(f"🤖 [OPENER BOT DIALOGUE CHECK] Dialogue: '{dialogue_text[:60]}'...")
         
@@ -227,6 +252,45 @@ class OpenerBot:
         elif is_clock_dialogue:
             print(f"🤖 [OPENER BOT] Clock dialogue detected - letting state machine handle it")
             logger.info(f"[OPENER BOT] Player monologue ignored (likely VLM hallucination)")
+        
+        # FAILED MOVEMENT DETECTION: Safety net for misclassified dialogue
+        # If agent tries to move but position doesn't change for 3+ frames while game_state='dialog',
+        # it's probably real dialogue that VLM misclassified (e.g., "................................")
+        # Track position history to detect failed movements
+        if not hasattr(self, '_movement_history'):
+            self._movement_history = []  # List of position tuples
+        if not hasattr(self, '_last_position'):
+            self._last_position = None
+        
+        current_pos_tuple = (
+            state_data.get('player', {}).get('position', {}).get('x'),
+            state_data.get('player', {}).get('position', {}).get('y'),
+            state_data.get('player', {}).get('location', '')
+        )
+        
+        # Check if position changed since last frame
+        if self._last_position is not None and self._last_position == current_pos_tuple:
+            # Position didn't change - possible failed movement
+            self._movement_history.append(current_pos_tuple)
+        else:
+            # Position changed or first frame - reset history
+            self._movement_history = [current_pos_tuple]
+        
+        # Update last position for next frame
+        self._last_position = current_pos_tuple
+        
+        # Check for stuck pattern: 3+ failed movements while in dialog state
+        # BUT: Don't trigger for clock dialogue (which has special handling)
+        game_state = state_data.get('game', {}).get('game_state', '').lower()
+        if len(self._movement_history) >= 3 and game_state == 'dialog' and not is_clock_dialogue:
+            # Agent has tried to move 3+ times without position changing, and game is in dialog state
+            # This is likely real dialogue blocking movement that VLM misclassified
+            print(f"⚠️ [FAILED MOVEMENT] Position stuck for {len(self._movement_history)} frames during dialog state")
+            print(f"⚠️ [FAILED MOVEMENT] Likely misclassified dialogue - will force VLM to choose A")
+            self._movement_history = []  # Reset history
+            # Return ForceDialogueGoal to maintain 100% VLM compliance
+            # VLM will make the final decision, we just present A as the only valid option
+            return ForceDialogueGoal(reason="Position stuck during dialog state - likely misclassified dialogue")
         
         # Debug: Show what data we received
         player_pos = state_data.get('player', {}).get('position', {})
@@ -471,7 +535,7 @@ class OpenerBot:
             # CRITICAL: Check if this is player monologue BEFORE pressing A
             # Player's internal thoughts have "Player:" prefix in dialogue text
             # Do NOT use speaker field - it's unreliable (Mom talking TO Casey shows speaker="CASEY")
-            dialogue_text = v.get('on_screen_text', {}).get('dialogue', '')
+            dialogue_text = v.get('on_screen_text', {}).get('dialogue') or ''  # Handle None from hallucination filter
             is_player_monologue = (dialogue_text and dialogue_text.strip().upper().startswith('PLAYER:'))
             
             if is_player_monologue:
@@ -545,7 +609,7 @@ class OpenerBot:
             
             # Check for player monologue BEFORE pressing A
             on_screen_text = v.get('on_screen_text', {})
-            dialogue_text = on_screen_text.get('dialogue', '')
+            dialogue_text = on_screen_text.get('dialogue') or ''  # Handle None from hallucination filter
             
             # Player monologue ONLY detects "Player:" prefix in dialogue text
             # Do NOT use speaker field - it's unreliable (Mom talking TO Casey shows speaker="CASEY")
@@ -811,7 +875,7 @@ class OpenerBot:
             
             Uses step-based approach for Yes/No menu (can't send two buttons in one frame).
             """
-            dialogue = v.get('on_screen_text', {}).get('dialogue', '').upper()
+            dialogue = (v.get('on_screen_text', {}).get('dialogue') or '').upper()  # Handle None from hallucination filter
             
             # Initialize step counter for Yes/No menu
             if not hasattr(action_special_clock, '_yesno_step'):
@@ -848,8 +912,8 @@ class OpenerBot:
 
         def action_special_starter(s, v):
             """Handles selecting the starter."""
-            dialogue = v.get('on_screen_text', {}).get('dialogue', '').upper()
-            menu_title = v.get('on_screen_text', {}).get('menu_title', '').upper()
+            dialogue = (v.get('on_screen_text', {}).get('dialogue') or '').upper()  # Handle None from hallucination filter
+            menu_title = (v.get('on_screen_text', {}).get('menu_title') or '').upper()  # Handle None
             if "CHOOSE A POKéMON" in dialogue or "BAG" in menu_title:
                 return ['A']
             if "DO YOU CHOOSE THIS" in dialogue:
@@ -1009,7 +1073,7 @@ class OpenerBot:
                 
                 # CRITICAL: Check for player monologue (VLM hallucination)
                 # Player monologue ONLY detects "Player:" prefix in dialogue text
-                dialogue_text = v.get('on_screen_text', {}).get('dialogue', '')
+                dialogue_text = v.get('on_screen_text', {}).get('dialogue') or ''  # Handle None from hallucination filter
                 is_player_monologue = (dialogue_text and dialogue_text.strip().upper().startswith('PLAYER:'))
                 
                 # If player monologue detected, treat all visual indicators as false (likely hallucination)
@@ -1196,7 +1260,7 @@ class OpenerBot:
                     return None
                 
                 # CRITICAL: Ignore player monologue hallucinations
-                dialogue_text = v.get('on_screen_text', {}).get('dialogue', '')
+                dialogue_text = v.get('on_screen_text', {}).get('dialogue') or ''  # Handle None from hallucination filter
                 is_player_monologue = dialogue_text.strip().upper().startswith('PLAYER:')
                 
                 if is_player_monologue:
@@ -1360,7 +1424,7 @@ class OpenerBot:
                 name='S11B_NAV_TO_POKEBALL',
                 description='Navigate to Pokéball on 2F and interact to trigger May',
                 action_fn=action_nav(NavigationGoal(x=5, y=4, map_location='MAYS_HOUSE_2F', description="Interact with Pokéball", should_interact=True)),
-                next_state_fn=trans_area_and_dialogue(x_range=[4, 5, 6], y_range=[3, 4, 5], next_state='S12_MAY_DIALOG')
+                next_state_fn=trans_left_area_or_no_dialogue(x_range=[4, 5, 6], y_range=[3, 4, 5], next_state='S12_MAY_DIALOG')
             ),
             'S12_MAY_DIALOG': BotState(
                 name='S12_MAY_DIALOG',

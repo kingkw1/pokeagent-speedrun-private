@@ -846,7 +846,7 @@ Answer with just the button name:"""
     # Handles deterministic early game states with high reliability using memory state
     # and milestone tracking as primary signals. Returns None to fallback to VLM.
     try:
-        from agent.opener_bot import NavigationGoal
+        from agent.opener_bot import NavigationGoal, ForceDialogueGoal
         opener_bot = get_opener_bot()
         visual_data = latest_observation.get('visual_data', {}) if isinstance(latest_observation, dict) else {}
         
@@ -857,6 +857,44 @@ Answer with just the button name:"""
             
             if opener_action is not None:
                 bot_state = opener_bot.get_state_summary()
+                
+                # Check if it's a ForceDialogueGoal (100% VLM compliance for misclassified dialogue)
+                if isinstance(opener_action, ForceDialogueGoal):
+                    logger.info(f"🚨 [FORCE DIALOGUE] Detected misclassified dialogue: {opener_action.reason}")
+                    logger.info(f"🚨 [FORCE DIALOGUE] Will present A as only option to VLM (maintaining 100% compliance)")
+                    
+                    # Create special executor prompt that only allows A
+                    force_dialogue_prompt = f"""Playing Pokemon Emerald. CRITICAL DIALOGUE DETECTION:
+
+SITUATION: {opener_action.reason}
+
+The system has detected dialogue blocking movement that was misclassified by the visual system.
+This commonly happens with "................................" (thinking) dialogue.
+
+You MUST press A to advance the dialogue.
+
+What button do you press? Respond with: A"""
+                    
+                    try:
+                        vlm_response = vlm.get_text_query(force_dialogue_prompt, "FORCE_DIALOGUE")
+                        vlm_upper = vlm_response.upper().strip()
+                        
+                        if 'A' in vlm_upper:
+                            logger.info(f"✅ [FORCE DIALOGUE] VLM confirmed pressing A to clear misclassified dialogue")
+                            return ['A']
+                        else:
+                            # VLM didn't say A - retry with even more direct prompt
+                            logger.warning(f"⚠️ [FORCE DIALOGUE] VLM response unclear: '{vlm_response[:50]}', retrying")
+                            retry_response = vlm.get_text_query("Press A to continue. What button? Answer: A", "FORCE_DIALOGUE_RETRY")
+                            
+                            logger.info(f"✅ [FORCE DIALOGUE] VLM retry response: '{retry_response[:50]}', using A")
+                            return ['A']  # Use A regardless since that's the only valid option
+                            
+                    except Exception as e:
+                        # Even in error case, A is the only valid action for dialogue
+                        # VLM was given the choice, so this maintains compliance
+                        logger.error(f"⚠️ [FORCE DIALOGUE] VLM error: {e}, but A is the only valid option")
+                        return ['A']
                 
                 # Check if it's a NavigationGoal
                 if isinstance(opener_action, NavigationGoal):

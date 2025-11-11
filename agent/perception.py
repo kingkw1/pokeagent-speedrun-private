@@ -204,6 +204,38 @@ JSON response:"""
                     logger.info("[PERCEPTION] VLM extraction successful")
                     
                     # ============================================================
+                    # HALLUCINATION FILTERING - Known VLM hallucinations
+                    # ============================================================
+                    # The VLM consistently hallucinates specific phrases that are NOT in the game
+                    # Filter these out immediately before any other processing
+                    KNOWN_HALLUCINATIONS = [
+                        "Player: What should I do?",
+                        "Player: What should I do",
+                        "What should I do?",
+                        "What should I do",
+                    ]
+                    
+                    dialogue = visual_data.get('on_screen_text', {}).get('dialogue', '')
+                    if dialogue and isinstance(dialogue, str):
+                        dialogue_cleaned = dialogue.strip()
+                        for hallucination in KNOWN_HALLUCINATIONS:
+                            if dialogue_cleaned.lower() == hallucination.lower() or \
+                               dialogue_cleaned.lower().startswith(hallucination.lower()):
+                                print(f"🚫 [HALLUCINATION FILTER] Caught VLM hallucination: '{dialogue_cleaned[:60]}'")
+                                print(f"     This is a known false positive - clearing dialogue")
+                                logger.warning(f"[PERCEPTION] Filtered known VLM hallucination: {dialogue_cleaned}")
+                                visual_data['on_screen_text']['dialogue'] = None
+                                visual_data['on_screen_text']['speaker'] = None
+                                # Don't mark as dialogue context if we filtered it out
+                                if visual_data.get('screen_context') == 'dialogue':
+                                    visual_data['screen_context'] = 'overworld'
+                                if 'visual_elements' not in visual_data:
+                                    visual_data['visual_elements'] = {}
+                                visual_data['visual_elements']['text_box_visible'] = False
+                                visual_data['visual_elements']['continue_prompt_visible'] = False
+                                break
+                    
+                    # ============================================================
                     # FALSE POSITIVE FILTERING - HUD/Status text detection
                     # ============================================================
                     # The VLM sometimes mistakes HUD elements (player name, status bars) for dialogue
