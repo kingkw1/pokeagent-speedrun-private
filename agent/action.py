@@ -6,6 +6,7 @@ from collections import deque
 from agent.system_prompt import system_prompt
 from agent.opener_bot import get_opener_bot
 from agent.battle_bot import get_battle_bot
+from agent.planning import planning_step  # Import planning_step to access objective_manager
 from utils.state_formatter import format_state_for_llm, format_state_summary, get_movement_options, get_party_health_summary, format_movement_preview_for_llm
 from utils.vlm import VLM
 
@@ -1358,10 +1359,38 @@ Answer with just the button name:"""
         from agent.planning import planning_step
         from agent.opener_bot import NavigationGoal
         
-        # Get ObjectiveManager instance (created in planning_step)
+        # Get ObjectiveManager instance (created in planning_step function)
+        # Note: objective_manager is attached to the planning_step function itself, not its return value
+        logger.info(f"🔍 [DIRECTIVE DEBUG] hasattr(planning_step, 'objective_manager'): {hasattr(planning_step, 'objective_manager')}")
+        print(f"🔍 [DIRECTIVE DEBUG] hasattr(planning_step, 'objective_manager'): {hasattr(planning_step, 'objective_manager')}")
+        
         if hasattr(planning_step, 'objective_manager'):
             obj_manager = planning_step.objective_manager
+            logger.info(f"🔍 [DIRECTIVE DEBUG] objective_manager exists: {obj_manager}")
+            print(f"🔍 [DIRECTIVE DEBUG] objective_manager exists: {obj_manager}")
+            
+            # Log state data for debugging battle detection
+            player_data = state_data.get('player', {})
+            money = player_data.get('money', 0)
+            in_battle = state_data.get('in_battle', False)
+            screen_context = state_data.get('screen_context', '')
+            player_loc = player_data.get('location', '')
+            
+            # Add visual_dialogue_active to state_data so objective_manager can access it
+            state_data['visual_dialogue_active'] = visual_dialogue_active
+            
+            logger.info(f"🔍 [DIRECTIVE DEBUG] Before get_next_action_directive:")
+            logger.info(f"  - Location: {player_loc}")
+            logger.info(f"  - Money: {money}")
+            logger.info(f"  - In battle: {in_battle}")
+            logger.info(f"  - Screen context: {screen_context}")
+            logger.info(f"  - Visual dialogue active: {visual_dialogue_active}")
+            print(f"🔍 [DIRECTIVE DEBUG] Location: {player_loc}, Money: {money}, In battle: {in_battle}, Screen: {screen_context}, Dialogue: {visual_dialogue_active}")
+            
             directive = obj_manager.get_next_action_directive(state_data)
+            
+            logger.info(f"🔍 [DIRECTIVE DEBUG] Directive returned: {directive}")
+            print(f"🔍 [DIRECTIVE DEBUG] Directive returned: {directive}")
             
             if directive:
                 action_type = directive.get('action')
@@ -1370,6 +1399,11 @@ Answer with just the button name:"""
                 
                 logger.info(f"📍 [DIRECTIVE] Active directive: {description}")
                 print(f"📍 [DIRECTIVE] {description}")
+                
+                # Handle DIALOGUE action - just press A to advance dialogue
+                if action_type == 'DIALOGUE':
+                    logger.info(f"💬 [DIRECTIVE] Advancing dialogue with A button")
+                    return ['A']
                 
                 # Handle NAVIGATE_AND_INTERACT directive (most common)
                 if action_type == 'NAVIGATE_AND_INTERACT' and target:

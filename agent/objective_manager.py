@@ -39,6 +39,10 @@ class ObjectiveManager:
         """Initialize with core storyline objectives"""
         self.objectives: List[Objective] = []
         self._initialize_storyline_objectives()
+        
+        # Track persistent state for events that shouldn't repeat
+        self.rival_battle_completed = False  # Once true, stays true (battle done)
+        
         logger.info(f"ObjectiveManager initialized with {len(self.objectives)} storyline objectives")
     
     def _initialize_storyline_objectives(self):
@@ -265,6 +269,9 @@ class ObjectiveManager:
                 'milestone': 'FIRST_RIVAL_BATTLE'   # Expected milestone after completion
             }
         """
+        logger.info(f"🔍 [OBJECTIVE_MANAGER DEBUG] get_next_action_directive() CALLED")
+        print(f"🔍 [OBJECTIVE_MANAGER] get_next_action_directive() CALLED")
+        
         # First update objectives based on milestones
         self.check_storyline_milestones(state_data)
         
@@ -283,8 +290,44 @@ class ObjectiveManager:
             milestone_data = milestones.get(milestone_id, {})
             return milestone_data.get('completed', False) if isinstance(milestone_data, dict) else False
         
+        # Helper to check if dialogue is active (prevents navigation during dialogue)
+        def is_dialogue_active() -> bool:
+            """Check if dialogue is currently active"""
+            screen_context = state_data.get('screen_context', '')
+            text_box_visible = state_data.get('visual_dialogue_active', False)
+            
+            # Check both screen_context and text_box visibility
+            is_active = (screen_context == 'dialogue' or text_box_visible)
+            
+            if is_active:
+                logger.info(f"🔍 [DIALOGUE CHECK] Dialogue active - screen_context={screen_context}, text_box={text_box_visible}")
+                print(f"💬 [DIALOGUE] Active - waiting for dialogue to finish")
+            
+            return is_active
+        
         # === ROUTE 103: RIVAL BATTLE SEQUENCE ===
-        if is_milestone_complete('ROUTE_103') and not is_milestone_complete('FIRST_RIVAL_BATTLE'):
+        # The ROUTE_103 milestone completes when entering Route 103, not after battle
+        # We use FIRST_RIVAL_BATTLE milestone to track actual battle completion
+        # BUT: The milestone system doesn't auto-set FIRST_RIVAL_BATTLE, so we need manual detection
+        
+        # Detect battle completion: if at rival position (9,3), not in battle = battle done
+        # (Don't check dialogue here - we need to know battle is done even during post-battle dialogue)
+        at_rival_position = (current_x == 9 and current_y == 3 and 'ROUTE 103' in current_location)
+        in_battle = state_data.get('in_battle', False)
+        
+        # Battle is complete if we're at rival position and not in battle
+        battle_complete_manual = at_rival_position and not in_battle
+        
+        # Once battle is detected as complete, set persistent flag (stays true even after leaving position)
+        if battle_complete_manual or is_milestone_complete('FIRST_RIVAL_BATTLE'):
+            self.rival_battle_completed = True
+        
+        rival_battle_complete = self.rival_battle_completed
+        
+        logger.info(f"🔍 [RIVAL BATTLE CHECK] at_rival_pos={at_rival_position}, in_battle={in_battle}, dialogue={is_dialogue_active()}, complete={rival_battle_complete}")
+        print(f"🔍 [RIVAL BATTLE] Position check: at (9,3)={at_rival_position}, battle={in_battle}, dialogue={is_dialogue_active()}, complete={rival_battle_complete}")
+        
+        if is_milestone_complete('ROUTE_103') and not rival_battle_complete:
             # We're on Route 103, need to interact with rival at (9, 3)
             target_x, target_y, target_map = 9, 3, 'ROUTE 103'
             
@@ -307,7 +350,32 @@ class ObjectiveManager:
                 }
         
         # === OLDALE TOWN: POKEMON CENTER HEALING ===
-        if is_milestone_complete('FIRST_RIVAL_BATTLE') and not is_milestone_complete('HEALED_AFTER_RIVAL'):
+        # After rival battle, navigate to Pokemon Center
+        if rival_battle_complete and not is_milestone_complete('HEALED_AFTER_RIVAL'):
+            # CRITICAL: Don't navigate while dialogue is active
+            if is_dialogue_active():
+                logger.info(f"💬 [DIRECTIVE] Dialogue active, pressing A to continue")
+                return {
+                    'action': 'DIALOGUE',
+                    'target': None,
+                    'description': 'Press A to advance dialogue',
+                    'milestone': None
+                }
+            
+            logger.info(f"📍 [DIRECTIVE] Rival battle complete, need to heal at Pokemon Center")
+            
+            # First, need to get to Oldale Town if we're still on Route 103
+            if 'ROUTE 103' in current_location:
+                logger.info(f"📍 [DIRECTIVE] Still on Route 103, navigate south to Oldale Town")
+                # Route 103 exit is at the bottom/south - navigate to approximate exit position
+                # The exit from Route 103 is around (8, 19) based on the map
+                return {
+                    'action': 'NAVIGATE_AND_INTERACT',
+                    'target': (8, 19, 'ROUTE 103'),
+                    'description': 'Leave Route 103 south to return to Oldale Town',
+                    'milestone': None
+                }
+            
             # After rival battle, go to Pokemon Center
             if 'OLDALE TOWN' in current_location and 'POKEMON CENTER' not in current_location:
                 # Outside, need to enter Pokemon Center at (6, 16)
