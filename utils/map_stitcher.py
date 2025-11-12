@@ -199,19 +199,22 @@ class MapStitcher:
                         area.map_data[grid_y][grid_x] = tile
                         
                         # Update explored bounds for all tiles including boundaries
-                        # tile_id 1023 represents trees/walls at map edges - we want to include these
+                        # CRITICAL: Store bounds in WORLD coordinates, not GRID coordinates!
+                        # This ensures A* pathfinding can correctly check if player position is in bounds
                         tile_id = tile[0] if tile and len(tile) > 0 else None
                         if tile_id is not None:  # Include all tiles, even 1023
                             if not hasattr(area, 'explored_bounds'):
+                                # Initialize bounds with WORLD coordinates
                                 area.explored_bounds = {
-                                    'min_x': grid_x, 'max_x': grid_x,
-                                    'min_y': grid_y, 'max_y': grid_y
+                                    'min_x': world_x, 'max_x': world_x,
+                                    'min_y': world_y, 'max_y': world_y
                                 }
                             else:
-                                area.explored_bounds['min_x'] = min(area.explored_bounds['min_x'], grid_x)
-                                area.explored_bounds['max_x'] = max(area.explored_bounds['max_x'], grid_x)
-                                area.explored_bounds['min_y'] = min(area.explored_bounds['min_y'], grid_y)
-                                area.explored_bounds['max_y'] = max(area.explored_bounds['max_y'], grid_y)
+                                # Expand bounds using WORLD coordinates
+                                area.explored_bounds['min_x'] = min(area.explored_bounds['min_x'], world_x)
+                                area.explored_bounds['max_x'] = max(area.explored_bounds['max_x'], world_x)
+                                area.explored_bounds['min_y'] = min(area.explored_bounds['min_y'], world_y)
+                                area.explored_bounds['max_y'] = max(area.explored_bounds['max_y'], world_y)
     
     def get_map_id(self, map_bank: int, map_number: int) -> int:
         """Convert map bank/number to unique ID"""
@@ -704,37 +707,63 @@ class MapStitcher:
         # If we have explored bounds, use them to extract only the explored portion
         if hasattr(map_area, 'explored_bounds'):
             bounds = map_area.explored_bounds
-            for y in range(bounds['min_y'], bounds['max_y'] + 1):
-                for x in range(bounds['min_x'], bounds['max_x'] + 1):
-                    if y < len(map_area.map_data) and x < len(map_area.map_data[0]):
-                        tile = map_area.map_data[y][x]
+            
+            # CRITICAL: Calculate grid offset to convert from world coords to grid coords
+            # The explored_bounds are in WORLD coordinates, but map_data is indexed by GRID coordinates
+            # We need to reverse the transformation: grid_x = world_x + offset_x
+            # So: world_x = grid_x - offset_x, or offset_x = grid_x - world_x
+            # We can get offset from the first explored tile
+            offset_x = None
+            offset_y = None
+            
+            # Find the grid offset by locating the first explored tile
+            for y in range(len(map_area.map_data)):
+                for x in range(len(map_area.map_data[0])):
+                    if map_area.map_data[y][x] is not None:
+                        # Found first tile - calculate offset
+                        # offset_x = grid_x - world_x
+                        # We know grid coords (x, y) and need to find corresponding world coords
+                        # The bounds tell us the min world coords, so we can infer:
+                        offset_x = x - bounds['min_x']
+                        offset_y = y - bounds['min_y']
+                        break
+                if offset_x is not None:
+                    break
+            
+            if offset_x is None or offset_y is None:
+                logger.warning(f"Could not determine grid offset for {location_name}")
+                return {}
+            
+            # Now iterate through world coordinates and convert to grid coordinates
+            for world_y in range(bounds['min_y'], bounds['max_y'] + 1):
+                for world_x in range(bounds['min_x'], bounds['max_x'] + 1):
+                    # Convert world coords to grid coords
+                    grid_x = world_x + offset_x
+                    grid_y = world_y + offset_y
+                    
+                    if grid_y < len(map_area.map_data) and grid_x < len(map_area.map_data[0]):
+                        tile = map_area.map_data[grid_y][grid_x]
                         if tile is not None:  # Only include explored tiles
-                            # Adjust coordinates to be relative to the explored area
-                            rel_x = x - bounds['min_x']
-                            rel_y = y - bounds['min_y']
-                            
                             if simplified:
                                 # Convert to simplified symbol
                                 symbol = self._tile_to_symbol(tile)
                                 if symbol is not None:  # Only add if it's a valid tile
-                                    # Debug specific problematic position
-                                    if rel_x == 2 and rel_y == 1:
-                                        logger.debug(f"Tile at rel(2,1) from grid[{y}][{x}]: {tile[:3] if len(tile) >= 3 else tile} -> symbol '{symbol}'")
-                                    grid[(rel_x, rel_y)] = symbol
+                                    # Use WORLD coordinates as keys (not relative)
+                                    grid[(world_x, world_y)] = symbol
                             else:
-                                grid[(rel_x, rel_y)] = tile
+                                grid[(world_x, world_y)] = tile
             
             # Add '?' for unexplored but adjacent tiles
             if simplified:
                 # Find all positions adjacent to explored walkable tiles
                 to_check = set()
-                for (x, y), symbol in list(grid.items()):
+                for (world_x, world_y), symbol in list(grid.items()):
                     # Only add ? next to truly walkable tiles, not walls
                     if symbol in ['.', 'D', 'S', '^', '~', 's', 'I',  # Walkable terrain
                                   '→', '←', '↑', '↓', '↗', '↖', '↘', '↙']:  # Ledges
                         # Check all 4 adjacent positions (not diagonal)
                         for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-                            adj_pos = (x + dx, y + dy)
+                            adj_pos = (world_x + dx, world_y + dy)
                             if adj_pos not in grid:
                                 to_check.add(adj_pos)
                 

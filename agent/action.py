@@ -639,7 +639,8 @@ def _astar_pathfind_with_grid_data(
     current_pos: Tuple[int, int], 
     location: str,
     goal_direction: str,
-    recent_positions: Optional[deque] = None
+    recent_positions: Optional[deque] = None,
+    goal_coords: Optional[Tuple[int, int]] = None
 ) -> Optional[str]:
     """
     A* pathfinding using map grid data from the server.
@@ -657,6 +658,8 @@ def _astar_pathfind_with_grid_data(
         location: Current location name
         goal_direction: Target direction ('north', 'south', 'east', 'west')
         recent_positions: Deque of recent (x, y, location) tuples for warp avoidance
+        goal_coords: Optional specific goal (x, y) to pathfind to. If provided, pathfinds
+                     directly to this position instead of finding frontier tiles.
     
     Returns:
         First step direction ('UP', 'DOWN', 'LEFT', 'RIGHT') or None if no path
@@ -673,107 +676,127 @@ def _astar_pathfind_with_grid_data(
         # Bounds are already provided as parameter
         current_x, current_y = current_pos
         
-        # Convert absolute coords to relative coords
-        rel_current_x = current_x - bounds['min_x']
-        rel_current_y = current_y - bounds['min_y']
-        rel_current_pos = (rel_current_x, rel_current_y)
-        
-        # Check if current position is in the grid
-        if rel_current_pos not in location_grid:
-            print(f"⚠️ [A* MAP] Current position {current_pos} (rel {rel_current_pos}) not in explored grid")
+        # CRITICAL: Grid keys are now in WORLD coordinates (absolute), not relative!
+        # No need to convert - just check if current position exists in grid directly
+        if current_pos not in location_grid:
+            print(f"⚠️ [A* MAP] Current position {current_pos} not in explored grid")
             print(f"   Bounds: X:{bounds['min_x']}-{bounds['max_x']}, Y:{bounds['min_y']}-{bounds['max_y']}")
+            print(f"   Grid has {len(location_grid)} tiles, sample keys: {list(location_grid.keys())[:5]}")
             return None
         
         print(f"✅ [A* MAP] Using map stitcher grid with {len(location_grid)} explored tiles")
-        print(f"   Absolute pos: {current_pos}, Relative pos: {rel_current_pos}")
+        print(f"   Position: {current_pos} (world coordinates)")
         print(f"   Bounds: X:{bounds['min_x']}-{bounds['max_x']}, Y:{bounds['min_y']}-{bounds['max_y']}")
         
-        # SMART TARGET SELECTION: Find tiles at the edge of exploration (frontier)
-        # These are walkable tiles adjacent to unknown '?' tiles in the goal direction
-        # This ensures we explore toward the goal rather than targeting unreachable extremes
-        
-        def is_frontier_tile(pos: Tuple[int, int], direction: str) -> bool:
-            """Check if a tile is on the frontier (adjacent to unknown in goal direction)"""
-            x, y = pos
-            tile = location_grid.get(pos)
+        # Determine target positions based on whether we have specific goal coordinates
+        if goal_coords:
+            # We have a specific destination - pathfind directly to it
+            goal_x, goal_y = goal_coords
+            print(f"🎯 [A* DIRECT] Pathfinding to specific goal: ({goal_x}, {goal_y})")
             
-            # Must be walkable
-            if tile not in ['.', '_', '~', 'D']:
+            # Check if goal is in the grid and walkable
+            if goal_coords not in location_grid:
+                print(f"⚠️ [A* DIRECT] Goal {goal_coords} not in explored grid")
+                return None
+            
+            goal_tile = location_grid[goal_coords]
+            if goal_tile not in ['.', '_', '~', 'D']:
+                print(f"⚠️ [A* DIRECT] Goal {goal_coords} is not walkable (tile: '{goal_tile}')")
+                return None
+            
+            # Use the goal coordinates as the single target
+            target_positions = [goal_coords]
+            print(f"✅ [A* DIRECT] Goal is walkable, pathfinding to: {goal_coords}")
+        else:
+            # No specific goal - use frontier-based exploration (old behavior)
+            print(f"🎯 [A* FRONTIER] No specific goal, finding frontier tiles in direction '{goal_direction}'")
+            
+            # SMART TARGET SELECTION: Find tiles at the edge of exploration (frontier)
+            # These are walkable tiles adjacent to unknown '?' tiles in the goal direction
+            # This ensures we explore toward the goal rather than targeting unreachable extremes
+            
+            def is_frontier_tile(pos: Tuple[int, int], direction: str) -> bool:
+                """Check if a tile is on the frontier (adjacent to unknown in goal direction)"""
+                x, y = pos
+                tile = location_grid.get(pos)
+                
+                # Must be walkable
+                if tile not in ['.', '_', '~', 'D']:
+                    return False
+                
+                # Check if there's unknown territory in the goal direction
+                if direction in ['north', 'up']:
+                    # Check tiles to the north
+                    for check_y in range(y - 3, y):  # Check 3 tiles north
+                        if (x, check_y) not in location_grid or location_grid.get((x, check_y)) == '?':
+                            return True
+                elif direction in ['south', 'down']:
+                    for check_y in range(y + 1, y + 4):
+                        if (x, check_y) not in location_grid or location_grid.get((x, check_y)) == '?':
+                            return True
+                elif direction in ['east', 'right']:
+                    for check_x in range(x + 1, x + 4):
+                        if (check_x, y) not in location_grid or location_grid.get((check_x, y)) == '?':
+                            return True
+                elif direction in ['west', 'left']:
+                    for check_x in range(x - 3, x):
+                        if (check_x, y) not in location_grid or location_grid.get((check_x, y)) == '?':
+                            return True
+                
                 return False
             
-            # Check if there's unknown territory in the goal direction
-            if direction in ['north', 'up']:
-                # Check tiles to the north
-                for check_y in range(y - 3, y):  # Check 3 tiles north
-                    if (x, check_y) not in location_grid or location_grid.get((x, check_y)) == '?':
-                        return True
-            elif direction in ['south', 'down']:
-                for check_y in range(y + 1, y + 4):
-                    if (x, check_y) not in location_grid or location_grid.get((x, check_y)) == '?':
-                        return True
-            elif direction in ['east', 'right']:
-                for check_x in range(x + 1, x + 4):
-                    if (check_x, y) not in location_grid or location_grid.get((check_x, y)) == '?':
-                        return True
-            elif direction in ['west', 'left']:
-                for check_x in range(x - 3, x):
-                    if (check_x, y) not in location_grid or location_grid.get((check_x, y)) == '?':
-                        return True
+            # Find frontier tiles in the goal direction
+            target_positions = []
+            player_x, player_y = current_pos
             
-            return False
-        
-        # Find frontier tiles in the goal direction
-        target_positions = []
-        player_x, player_y = rel_current_pos
-        
-        for (x, y), tile in location_grid.items():
-            # Only consider walkable tiles
-            if tile not in ['.', '_', '~', 'D']:
-                continue
+            for (x, y), tile in location_grid.items():
+                # Only consider walkable tiles
+                if tile not in ['.', '_', '~', 'D']:
+                    continue
+                
+                # Check if in the goal direction from player
+                is_in_direction = False
+                if goal_direction.lower() in ['north', 'up'] and y < player_y:
+                    is_in_direction = True
+                elif goal_direction.lower() in ['south', 'down'] and y > player_y:
+                    is_in_direction = True
+                elif goal_direction.lower() in ['east', 'right'] and x > player_x:
+                    is_in_direction = True
+                elif goal_direction.lower() in ['west', 'left'] and x < player_x:
+                    is_in_direction = True
+                
+                # If in direction and on frontier, add it
+                if is_in_direction and is_frontier_tile((x, y), goal_direction):
+                    distance = abs(x - player_x) + abs(y - player_y)
+                    target_positions.append((distance, x, y))
             
-            # Check if in the goal direction from player
-            is_in_direction = False
-            if goal_direction.lower() in ['north', 'up'] and y < player_y:
-                is_in_direction = True
-            elif goal_direction.lower() in ['south', 'down'] and y > player_y:
-                is_in_direction = True
-            elif goal_direction.lower() in ['east', 'right'] and x > player_x:
-                is_in_direction = True
-            elif goal_direction.lower() in ['west', 'left'] and x < player_x:
-                is_in_direction = True
-            
-            # If in direction and on frontier, add it
-            if is_in_direction and is_frontier_tile((x, y), goal_direction):
-                distance = abs(x - player_x) + abs(y - player_y)
-                target_positions.append((distance, x, y))
-        
-        # Sort by distance and take closest frontier tiles
-        if target_positions:
-            target_positions.sort()
-            # Keep tiles within reasonable distance
-            max_distance = min(15, target_positions[0][0] + 10) if target_positions else 15
-            target_positions = [(x, y) for dist, x, y in target_positions if dist <= max_distance]
-            print(f"🎯 [A* FRONTIER] Found {len(target_positions)} frontier tiles in direction '{goal_direction}'")
-            print(f"   Targeting exploration edge (tiles adjacent to unknown)")
-        else:
-            # Fallback: No frontier found, target extreme edge (old behavior)
-            print(f"⚠️ [A* FRONTIER] No frontier tiles found, using extreme edge as fallback")
-            if goal_direction.lower() in ['north', 'up']:
-                min_y = min(y for x, y in location_grid.keys())
-                target_positions = [(x, y) for x, y in location_grid.keys() 
-                                  if y == min_y and location_grid[(x, y)] in ['.', '_', '~']]
-            elif goal_direction.lower() in ['south', 'down']:
-                max_y = max(y for x, y in location_grid.keys())
-                target_positions = [(x, y) for x, y in location_grid.keys() 
-                                  if y == max_y and location_grid[(x, y)] in ['.', '_', '~']]
-            elif goal_direction.lower() in ['east', 'right']:
-                max_x = max(x for x, y in location_grid.keys())
-                target_positions = [(x, y) for x, y in location_grid.keys() 
-                                  if x == max_x and location_grid[(x, y)] in ['.', '_', '~']]
-            elif goal_direction.lower() in ['west', 'left']:
-                min_x = min(x for x, y in location_grid.keys())
-                target_positions = [(x, y) for x, y in location_grid.keys() 
-                                  if x == min_x and location_grid[(x, y)] in ['.', '_', '~']]
+            # Sort by distance and take closest frontier tiles
+            if target_positions:
+                target_positions.sort()
+                # Keep tiles within reasonable distance
+                max_distance = min(15, target_positions[0][0] + 10) if target_positions else 15
+                target_positions = [(x, y) for dist, x, y in target_positions if dist <= max_distance]
+                print(f"🎯 [A* FRONTIER] Found {len(target_positions)} frontier tiles in direction '{goal_direction}'")
+                print(f"   Targeting exploration edge (tiles adjacent to unknown)")
+            else:
+                # Fallback: No frontier found, target extreme edge (old behavior)
+                print(f"⚠️ [A* FRONTIER] No frontier tiles found, using extreme edge as fallback")
+                if goal_direction.lower() in ['north', 'up']:
+                    min_y = min(y for x, y in location_grid.keys())
+                    target_positions = [(x, y) for x, y in location_grid.keys() 
+                                      if y == min_y and location_grid[(x, y)] in ['.', '_', '~']]
+                elif goal_direction.lower() in ['south', 'down']:
+                    max_y = max(y for x, y in location_grid.keys())
+                    target_positions = [(x, y) for x, y in location_grid.keys() 
+                                      if y == max_y and location_grid[(x, y)] in ['.', '_', '~']]
+                elif goal_direction.lower() in ['east', 'right']:
+                    max_x = max(x for x, y in location_grid.keys())
+                    target_positions = [(x, y) for x, y in location_grid.keys() 
+                                      if x == max_x and location_grid[(x, y)] in ['.', '_', '~']]
+                elif goal_direction.lower() in ['west', 'left']:
+                    min_x = min(x for x, y in location_grid.keys())
+                    target_positions = [(x, y) for x, y in location_grid.keys() 
+                                      if x == min_x and location_grid[(x, y)] in ['.', '_', '~']]
         
         if not target_positions:
             print(f"⚠️ [A* MAP] No valid target positions in direction '{goal_direction}'")
@@ -849,7 +872,7 @@ def _astar_pathfind_with_grid_data(
             return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
         
         # Find closest target to minimize search space
-        closest_target = min(target_positions, key=lambda t: manhattan_distance(rel_current_pos, t))
+        closest_target = min(target_positions, key=lambda t: manhattan_distance(current_pos, t))
         
         # Priority queue: (f_score, g_score, position, path)
         # f_score = g_score + heuristic
@@ -857,7 +880,7 @@ def _astar_pathfind_with_grid_data(
         # TODO: Add training mode parameter that sets avoid_grass=False
         #       This will make the agent SEEK grass tiles to level up Pokemon
         #       Example: astar_pathfind(..., training_mode=True)
-        start = rel_current_pos
+        start = current_pos
         pq = [(manhattan_distance(start, closest_target), 0, start, [])]
         visited = {start}
         
@@ -1018,6 +1041,17 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
                     decision_explanation = "Advance battle intro dialogue"
                     logger.info("💬 [BATTLE BOT] Advancing battle dialogue with A")
                     return ["A"]
+                
+                elif battle_decision == "RECOVER_FROM_RUN_FAILURE":
+                    # We tried to run from a trainer battle! 
+                    # Press A to dismiss "No! There's no running from a TRAINER BATTLE!" message
+                    # Then return to the fight menu to attack
+                    logger.info("⚠️ [BATTLE BOT ERROR RECOVERY] Dismissing 'no running' message and returning to fight")
+                    print("⚠️ [BATTLE BOT] RECOVERY: A to dismiss → UP → LEFT → A to fight")
+                    # A to dismiss the message
+                    # Then we'll be back at the base menu, so navigate to FIGHT
+                    # UP → LEFT → A to select FIGHT option
+                    return ["B", "B", "UP", "LEFT", "A"]  # Just dismiss the message first, next step will select FIGHT
                 
                 elif battle_decision == "SELECT_RUN":
                     # Navigate to RUN from base menu
@@ -1525,23 +1559,44 @@ Answer with just the button name:"""
                                     dx = goal_x - current_x
                                     dy = goal_y - current_y
                                     
+                                    print(f"🎯 [NAV DEBUG] Current: ({current_x}, {current_y}), Goal: ({goal_x}, {goal_y})")
+                                    print(f"🎯 [NAV DEBUG] Delta: dx={dx}, dy={dy}")
+                                    
                                     # Map to cardinal direction for A* function
                                     if abs(dy) > abs(dx):
                                         goal_direction = 'south' if dy > 0 else 'north'
                                     else:
                                         goal_direction = 'east' if dx > 0 else 'west'
                                     
-                                    logger.info(f"📍 [DIRECTIVE NAV] Using A* with goal_direction={goal_direction}, dx={dx}, dy={dy}")
+                                    print(f"🎯 [NAV DEBUG] Goal direction: {goal_direction}")
                                     
-                                    # Call A* pathfinding with direction
-                                    pathfind_action = _astar_pathfind_with_grid_data(
-                                        location_grid=location_grid,
-                                        bounds=bounds,  # Pass bounds dict directly
-                                        current_pos=(current_x, current_y),  # Use world coords
-                                        location=current_map,
-                                        goal_direction=goal_direction,
-                                        recent_positions=_recent_positions
-                                    )
+                                    # Check if goal coordinates are in the explored grid
+                                    goal_in_grid = (goal_x, goal_y) in location_grid
+                                    print(f"🎯 [NAV DEBUG] Goal ({goal_x}, {goal_y}) in explored grid: {goal_in_grid}")
+                                    
+                                    if goal_in_grid:
+                                        # Goal is explored - pathfind directly to it
+                                        logger.info(f"📍 [DIRECTIVE NAV] Goal in grid, pathfinding directly to ({goal_x}, {goal_y})")
+                                        pathfind_action = _astar_pathfind_with_grid_data(
+                                            location_grid=location_grid,
+                                            bounds=bounds,
+                                            current_pos=(current_x, current_y),
+                                            location=current_map,
+                                            goal_direction=goal_direction,
+                                            recent_positions=_recent_positions,
+                                            goal_coords=(goal_x, goal_y)  # Pass actual goal coordinates
+                                        )
+                                    else:
+                                        # Goal is unexplored - use frontier-based exploration
+                                        logger.info(f"📍 [DIRECTIVE NAV] Goal not in grid, using frontier exploration with direction={goal_direction}")
+                                        pathfind_action = _astar_pathfind_with_grid_data(
+                                            location_grid=location_grid,
+                                            bounds=bounds,
+                                            current_pos=(current_x, current_y),
+                                            location=current_map,
+                                            goal_direction=goal_direction,
+                                            recent_positions=_recent_positions
+                                        )
                                     
                                     if pathfind_action:
                                         logger.info(f"📍 [DIRECTIVE NAV] A* recommends: {pathfind_action}")

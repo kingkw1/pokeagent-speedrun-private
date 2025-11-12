@@ -964,36 +964,65 @@ async def get_comprehensive_state():
                         grid_serializable[f"{x},{y}"] = tile
                 
                 # Get explored bounds and origin offset for coordinate conversion
+                # CRITICAL: Match by current map ID, not just location name!
+                # Multiple areas can have the same name - we need the CURRENT one
                 bounds = None
                 origin_offset = None
                 player_grid_pos = None
                 matching_area = None
                 
-                for area in map_stitcher.map_areas.values():
-                    if area.location_name and area.location_name.lower() == current_location.lower():
-                        matching_area = area
-                        if hasattr(area, 'explored_bounds'):
-                            bounds = area.explored_bounds
-                            logger.info(f"🗺️ [SERVER A*] Found bounds for {current_location}: {bounds}")
-                        else:
-                            logger.warning(f"⚠️ [SERVER A*] Area {current_location} has no explored_bounds")
-                        
-                        # Get origin offset for coordinate translation
-                        if hasattr(area, 'origin_offset'):
-                            origin_offset = area.origin_offset
-                            # Calculate player's grid position
-                            if player_coords:
-                                player_grid_pos = (
-                                    player_coords[0] + origin_offset['x'],
-                                    player_coords[1] + origin_offset['y']
-                                )
-                                logger.info(f"🗺️ [SERVER A*] Origin offset: {origin_offset}")
-                                logger.info(f"🗺️ [SERVER A*] Player local pos: {player_coords}")
-                                logger.info(f"🗺️ [SERVER A*] Player grid pos: {player_grid_pos}")
-                        break
+                # Get current map ID to ensure we match the right area
+                current_map_bank = env.memory_reader._read_u8(env.memory_reader.addresses.MAP_BANK)
+                current_map_number = env.memory_reader._read_u8(env.memory_reader.addresses.MAP_NUMBER)
+                current_map_id = (current_map_bank << 8) | current_map_number
+                
+                print(f"🗺️ [SERVER A* BOUNDS] Looking for area with map_id={current_map_id:04X} ({current_location})")
+                print(f"🗺️ [SERVER A* BOUNDS] Map stitcher has {len(map_stitcher.map_areas)} areas")
+                print(f"🗺️ [SERVER A* BOUNDS] Available map IDs: {[f'{mid:04X}' for mid in sorted(map_stitcher.map_areas.keys())]}")
+                logger.info(f"🗺️ [SERVER A*] Looking for area with map_id={current_map_id:04X} ({current_location})")
+                
+                # First try to match by map ID (most reliable)
+                if current_map_id in map_stitcher.map_areas:
+                    matching_area = map_stitcher.map_areas[current_map_id]
+                    print(f"✅ [SERVER A* BOUNDS] Found area by map ID {current_map_id:04X}: {matching_area.location_name}")
+                    logger.info(f"✅ [SERVER A*] Found area by map ID {current_map_id:04X}: {matching_area.location_name}")
+                    
+                    if hasattr(matching_area, 'explored_bounds'):
+                        bounds = matching_area.explored_bounds
+                        print(f"✅ [SERVER A* BOUNDS] Area has explored_bounds: {bounds}")
+                        logger.info(f"🗺️ [SERVER A*] Found bounds: {bounds}")
+                    else:
+                        print(f"⚠️ [SERVER A* BOUNDS] Area has NO explored_bounds attribute!")
+                        logger.warning(f"⚠️ [SERVER A*] Area has no explored_bounds")
+                    
+                    # Get origin offset for coordinate translation
+                    if hasattr(matching_area, 'origin_offset'):
+                        origin_offset = matching_area.origin_offset
+                        # Calculate player's grid position
+                        if player_coords:
+                            player_grid_pos = (
+                                player_coords[0] + origin_offset['x'],
+                                player_coords[1] + origin_offset['y']
+                            )
+                            logger.info(f"🗺️ [SERVER A*] Origin offset: {origin_offset}")
+                            logger.info(f"🗺️ [SERVER A*] Player local pos: {player_coords}")
+                            logger.info(f"🗺️ [SERVER A*] Player grid pos: {player_grid_pos}")
+                else:
+                    # Fallback: match by location name (less reliable but better than nothing)
+                    logger.warning(f"⚠️ [SERVER A*] Map ID {current_map_id:04X} not in map_areas, falling back to name match")
+                    for area in map_stitcher.map_areas.values():
+                        if area.location_name and area.location_name.lower() == current_location.lower():
+                            matching_area = area
+                            if hasattr(area, 'explored_bounds'):
+                                bounds = area.explored_bounds
+                                logger.info(f"🗺️ [SERVER A*] Found bounds by name for {current_location}: {bounds}")
+                            break
                 
                 if bounds is None:
+                    print(f"❌ [SERVER A* BOUNDS] No bounds found for {current_location} (map_id={current_map_id:04X})")
                     logger.warning(f"⚠️ [SERVER A*] No matching area found for {current_location}")
+                else:
+                    print(f"✅ [SERVER A* BOUNDS] Final bounds for {current_location}: {bounds}")
                 
                 logger.info(f"🗺️ [SERVER A*] Sending grid with {len(grid_serializable)} tiles, bounds={bounds}")
                 

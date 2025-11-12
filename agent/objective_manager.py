@@ -444,13 +444,13 @@ class ObjectiveManager:
             # First, need to get to Oldale Town if we're still on Route 103
             if 'ROUTE 103' in current_location:
                 logger.info(f"📍 [DIRECTIVE] Still on Route 103, navigate south to Oldale Town")
-                # Route 103 exit is at the bottom/south - there are ledges at (8, 19)
-                # The ledge will automatically transition to Oldale Town when walked over
-                # Use NAVIGATE instead of NAVIGATE_AND_INTERACT (no need to press A on ledge)
+                # Route 103 exit portal is at (10, 22) - south from rival battle position
+                # The portal will automatically transition to Oldale Town when walked over
+                # Use NAVIGATE instead of NAVIGATE_AND_INTERACT (no need to press A on portal)
                 return {
                     'action': 'NAVIGATE',
-                    'target': (8, 19, 'ROUTE 103'),
-                    'description': 'Walk south over ledge to return to Oldale Town',
+                    'target': (10, 22, 'ROUTE 103'),
+                    'description': 'Walk south to Oldale Town portal at bottom of Route 103',
                     'milestone': None
                 }
             

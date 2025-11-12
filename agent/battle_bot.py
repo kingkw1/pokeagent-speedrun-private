@@ -178,9 +178,10 @@ class BattleBot:
         
         # Trainer battle indicators in dialogue
         trainer_keywords = [
-            "trainer",           # "Trainer sent out"
+            "trainer",           # "Trainer sent out" or "Trainer may sent out"
             "being a trainer",   # "I'll give you a taste of what being a TRAINER is like"
-            "sent out",          # Trainers "send out" Pokemon
+            "sent out",          # Trainers "send out" Pokemon (e.g., "Trainer may sent out Torchic!")
+            "no running from",   # "No! There's no running from a TRAINER BATTLE!"
         ]
         
         wild_keywords = [
@@ -190,6 +191,13 @@ class BattleBot:
         
         has_trainer_keywords = any(keyword in all_dialogue for keyword in trainer_keywords)
         has_wild_keywords = any(keyword in all_dialogue for keyword in wild_keywords)
+        
+        # CRITICAL: If we see "no running from", this overrides everything - it's a TRAINER battle
+        if "no running from" in all_dialogue:
+            self._current_battle_type = BattleType.TRAINER
+            logger.info(f"⚠️ [BATTLE TYPE] CORRECTED: Detected 'no running from' - this is a TRAINER BATTLE!")
+            print(f"⚠️ [BATTLE TYPE] CORRECTED: This is a TRAINER BATTLE (caught run attempt)")
+            return BattleType.TRAINER
         
         # Log what we're checking
         if dialogue_text:
@@ -363,6 +371,21 @@ class BattleBot:
             logger.info(f"🔍 [BATTLE BOT DEBUG] Battle type: {self._current_battle_type.name}, Menu state: {menu_state}")
             print(f"🔍 [BATTLE BOT] Type={self._current_battle_type.name}, Menu={menu_state}")
             
+            # CRITICAL: Check for "no running from a trainer" message (recovery from misdetection)
+            latest_observation = state_data.get('latest_observation', {})
+            visual_data = latest_observation.get('visual_data', {})
+            on_screen_text = visual_data.get('on_screen_text', {})
+            dialogue_text = on_screen_text.get('raw_dialogue', '') or on_screen_text.get('dialogue', '')
+            dialogue_lower = dialogue_text.lower() if dialogue_text else ''
+
+            if "no! there's" in dialogue_lower:
+                # We tried to run from a trainer battle! Correct the battle type
+                logger.warning("⚠️ [BATTLE BOT ERROR RECOVERY] Detected 'no running from' message - correcting to TRAINER battle")
+                print("⚠️ [BATTLE BOT] ERROR RECOVERY: This is a TRAINER battle, switching to fight mode!")
+                self._current_battle_type = BattleType.TRAINER
+                # Need to dismiss this message first, then we'll fight
+                return "RECOVER_FROM_RUN_FAILURE"
+            
             # If in dialogue, advance it
             if menu_state == "dialogue":
                 logger.info("💬 [BATTLE BOT] In battle dialogue - pressing A to advance")
@@ -372,11 +395,6 @@ class BattleBot:
             # WILD BATTLE STRATEGY: Keep trying to run
             if self._current_battle_type == BattleType.WILD:
                 # Check if we got the "Couldn't get away!" message
-                latest_observation = state_data.get('latest_observation', {})
-                visual_data = latest_observation.get('visual_data', {})
-                on_screen_text = visual_data.get('on_screen_text', {})
-                dialogue_text = on_screen_text.get('raw_dialogue', '') or on_screen_text.get('dialogue', '')
-                dialogue_lower = dialogue_text.lower() if dialogue_text else ''
                 
                 if "couldn't get" in dialogue_lower or "can't escape" in dialogue_lower:
                     self._run_attempts += 1
