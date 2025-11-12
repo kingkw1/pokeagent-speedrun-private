@@ -16,7 +16,7 @@ III. SPLIT 03 - Defeat rival and talk to Birch
     
 4. Navigate from Route 103 to Oldale to Littleroot Town
     - NAVIGATE: to Birch Lab (7,16, Littleroot Town)
-    - DIALOG: Complete automatic dialog with Birch 
+    - DIALOG: With Birch 
     - MILESTONE: RECEIVED_POKEDEX
     - NAVIGATE: out of Birch lab (6,13, BIRCH LAB)
 
