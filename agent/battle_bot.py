@@ -56,6 +56,7 @@ class BattleBot:
         self._current_battle_type = BattleType.UNKNOWN
         self._battle_started = False
         self._run_nav_step = 0  # Track position in RUN navigation sequence
+        self._dialogue_history = []  # Track recent dialogue to detect trainer battles
         logger.info("🥊 [BATTLE BOT] Initialized with wild/trainer differentiation")
     
     def should_handle(self, state_data: Dict[str, Any]) -> bool:
@@ -85,6 +86,7 @@ class BattleBot:
             self._battle_started = False
             self._current_battle_type = BattleType.UNKNOWN
             self._run_nav_step = 0  # Reset navigation sequence
+            self._dialogue_history = []  # Clear dialogue history for next battle
         
         return in_battle
     
@@ -92,12 +94,10 @@ class BattleBot:
         """
         Detect whether this is a wild or trainer battle.
         
-        IMPORTANT: Battle type flags are only valid after battle initialization completes.
-        We must wait for battle_phase >= 2 (action_selection) before reading flags.
-        
-        The game state provides battle_type_flags which includes:
-        - is_trainer_battle: True if trainer battle, False if wild
-        - is_wild_battle: True if wild battle, False if trainer
+        Uses multiple detection methods:
+        1. Dialogue patterns: "Trainer sent out" vs "Wild X appeared"
+        2. Pre-battle dialogue: Trainer challenges contain "TRAINER" keyword
+        3. Memory flags: battle_type_flags (unreliable during early phases)
         
         Args:
             state_data: Current game state
@@ -112,39 +112,87 @@ class BattleBot:
             logger.warning("⚠️ [BATTLE TYPE] No battle_info - cannot detect")
             return BattleType.UNKNOWN
         
-        # Check battle phase - flags are only valid after initialization
+        # METHOD 1: Check dialogue text for trainer battle indicators
+        latest_observation = state_data.get('latest_observation', {})
+        visual_data = latest_observation.get('visual_data', {})
+        on_screen_text = visual_data.get('on_screen_text', {})
+        dialogue_text = on_screen_text.get('raw_dialogue', '') or on_screen_text.get('dialogue', '')
+        
+        # Add to dialogue history (keep last 5 messages)
+        if dialogue_text and dialogue_text not in self._dialogue_history:
+            self._dialogue_history.append(dialogue_text)
+            if len(self._dialogue_history) > 5:
+                self._dialogue_history.pop(0)
+        
+        # Check BOTH current dialogue and dialogue history for battle type patterns
+        # This catches "Wild POOCHYENA appeared!" immediately when it appears
+        dialogue_combined = ' '.join(self._dialogue_history).lower()
+        current_dialogue_lower = dialogue_text.lower() if dialogue_text else ''
+        
+        # Combine current + history for comprehensive check
+        all_dialogue = (current_dialogue_lower + ' ' + dialogue_combined).strip()
+        
+        # Trainer battle indicators in dialogue
+        trainer_keywords = [
+            "trainer",           # "Trainer sent out"
+            "being a trainer",   # "I'll give you a taste of what being a TRAINER is like"
+            "sent out",          # Trainers "send out" Pokemon
+        ]
+        
+        wild_keywords = [
+            "wild",              # "Wild POOCHYENA appeared"
+            "appeared",          # Wild Pokemon "appear"
+        ]
+        
+        has_trainer_keywords = any(keyword in all_dialogue for keyword in trainer_keywords)
+        has_wild_keywords = any(keyword in all_dialogue for keyword in wild_keywords)
+        
+        # Log what we're checking
+        if dialogue_text:
+            logger.info(f"🔍 [BATTLE TYPE] Checking dialogue: current='{dialogue_text[:80]}', combined='{all_dialogue[:100]}'")
+        
+        if has_trainer_keywords and not has_wild_keywords:
+            self._current_battle_type = BattleType.TRAINER
+            logger.info(f"✅ [BATTLE TYPE] TRAINER BATTLE detected via dialogue: '{dialogue_combined[:100]}'")
+            print(f"⚔️ [BATTLE TYPE] TRAINER BATTLE - Fighting to win! (detected from dialogue)")
+            return BattleType.TRAINER
+        elif has_wild_keywords and not has_trainer_keywords:
+            self._current_battle_type = BattleType.WILD
+            logger.info(f"✅ [BATTLE TYPE] WILD BATTLE detected via dialogue: '{dialogue_combined[:100]}'")
+            print(f"🏃 [BATTLE TYPE] WILD BATTLE - Will run away! (detected from dialogue)")
+            return BattleType.WILD
+        
+        # METHOD 2: Check battle phase and memory flags (fallback)
         battle_phase = battle_info.get('battle_phase', 0)
         battle_phase_name = battle_info.get('battle_phase_name', 'unknown')
         
-        # CRITICAL: Battle type flags are unreliable during initialization phase
-        # Wait for action_selection phase (2) or later
-        if battle_phase < 2:
-            logger.info(f"⏳ [BATTLE TYPE] Battle phase {battle_phase} ({battle_phase_name}) - waiting for action_selection")
-            print(f"⏳ [BATTLE TYPE] Phase {battle_phase_name} - flags not ready yet")
-            return BattleType.UNKNOWN
-        
-        # Check battle type flags from memory reader
-        battle_type_flags = battle_info.get('battle_type_flags', 0)
-        is_trainer = battle_info.get('is_trainer_battle', False)
-        is_wild = battle_info.get('is_wild_battle', False)
-        
-        logger.info(f"🔍 [BATTLE TYPE DETECTION] Phase: {battle_phase_name}, Flags: 0x{battle_type_flags:04X}, Trainer: {is_trainer}, Wild: {is_wild}")
-        print(f"🔍 [BATTLE TYPE] Phase: {battle_phase_name}, Flags: 0x{battle_type_flags:04X}, Trainer: {is_trainer}, Wild: {is_wild}")
-        
-        if is_trainer:
-            self._current_battle_type = BattleType.TRAINER
-            logger.info(f"✅ [BATTLE TYPE] TRAINER BATTLE detected - will fight to win")
-            print(f"⚔️ [BATTLE TYPE] TRAINER BATTLE - Fighting to win!")
-        elif is_wild:
-            self._current_battle_type = BattleType.WILD
-            logger.info(f"✅ [BATTLE TYPE] WILD BATTLE detected - will attempt to run")
-            print(f"🏃 [BATTLE TYPE] WILD BATTLE - Will run away!")
+        # Battle type flags are only valid after initialization
+        if battle_phase >= 2:
+            battle_type_flags = battle_info.get('battle_type_flags', 0)
+            is_trainer = battle_info.get('is_trainer_battle', False)
+            is_wild = battle_info.get('is_wild_battle', False)
+            
+            logger.info(f"🔍 [BATTLE TYPE DETECTION] Phase: {battle_phase_name}, Flags: 0x{battle_type_flags:04X}, Trainer: {is_trainer}, Wild: {is_wild}")
+            print(f"🔍 [BATTLE TYPE] Phase: {battle_phase_name}, Flags: 0x{battle_type_flags:04X}, Trainer: {is_trainer}, Wild: {is_wild}")
+            
+            if is_trainer:
+                self._current_battle_type = BattleType.TRAINER
+                logger.info(f"✅ [BATTLE TYPE] TRAINER BATTLE detected via memory flags")
+                print(f"⚔️ [BATTLE TYPE] TRAINER BATTLE - Fighting to win!")
+                return BattleType.TRAINER
+            elif is_wild:
+                self._current_battle_type = BattleType.WILD
+                logger.info(f"✅ [BATTLE TYPE] WILD BATTLE detected via memory flags")
+                print(f"🏃 [BATTLE TYPE] WILD BATTLE - Will run away!")
+                return BattleType.WILD
         else:
-            self._current_battle_type = BattleType.UNKNOWN
-            logger.warning(f"⚠️ [BATTLE TYPE] UNKNOWN battle type (flags=0x{battle_type_flags:04X}) - defaulting to FIGHT")
-            print(f"❓ [BATTLE TYPE] UNKNOWN (flags=0x{battle_type_flags:04X}) - Defaulting to fight")
+            logger.info(f"⏳ [BATTLE TYPE] Battle phase {battle_phase} ({battle_phase_name}) - waiting for flags or dialogue")
+            print(f"⏳ [BATTLE TYPE] Phase {battle_phase_name} - waiting for detection")
         
-        return self._current_battle_type
+        # Still unknown
+        self._current_battle_type = BattleType.UNKNOWN
+        logger.warning(f"⚠️ [BATTLE TYPE] Could not determine battle type yet")
+        return BattleType.UNKNOWN
     
     def get_action(self, state_data: Dict[str, Any]) -> Optional[str]:
         """
