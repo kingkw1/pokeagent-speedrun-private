@@ -218,6 +218,12 @@ class Agent:
                 # Store current location for next iteration
                 self.context['previous_location'] = current_location
                 
+                # CRITICAL FIX: Update milestones EVERY step (not just when replanning)
+                # This ensures battle state transitions are tracked even when location unchanged
+                if hasattr(planning_step, 'objective_manager'):
+                    planning_step.objective_manager.check_storyline_milestones(state_data)
+                    logger.debug("[AGENT] Updated storyline milestones for state tracking")
+                
                 # Only call planning_step if replanning is needed
                 if should_replan:
                     logger.info("[PLANNING] Executing planning step...")

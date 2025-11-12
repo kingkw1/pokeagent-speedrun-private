@@ -52,7 +52,8 @@ class ObjectiveManager:
             'location': None,
         }
         
-        logger.info(f"ObjectiveManager initialized with {len(self.objectives)} storyline objectives")
+        logger.info(f"🏗️ [OBJECT LIFECYCLE] ObjectiveManager.__init__() called - created new instance with {len(self.objectives)} storyline objectives")
+        print(f"🏗️ [OBJECT LIFECYCLE] ObjectiveManager.__init__() called - NEW INSTANCE CREATED")
     
     def _initialize_storyline_objectives(self):
         """Initialize the main storyline objectives for Pokémon Emerald progression"""
@@ -209,7 +210,10 @@ class ObjectiveManager:
         return [obj for obj in self.objectives if obj.completed]
     
     def check_storyline_milestones(self, state_data: Dict[str, Any]) -> List[str]:
-        """Check emulator milestones and auto-complete corresponding storyline objectives"""
+        """
+        Check emulator milestones and auto-complete corresponding storyline objectives.
+        Also tracks state transitions for manual goal completion detection.
+        """
         completed_ids = []
         
         # Get milestones from the game state (if available)
@@ -239,6 +243,46 @@ class ObjectiveManager:
                     obj.progress_notes = f"Auto-completed by emulator milestone: {obj.milestone_id}"
                     completed_ids.append(obj.id)
                     logger.info(f"✅ Auto-completed storyline objective via milestone {obj.milestone_id}: {obj.description}")
+        
+        # CRITICAL FIX: Track state transitions for manual goal detection
+        # This must happen here because check_storyline_milestones() is called every step
+        # via planning → get_current_strategic_objective. get_next_action_directive() is
+        # only called when battle_bot releases control, so it misses the transition.
+        game_data = state_data.get('game', {})
+        in_battle = game_data.get('in_battle', False)
+        was_in_battle = self._previous_state.get('in_battle', False)
+        
+        # DEBUG: Log every state check
+        logger.info(f"🔍 [STATE TRACKING] in_battle={in_battle}, was_in_battle={was_in_battle}")
+        print(f"🔍 [STATE TRACKING] in_battle={in_battle}, was_in_battle={was_in_battle}")
+        
+        # Detect rival battle completion: was in battle at rival position → now not in battle
+        if was_in_battle and not in_battle:
+            player_data = state_data.get('player', {})
+            position = player_data.get('position', {})
+            current_x = position.get('x', 0)
+            current_y = position.get('y', 0)
+            current_location = player_data.get('location', '').upper()
+            at_rival_position = (current_x == 9 and current_y == 3 and 'ROUTE 103' in current_location)
+            
+            logger.info(f"🔍 [TRANSITION DETECTED] Battle ended! at_rival_position={at_rival_position}, x={current_x}, y={current_y}, loc={current_location}")
+            print(f"🔍 [TRANSITION DETECTED] Battle ended! at_rival_position={at_rival_position}")
+            
+            if at_rival_position and not self.is_goal_complete('ROUTE_103_RIVAL_BATTLE'):
+                self.mark_goal_complete('ROUTE_103_RIVAL_BATTLE', 'Defeated rival May on Route 103')
+                logger.info(f"✅ [BATTLE COMPLETION] Detected rival battle completion via state transition")
+                print(f"✅ [GOAL COMPLETE] ROUTE_103_RIVAL_BATTLE")
+        
+        # Update previous state for next iteration
+        old_in_battle = self._previous_state.get('in_battle', False)
+        self._previous_state['in_battle'] = in_battle
+        self._previous_state['location'] = state_data.get('player', {}).get('location', '').upper()
+        
+        if old_in_battle != in_battle:
+            logger.info(f"🔄 [STATE CHANGE] Battle state changed: {old_in_battle} -> {in_battle}")
+            print(f"🔄 [STATE CHANGE] Battle state: {old_in_battle} -> {in_battle}")
+        
+        logger.debug(f"🔍 [STATE UPDATE] Updated _previous_state: in_battle={in_battle}")
         
         return completed_ids
     
@@ -334,26 +378,18 @@ class ObjectiveManager:
         # === ROUTE 103: RIVAL BATTLE SEQUENCE ===
         # The ROUTE_103 milestone completes when entering Route 103, not after battle
         # We use FIRST_RIVAL_BATTLE milestone to track actual battle completion
-        # BUT: The milestone system doesn't auto-set FIRST_RIVAL_BATTLE, so we need manual detection
+        # State transition tracking (was_in_battle → not in_battle) now happens in
+        # check_storyline_milestones() which is called every step via planning
         
         # Get current battle state
         at_rival_position = (current_x == 9 and current_y == 3 and 'ROUTE 103' in current_location)
-        in_battle = state_data.get('in_battle', False)
-        
-        # Get previous battle state
-        was_in_battle = self._previous_state.get('in_battle', False)
-        
-        # Detect battle completion: was in battle at rival position → now not in battle
-        if was_in_battle and not in_battle and at_rival_position:
-            self.mark_goal_complete('ROUTE_103_RIVAL_BATTLE', 'Defeated rival May on Route 103')
+        game_data = state_data.get('game', {})
+        in_battle = game_data.get('in_battle', False)
+        was_in_battle = self._previous_state.get('in_battle', False)  # For logging only
         
         # Check if battle is complete (either via our detection or milestone)
         rival_battle_complete = self.is_goal_complete('ROUTE_103_RIVAL_BATTLE') or \
                                is_milestone_complete('FIRST_RIVAL_BATTLE')
-        
-        # UPDATE previous state AFTER checking (for next iteration)
-        self._previous_state['in_battle'] = in_battle
-        self._previous_state['location'] = current_location
         
         logger.info(f"🔍 [RIVAL BATTLE] at (9,3)={at_rival_position}, in_battle={in_battle}, was_in_battle={was_in_battle}, complete={rival_battle_complete}")
         print(f"🔍 [RIVAL BATTLE] Check: at (9,3)={at_rival_position}, in_battle={in_battle}, was_in_battle={was_in_battle}, complete={rival_battle_complete}")

@@ -979,6 +979,9 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         battle_bot = get_battle_bot()
         
         if battle_bot.should_handle(state_data):
+            print(f"⚔️ [PRIORITY] BATTLE_BOT is handling (objective_manager will NOT be consulted)")
+            logger.info(f"⚔️ [PRIORITY] BATTLE_BOT is handling")
+            
             # Add latest_observation to state_data so battle_bot can access dialogue text
             state_data['latest_observation'] = latest_observation
             

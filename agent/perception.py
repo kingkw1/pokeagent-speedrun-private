@@ -204,6 +204,20 @@ JSON response:"""
                     logger.info("[PERCEPTION] VLM extraction successful")
                     
                     # ============================================================
+                    # FIX MALFORMED on_screen_text - Sometimes VLM returns string instead of dict
+                    # ============================================================
+                    on_screen_text = visual_data.get('on_screen_text', {})
+                    if isinstance(on_screen_text, str):
+                        # VLM returned a string instead of a dict - convert it
+                        logger.warning(f"[PERCEPTION] VLM returned on_screen_text as string: '{on_screen_text[:60]}'")
+                        print(f"⚠️ [PERCEPTION] Fixing malformed on_screen_text (was string, expected dict)")
+                        visual_data['on_screen_text'] = {
+                            'dialogue': on_screen_text,
+                            'speaker': None,
+                            'menu_title': None
+                        }
+                    
+                    # ============================================================
                     # SAVE RAW DIALOGUE - Before hallucination filtering
                     # ============================================================
                     # Battle bot needs access to unfiltered dialogue to detect "What will POKEMON do?"

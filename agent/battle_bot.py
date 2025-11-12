@@ -57,38 +57,82 @@ class BattleBot:
         self._battle_started = False
         self._run_attempts = 0  # Track how many times we've tried to run (escape can fail)
         self._dialogue_history = []  # Track recent dialogue to detect trainer battles
+        self._post_battle_dialogue = False  # Track if we're in post-battle dialogue
         logger.info("🥊 [BATTLE BOT] Initialized with wild/trainer differentiation")
     
     def should_handle(self, state_data: Dict[str, Any]) -> bool:
         """
         Determines if the battle bot should be active.
         
+        Returns True if:
+        - Currently in battle, OR
+        - In post-battle dialogue (battle just ended but dialogue still showing)
+        
         Args:
             state_data: Current game state
             
         Returns:
-            True if in battle, False otherwise
+            True if should handle, False otherwise
         """
         game_data = state_data.get('game', {})
         in_battle = game_data.get('in_battle', False)
         
+        # Check if we're in post-battle dialogue
+        latest_observation = state_data.get('latest_observation', {})
+        visual_data = latest_observation.get('visual_data', {})
+        on_screen_text = visual_data.get('on_screen_text', {})
+        dialogue_text = on_screen_text.get('raw_dialogue', '') or on_screen_text.get('dialogue', '')
+        dialogue_lower = dialogue_text.lower() if dialogue_text else ''
+        
+        post_battle_indicators = [
+            "fainted",        # "Foe TORCHIC fainted!"
+            "gained",         # "TREECKO gained 69 EXP Points!"
+            "grew to",        # "TREECKO grew to LV. 6!"
+            "learned",        # "TREECKO learned ABSORB!"
+            "defeated",       # "Player defeated TRAINER MAY!"
+            "got 300",        # "CASEY got 300 for winning!"
+            "got away",       # "Got away safely!"
+        ]
+        
+        is_post_battle_dialogue = any(indicator in dialogue_lower for indicator in post_battle_indicators)
+        
         if in_battle and not self._battle_started:
             # New battle started
             self._battle_started = True
+            self._post_battle_dialogue = False
             battle_type = self._detect_battle_type(state_data)
             if battle_type != BattleType.UNKNOWN:
                 logger.info(f"🥊 [BATTLE BOT] New battle detected - Type: {battle_type.value}")
             else:
                 logger.info(f"🥊 [BATTLE BOT] New battle detected - Type not yet determined (early phase)")
         elif not in_battle and self._battle_started:
-            # Battle ended - reset state
-            logger.info(f"🥊 [BATTLE BOT] Battle ended - Type was: {self._current_battle_type.value}, Run attempts: {self._run_attempts}")
+            # Battle flag cleared but we might still be in post-battle dialogue
+            if is_post_battle_dialogue:
+                self._post_battle_dialogue = True
+                logger.info(f"🥊 [BATTLE BOT] Battle ended, now in post-battle dialogue")
+            else:
+                # Fully out of battle
+                logger.info(f"🥊 [BATTLE BOT] Battle completely done - Type was: {self._current_battle_type.value}, Run attempts: {self._run_attempts}")
+                self._battle_started = False
+                self._post_battle_dialogue = False
+                self._current_battle_type = BattleType.UNKNOWN
+                self._run_attempts = 0
+                self._dialogue_history = []
+        elif self._post_battle_dialogue and not is_post_battle_dialogue:
+            # Post-battle dialogue finished
+            logger.info(f"🥊 [BATTLE BOT] Post-battle dialogue finished, releasing control")
             self._battle_started = False
+            self._post_battle_dialogue = False
             self._current_battle_type = BattleType.UNKNOWN
-            self._run_attempts = 0  # Reset run attempts
-            self._dialogue_history = []  # Clear dialogue history for next battle
+            self._run_attempts = 0
+            self._dialogue_history = []
         
-        return in_battle
+        # Handle if in battle OR in post-battle dialogue
+        should_handle = in_battle or self._post_battle_dialogue
+        if should_handle and not in_battle and self._post_battle_dialogue:
+            logger.info(f"🥊 [BATTLE BOT] Handling post-battle dialogue")
+        
+        return should_handle
     
     def _detect_battle_type(self, state_data: Dict[str, Any]) -> BattleType:
         """
@@ -196,24 +240,35 @@ class BattleBot:
     
     def _detect_battle_menu_state(self, state_data: Dict[str, Any]) -> str:
         """
-        Detect which battle menu/state we're currently in.
+        Detect which battle menu/state we're in.
         
         Returns:
-            - "dialogue" - In battle intro/outro dialogue (press A to advance)
-            - "base_menu" - Main battle menu (FIGHT, BAG, POKEMON, RUN)
-            - "fight_menu" - Fight submenu (showing moves with PP)
-            - "bag_menu" - Bag submenu (showing items)
-            - "unknown" - Cannot determine
+            - "dialogue": In battle dialogue (need to press A)
+            - "base_menu": At main battle menu (FIGHT/BAG/POKEMON/RUN)
+            - "fight_menu": In move selection
+            - "bag_menu": In bag menu
+            - "unknown": Cannot determine
         """
+        # Extract dialogue text from latest_observation (where VLM perception puts it)
         latest_observation = state_data.get('latest_observation', {})
         visual_data = latest_observation.get('visual_data', {})
         on_screen_text = visual_data.get('on_screen_text', {})
         
-        # Get dialogue text (use raw_dialogue to avoid hallucination filter)
+        # Safely get dialogue text
         dialogue_text = on_screen_text.get('raw_dialogue', '') or on_screen_text.get('dialogue', '')
         dialogue_lower = dialogue_text.lower() if dialogue_text else ''
         
-        # Check for dialogue indicators
+        # Get battle phase info
+        game_data = state_data.get('game', {})
+        battle_info = game_data.get('battle_info', {})
+        battle_phase = battle_info.get('battle_phase', 0)
+        battle_phase_name = battle_info.get('battle_phase_name', 'unknown')
+        
+        # DEBUG: Log what we're checking
+        logger.debug(f"🔍 [MENU DETECT] dialogue_text='{dialogue_text[:50] if dialogue_text else 'EMPTY'}...', phase={battle_phase}, phase_name={battle_phase_name}")
+        print(f"🔍 [MENU DETECT] dialogue='{dialogue_text[:30] if dialogue_text else 'EMPTY'}', phase={battle_phase}, name={battle_phase_name}")
+        
+        # Check for dialogue indicators (battle intro/outro, move effects, etc.)
         dialogue_indicators = [
             "wild",           # "Wild POOCHYENA appeared!"
             "appeared",       # Wild Pokemon appear
@@ -234,7 +289,6 @@ class BattleBot:
             return "dialogue"
         
         # Check for fight menu (move selection with PP displayed)
-        # Treecko's moves: POUND, LEER (early game)
         if ("pp" in dialogue_lower or "type/" in dialogue_lower) and \
            ("pound" in dialogue_lower or "leer" in dialogue_lower or "absorb" in dialogue_lower):
             logger.info(f"🔍 [MENU STATE] FIGHT_MENU detected: '{dialogue_text[:60]}'")
@@ -250,8 +304,19 @@ class BattleBot:
             logger.info(f"🔍 [MENU STATE] BAG_MENU detected: '{dialogue_text[:60]}'")
             return "bag_menu"
         
+        # ENHANCED FALLBACK: If battle phase >= 3 and no dialogue, assume base menu
+        # This handles cases where VLM doesn't return the "What will X do?" text
+        if battle_phase >= 3 and not dialogue_text:
+            logger.info(f"🔍 [MENU STATE] BASE_MENU (fallback) - Phase {battle_phase}, no dialogue")
+            return "base_menu"
+        
+        # Check battle phase name for action selection
+        if battle_phase_name and 'action' in battle_phase_name.lower():
+            logger.info(f"🔍 [MENU STATE] BASE_MENU detected via phase name: {battle_phase_name}")
+            return "base_menu"
+        
         # Unknown state
-        logger.info(f"🔍 [MENU STATE] UNKNOWN: '{dialogue_text[:60]}'")
+        logger.info(f"🔍 [MENU STATE] UNKNOWN: dialogue='{dialogue_text[:60]}', phase={battle_phase_name}")
         return "unknown"
     
     def get_action(self, state_data: Dict[str, Any]) -> Optional[str]:
@@ -268,6 +333,14 @@ class BattleBot:
         try:
             game_data = state_data.get('game', {})
             battle_info = game_data.get('battle_info', {})
+            in_battle = game_data.get('in_battle', False)
+            
+            # If we're in post-battle dialogue (not in_battle but should_handle returned True),
+            # just advance dialogue
+            if not in_battle and self._post_battle_dialogue:
+                logger.info("💬 [BATTLE BOT] Post-battle dialogue - pressing A to advance")
+                print("💬 [BATTLE BOT] Advancing post-battle dialogue")
+                return "ADVANCE_BATTLE_DIALOGUE"
             
             if not battle_info:
                 logger.warning("⚠️ [BATTLE BOT] No battle_info in state - cannot decide")
@@ -285,6 +358,10 @@ class BattleBot:
             
             # Detect which menu/state we're in
             menu_state = self._detect_battle_menu_state(state_data)
+            
+            # DEBUG: Log what we detected
+            logger.info(f"🔍 [BATTLE BOT DEBUG] Battle type: {self._current_battle_type.name}, Menu state: {menu_state}")
+            print(f"🔍 [BATTLE BOT] Type={self._current_battle_type.name}, Menu={menu_state}")
             
             # If in dialogue, advance it
             if menu_state == "dialogue":
