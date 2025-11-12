@@ -2,37 +2,35 @@ To reach and defeat the first Gym Leader (Roxanne) in Pokémon Emerald and recei
 
 ### Required Steps to Obtain Stone Badge
 
-(From Split 03)
-
-3. Battle your Rival (9,3) on Route 103 
+III. SPLIT 03 - Defeat rival and talk to Birch
+3. Travel from Littleroot Town to Oldale to Route 103 (9,3, route 103)
+    - Battle your Rival (9,3, ROUTE 103) on Route 103 
     - OPTIONAL: heal at poke center.
     - Go north to Route 103 and defeat May/Brendan in your first rival battle. This is necessary to progress.
     - RECOMMENDED: heal at poke center after
-    - RECOMMENDED: buy potions at mart (door at 14,9 OLDALE TOWN) -> (interact with clerk at 2,3)
     - auto dialog with may on way south to birch
 
-4. Navigate to Birch Lab (7,16, LittleRootTown)
-    - Talk to Birch (Auto)
-    - Receive the Pokédex and Poké Balls
+4. Navigate from Route 103 to Oldale to Littleroot Town
+    - Navigate to Birch Lab (7,16, Littleroot Town)
+    - Complete automatic dialog with Birch 
     - Navigate out of Birch lab (6,13)
 
-IV. SPLIT 04
-5. Navigate north (10,9) & auto-dialog with mom
-    - Receive Running Shoes and proceed west
-    - Get Running Shoes from Mom to allow faster movement. (RUNNING SHOES DON'T HELP WITH AGENT/EMULATOR)
-
-5b. Prep to leave OLDALE TOWN
+IV. SPLIT 04 - Travel to Petalburg City, Talk to Dad, and Help Wally
+    - Navigate north (10,9 LittleRoot Town) & auto-dialog with mom
+    - Continue to Petalburg city
+    
+5a. Prep to leave OLDALE TOWN
     - OPTIONAL: Buy potions 
     - OPTIONAL: Enter pokecenter & heal
 
 6. Travel to Petalburg City via Route 102
     - Travel through Route 102 westward, entering Petalburg City.
     - MANDATORY Battle at (33,15, ROUTE102)
-    - OPTIONAL BATTLE at (25, 14, ROUTE102)
-    - OPTIONAL BATTLE AT (19, 7, ROUTE102)
+    - RECOMMENDED BATTLE at (25, 14, ROUTE102)
+    - RECOMMENDED BATTLE AT (19, 7, ROUTE102)
     - OPTIONAL ITEM - PECHA BERRIES AT (25, 2, ROUTE102) -- cures poison
     - OPTIONAL ITEM - ORAN BERRIES AT (25, 2, ROUTE102) -- heals 10hp
-    - OPTIONAL BATTLE at (8, 8, ROUTE102) -- AVOID due to shroomish causing sleep and Treecko struggling with him
+    - SKIP BATTLE at (8, 8, ROUTE102) -- AVOID due to shroomish causing sleep and Treecko struggling with him
 
 6b. Prepare to leave Petalburg
     - OPTIONAL: Buy potions
@@ -40,7 +38,7 @@ IV. SPLIT 04
    
 7. Assist Wally in catching a Pokémon
     - Enter Petalburg Gym (15, 8 PETALBURG CITY)
-    - Talk to dad (15, 9, PETALBURG CITY GYM)
+    - Interact with dad (15, 9, PETALBURG CITY GYM) <-- SHOULD THIS BE (4,107)?>
     - Wally tutorial cinematic -- spam A or wait until dialog opens again and press A
     - Leave gym (4, 112)
 
@@ -52,8 +50,6 @@ V. SPLIT 05 - 8. Proceed to Rustboro City via Route 104 (WEST) and Petalburg Woo
     - OPTIONAL BATTLE AT (11, 43, ROUTE103) -- ANNOYING DUE TO FULL RESTORE
 
 8b. PETALBURG WOODS -> ROUTE 104 NORTH
-    - Head west on Route 104, pass through Petalburg Woods (defeat Team Aqua grunt attacking the Devon researcher).
-    - NOTE: Mudkip can win at lvl 7 -- heavy luck
     - MANDATORY BATTLE AT (9, 32, PETALBURG WOODS)
     - MANDATORY DIALOG & BATTLE AT (26, 23, PETALBURG WOODS)
     - MANDATORY BATTLE AT (7, 14, PETALBURG WOODS)
@@ -70,7 +66,7 @@ VI. SPLIT 06 - Enter Gym and defeat roxanne
     - OPTIONAL heal at pokecenter (16, 38, Rustboro city -> counter at 7, 3)  This really is necessary.
 
 10. RUSTBORO CITY GYM
-    - MANDATORY: Interact with roxanne at (5, 2 RUSTBORO CITY GYM)
+    - Interact with roxanne at (5, 2 RUSTBORO CITY GYM) -- STA
     - NOTE: all trainers can be skipped
     - NOTE: Mudkip can win at lvl 13 -- heavy luck.
     - NOTE: Treecko can beat roxanne starting fight at 12, but needs 10+ PP for absorbs(?)
