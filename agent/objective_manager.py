@@ -249,6 +249,138 @@ class ObjectiveManager:
         
         return None
     
+    def get_next_action_directive(self, state_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Get specific action directive based on current milestone state.
+        Returns a dict with action type and target details, or None if no specific directive.
+        
+        This is the "Quick Win" implementation that provides detailed sub-goals
+        without requiring a full script refactor.
+        
+        Returns:
+            {
+                'action': 'NAVIGATE_AND_INTERACT',  # or 'NAVIGATE', 'BATTLE', etc.
+                'target': (x, y, 'MAP_NAME'),       # Coordinate target
+                'description': 'Walk to rival and press A',  # Human-readable
+                'milestone': 'FIRST_RIVAL_BATTLE'   # Expected milestone after completion
+            }
+        """
+        # First update objectives based on milestones
+        self.check_storyline_milestones(state_data)
+        
+        # Get current position
+        player_data = state_data.get('player', {})
+        position = player_data.get('position', {})
+        current_x = position.get('x', 0)
+        current_y = position.get('y', 0)
+        current_location = player_data.get('location', '').upper()
+        
+        # Get milestone states
+        milestones = state_data.get('milestones', {})
+        
+        # Helper to check if milestone is complete
+        def is_milestone_complete(milestone_id: str) -> bool:
+            milestone_data = milestones.get(milestone_id, {})
+            return milestone_data.get('completed', False) if isinstance(milestone_data, dict) else False
+        
+        # === ROUTE 103: RIVAL BATTLE SEQUENCE ===
+        if is_milestone_complete('ROUTE_103') and not is_milestone_complete('FIRST_RIVAL_BATTLE'):
+            # We're on Route 103, need to interact with rival at (9, 3)
+            target_x, target_y, target_map = 9, 3, 'ROUTE 103'
+            
+            # Check if we're at the target
+            if current_x == target_x and current_y == target_y and target_map in current_location:
+                logger.info(f"📍 [DIRECTIVE] At rival position, ready to interact")
+                return {
+                    'action': 'INTERACT',
+                    'target': (target_x, target_y, target_map),
+                    'description': 'Press A to interact with rival and start battle',
+                    'milestone': 'FIRST_RIVAL_BATTLE'
+                }
+            else:
+                logger.info(f"📍 [DIRECTIVE] Navigate to rival at ({target_x}, {target_y})")
+                return {
+                    'action': 'NAVIGATE_AND_INTERACT',
+                    'target': (target_x, target_y, target_map),
+                    'description': 'Walk to rival at Route 103 and press A to battle',
+                    'milestone': 'FIRST_RIVAL_BATTLE'
+                }
+        
+        # === OLDALE TOWN: POKEMON CENTER HEALING ===
+        if is_milestone_complete('FIRST_RIVAL_BATTLE') and not is_milestone_complete('HEALED_AFTER_RIVAL'):
+            # After rival battle, go to Pokemon Center
+            if 'OLDALE TOWN' in current_location and 'POKEMON CENTER' not in current_location:
+                # Outside, need to enter Pokemon Center at (6, 16)
+                return {
+                    'action': 'NAVIGATE_AND_INTERACT',
+                    'target': (6, 16, 'OLDALE TOWN'),
+                    'description': 'Enter Oldale Pokemon Center to heal',
+                    'milestone': None  # No milestone for entering
+                }
+            elif 'POKEMON CENTER 1F' in current_location:
+                # Inside Pokemon Center, interact with Nurse Joy at (7, 3)
+                target_x, target_y = 7, 3
+                if current_x == target_x and current_y == target_y:
+                    return {
+                        'action': 'INTERACT',
+                        'target': (target_x, target_y, 'OLDALE TOWN POKEMON CENTER 1F'),
+                        'description': 'Talk to Nurse Joy to heal Pokemon',
+                        'milestone': 'HEALED_AFTER_RIVAL'
+                    }
+                else:
+                    return {
+                        'action': 'NAVIGATE_AND_INTERACT',
+                        'target': (target_x, target_y, 'OLDALE TOWN POKEMON CENTER 1F'),
+                        'description': 'Walk to Nurse Joy and press A',
+                        'milestone': 'HEALED_AFTER_RIVAL'
+                    }
+        
+        # === RETURN TO BIRCH LAB ===
+        if is_milestone_complete('HEALED_AFTER_RIVAL') and not is_milestone_complete('RECEIVED_POKEDEX'):
+            # Need to return to Littleroot Town and talk to Birch
+            if 'LITTLEROOT TOWN' in current_location and 'LAB' not in current_location:
+                # Navigate to Birch's Lab entrance at (7, 16)
+                return {
+                    'action': 'NAVIGATE_AND_INTERACT',
+                    'target': (7, 16, 'LITTLEROOT TOWN'),
+                    'description': 'Enter Birch Lab to receive Pokedex',
+                    'milestone': None
+                }
+            elif 'BIRCHS LAB' in current_location or 'BIRCH LAB' in current_location:
+                # Inside lab - dialogue will auto-trigger, just need to be present
+                # This milestone completes via dialogue
+                return {
+                    'action': 'WAIT_FOR_DIALOGUE',
+                    'target': None,
+                    'description': 'Wait for Birch to give Pokedex (auto-dialogue)',
+                    'milestone': 'RECEIVED_POKEDEX'
+                }
+        
+        # === ROUTE 102 TRAINERS ===
+        if is_milestone_complete('ROUTE_102') and not is_milestone_complete('ROUTE_102_CLEARED'):
+            # Battle trainers on Route 102
+            # Trainer positions from gameplay script: (33,15), (25,14), (19,7)
+            trainer_positions = [
+                (33, 15, 'ROUTE 102', 'Trainer 1'),
+                (25, 14, 'ROUTE 102', 'Trainer 2'),
+                (19, 7, 'ROUTE 102', 'Trainer 3')
+            ]
+            
+            if 'ROUTE 102' in current_location or 'ROUTE102' in current_location:
+                # Check which trainers we've already battled (would need battle tracking)
+                # For now, just navigate to first trainer position
+                target_x, target_y, target_map, trainer_name = trainer_positions[0]
+                return {
+                    'action': 'NAVIGATE_TO_BATTLE',
+                    'target': (target_x, target_y, target_map),
+                    'description': f'Navigate to {trainer_name} for battle',
+                    'milestone': None  # Intermediate battles don't have milestones
+                }
+        
+        # No specific directive - return None to let VLM handle it
+        logger.debug(f"📍 [DIRECTIVE] No specific directive for current state")
+        return None
+    
     def get_objectives_summary(self) -> Dict[str, Any]:
         """Get a summary of objectives for debugging/monitoring"""
         active = self.get_active_objectives()

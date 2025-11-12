@@ -1095,6 +1095,197 @@ Answer with just the button name:"""
         logger.error(f"🤖 [OPENER BOT] Error: {e}", exc_info=True)
         # Continue to VLM logic on error
     
+    # 📍 PRIORITY 0C: OBJECTIVE MANAGER DIRECTIVES (PATH 1 QUICK WIN)
+    # This is the "directive system" that provides specific tactical instructions
+    # based on milestone progression. Acts as a bridge between high-level objectives
+    # and low-level navigation/interaction commands.
+    #
+    # WHY THIS EXISTS:
+    # - Problem: Agent reaches Route 103 but doesn't know to interact with rival at (9,3)
+    # - Root cause: ObjectiveManager only provides high-level goals, not specific actions
+    # - Solution: get_next_action_directive() returns precise instructions like "walk to (9,3) and press A"
+    #
+    # ARCHITECTURE:
+    # - Uses existing ObjectiveManager from planning module
+    # - Returns directives like {"action": "NAVIGATE_AND_INTERACT", "target": (x, y, map)}
+    # - Reuses NavigationGoal logic from Opener Bot for movement
+    # - Routes decisions through VLM executor for competition compliance
+    try:
+        # Import planning module to access ObjectiveManager
+        from agent.planning import planning_step
+        
+        # Get ObjectiveManager instance (created in planning_step)
+        if hasattr(planning_step, 'objective_manager'):
+            obj_manager = planning_step.objective_manager
+            directive = obj_manager.get_next_action_directive(state_data)
+            
+            if directive:
+                action_type = directive.get('action')
+                target = directive.get('target')
+                description = directive.get('description', '')
+                
+                logger.info(f"📍 [DIRECTIVE] Active directive: {description}")
+                print(f"📍 [DIRECTIVE] {description}")
+                
+                # Handle NAVIGATE_AND_INTERACT directive (most common)
+                if action_type == 'NAVIGATE_AND_INTERACT' and target:
+                    target_x, target_y, target_map = target
+                    
+                    # Get current position
+                    player_data = state_data.get('player', {})
+                    position = player_data.get('position', {})
+                    current_x = position.get('x', 0)
+                    current_y = position.get('y', 0)
+                    current_orientation = player_data.get('facing_direction', 'down').upper()
+                    
+                    # Calculate required movement (reuse Opener Bot navigation logic)
+                    dx = target_x - current_x
+                    dy = target_y - current_y
+                    distance = abs(dx) + abs(dy)  # Manhattan distance
+                    
+                    # Determine required action
+                    nav_action = None
+                    
+                    if distance == 0:
+                        # At exact target - press A to interact
+                        nav_action = ['A']
+                        logger.info(f"📍 [DIRECTIVE] At target ({target_x}, {target_y}), interacting with A")
+                    elif distance == 1:
+                        # Adjacent to target - face then press A
+                        # Determine required direction to face target
+                        if dx > 0:
+                            required_direction = 'RIGHT'
+                        elif dx < 0:
+                            required_direction = 'LEFT'
+                        elif dy > 0:
+                            required_direction = 'DOWN'
+                        else:
+                            required_direction = 'UP'
+                        
+                        if current_orientation == required_direction:
+                            # Already facing target - press A
+                            nav_action = ['A']
+                            logger.info(f"📍 [DIRECTIVE] Adjacent and facing target, pressing A")
+                        else:
+                            # Need to turn to face target
+                            nav_action = [required_direction]
+                            logger.info(f"📍 [DIRECTIVE] Turning to face target: {required_direction}")
+                    else:
+                        # Not adjacent - move toward target
+                        # Prioritize horizontal movement (typical for Pokemon)
+                        if abs(dx) > abs(dy):
+                            nav_action = ['RIGHT'] if dx > 0 else ['LEFT']
+                        else:
+                            nav_action = ['DOWN'] if dy > 0 else ['UP']
+                        logger.info(f"📍 [DIRECTIVE] Moving toward ({target_x}, {target_y}): {nav_action}")
+                    
+                    # VLM EXECUTOR PATTERN (competition compliance)
+                    # All programmatic decisions must be validated by VLM
+                    if nav_action:
+                        try:
+                            executor_prompt = f"""You are executing a directive from the Objective Manager.
+
+DIRECTIVE: {description}
+TARGET POSITION: ({target_x}, {target_y})
+CURRENT POSITION: ({current_x}, {current_y})
+RECOMMENDED ACTION: {nav_action[0]}
+
+The directive system has analyzed the milestone progression and determined the next specific action.
+This is a tactical instruction based on the game's storyline requirements.
+
+What button should we press? Respond with ONLY the button name (A, B, UP, DOWN, LEFT, RIGHT, START, SELECT).
+"""
+                            vlm_response = vlm.get_text_query(
+                                prompt=executor_prompt,
+                                query_type="DIRECTIVE_EXECUTOR",
+                                observation=latest_observation
+                            )
+                            
+                            # Parse VLM response
+                            vlm_action = vlm_response.strip().upper()
+                            valid_buttons = ['A', 'B', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'START', 'SELECT']
+                            
+                            if vlm_action in valid_buttons:
+                                logger.info(f"📍 [DIRECTIVE] VLM confirmed action: {vlm_action}")
+                                return [vlm_action]
+                            else:
+                                # VLM gave invalid response - retry with simpler prompt
+                                logger.warning(f"📍 [DIRECTIVE] VLM response unclear: '{vlm_response}', retrying...")
+                                retry_prompt = f"Directive recommends: {nav_action[0]}. Press this button. Respond ONLY with button name."
+                                vlm_response_retry = vlm.get_text_query(
+                                    prompt=retry_prompt,
+                                    query_type="DIRECTIVE_EXECUTOR_RETRY",
+                                    observation=latest_observation
+                                )
+                                vlm_action_retry = vlm_response_retry.strip().upper()
+                                
+                                if vlm_action_retry in valid_buttons:
+                                    logger.info(f"📍 [DIRECTIVE] VLM confirmed on retry: {vlm_action_retry}")
+                                    return [vlm_action_retry]
+                                else:
+                                    # COMPETITION COMPLIANCE: Cannot bypass VLM - must crash
+                                    error_msg = f"❌ [COMPLIANCE VIOLATION] Directive VLM executor failed. Response: '{vlm_response_retry}'. Competition rules require final action from neural network."
+                                    logger.error(error_msg)
+                                    raise RuntimeError(error_msg)
+                                    
+                        except Exception as e:
+                            # COMPETITION COMPLIANCE: Cannot bypass VLM - must crash
+                            error_msg = f"❌ [COMPLIANCE VIOLATION] Directive VLM executor failed: {e}. Competition rules require final action from neural network."
+                            logger.error(error_msg)
+                            raise RuntimeError(error_msg) from e
+                
+                # Handle INTERACT directive (at target, just press A)
+                elif action_type == 'INTERACT':
+                    logger.info(f"📍 [DIRECTIVE] INTERACT directive - pressing A")
+                    
+                    # VLM executor for compliance
+                    try:
+                        executor_prompt = f"""You are executing an interaction directive.
+
+DIRECTIVE: {description}
+
+The agent is at the target position and needs to interact by pressing A.
+
+What button should we press? Respond with ONLY the button name (A, B, UP, DOWN, LEFT, RIGHT, START, SELECT).
+"""
+                        vlm_response = vlm.get_text_query(
+                            prompt=executor_prompt,
+                            query_type="DIRECTIVE_EXECUTOR_INTERACT",
+                            observation=latest_observation
+                        )
+                        
+                        vlm_action = vlm_response.strip().upper()
+                        valid_buttons = ['A', 'B', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'START', 'SELECT']
+                        
+                        if vlm_action in valid_buttons:
+                            logger.info(f"📍 [DIRECTIVE] VLM confirmed interaction: {vlm_action}")
+                            return [vlm_action]
+                        else:
+                            # Fallback: just press A for interaction
+                            logger.warning(f"📍 [DIRECTIVE] VLM unclear, defaulting to A for interaction")
+                            return ['A']
+                            
+                    except Exception as e:
+                        logger.error(f"📍 [DIRECTIVE] VLM executor error: {e}, defaulting to A")
+                        return ['A']
+                
+                # Handle WAIT_FOR_DIALOGUE (don't interrupt dialogue)
+                elif action_type == 'WAIT_FOR_DIALOGUE':
+                    logger.info(f"📍 [DIRECTIVE] Waiting for auto-dialogue to complete")
+                    # Let dialogue detection handle this - fall through
+                    pass
+                
+                else:
+                    logger.warning(f"📍 [DIRECTIVE] Unknown action type: {action_type}")
+        else:
+            logger.debug(f"📍 [DIRECTIVE] ObjectiveManager not initialized yet")
+            
+    except ImportError as e:
+        logger.debug(f"📍 [DIRECTIVE] Planning module not available: {e}")
+    except Exception as e:
+        logger.error(f"📍 [DIRECTIVE] Error processing directive: {e}", exc_info=True)
+        # Fall through to other priorities
+    
     # 🎯 PRIORITY 1: VLM VISUAL DIALOGUE DETECTION (HIGHEST PRIORITY - BUT ONLY IF OPENER BOT NOT ACTIVE)
     # NEW: Check for continue_prompt_visible (red triangle indicator) - MOST RELIABLE
     # The red triangle ❤️ at end of dialogue is a perfect signal for "press A"
