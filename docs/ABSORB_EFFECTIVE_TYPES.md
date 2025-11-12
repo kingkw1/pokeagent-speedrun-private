@@ -15,6 +15,7 @@ Here is a categorized list of Pokemon that a player may encounter on the way to 
 ### Effective (Absorb neutral or super effective, net multiplier =1 or >1)
 
 - **Zigzagoon** (Normal)  
+- **Wingull** (Water, Flying)
 - **Poochyena** (Dark)  
 - **Lotad** (Water/Grass) 
 - **Nincada** (Bug/Ground)
