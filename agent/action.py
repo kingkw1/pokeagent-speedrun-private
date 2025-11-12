@@ -1016,6 +1016,21 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
                     logger.info("💬 [BATTLE BOT] Advancing battle dialogue with A")
                     return ["A"]
                 
+                elif battle_decision == "SELECT_RUN":
+                    # Navigate to RUN from base menu (DOWN → RIGHT → A)
+                    logger.info("🏃 [BATTLE BOT] Selecting RUN: DOWN → RIGHT → A")
+                    return ["DOWN", "RIGHT", "A"]
+                
+                elif battle_decision == "SELECT_FIGHT":
+                    # Select FIGHT from base menu (just press A, it's the default)
+                    logger.info("⚔️ [BATTLE BOT] Selecting FIGHT: A")
+                    return ["A"]
+                
+                elif battle_decision == "PRESS_B":
+                    # Exit submenu (fight menu or bag menu)
+                    logger.info("🔙 [BATTLE BOT] Exiting submenu with B")
+                    return ["B"]
+                
                 elif battle_decision == "BATTLE_FIGHT" or battle_decision == "USE_MOVE_1":
                     button_recommendation = "A"
                     decision_explanation = "Select FIGHT to use first available move"

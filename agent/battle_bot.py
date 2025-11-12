@@ -55,7 +55,7 @@ class BattleBot:
         """Initialize the battle bot"""
         self._current_battle_type = BattleType.UNKNOWN
         self._battle_started = False
-        self._run_nav_step = 0  # Track position in RUN navigation sequence
+        self._run_attempts = 0  # Track how many times we've tried to run (escape can fail)
         self._dialogue_history = []  # Track recent dialogue to detect trainer battles
         logger.info("🥊 [BATTLE BOT] Initialized with wild/trainer differentiation")
     
@@ -82,10 +82,10 @@ class BattleBot:
                 logger.info(f"🥊 [BATTLE BOT] New battle detected - Type not yet determined (early phase)")
         elif not in_battle and self._battle_started:
             # Battle ended - reset state
-            logger.info(f"🥊 [BATTLE BOT] Battle ended - Type was: {self._current_battle_type.value}")
+            logger.info(f"🥊 [BATTLE BOT] Battle ended - Type was: {self._current_battle_type.value}, Run attempts: {self._run_attempts}")
             self._battle_started = False
             self._current_battle_type = BattleType.UNKNOWN
-            self._run_nav_step = 0  # Reset navigation sequence
+            self._run_attempts = 0  # Reset run attempts
             self._dialogue_history = []  # Clear dialogue history for next battle
         
         return in_battle
@@ -194,6 +194,66 @@ class BattleBot:
         logger.warning(f"⚠️ [BATTLE TYPE] Could not determine battle type yet")
         return BattleType.UNKNOWN
     
+    def _detect_battle_menu_state(self, state_data: Dict[str, Any]) -> str:
+        """
+        Detect which battle menu/state we're currently in.
+        
+        Returns:
+            - "dialogue" - In battle intro/outro dialogue (press A to advance)
+            - "base_menu" - Main battle menu (FIGHT, BAG, POKEMON, RUN)
+            - "fight_menu" - Fight submenu (showing moves with PP)
+            - "bag_menu" - Bag submenu (showing items)
+            - "unknown" - Cannot determine
+        """
+        latest_observation = state_data.get('latest_observation', {})
+        visual_data = latest_observation.get('visual_data', {})
+        on_screen_text = visual_data.get('on_screen_text', {})
+        
+        # Get dialogue text (use raw_dialogue to avoid hallucination filter)
+        dialogue_text = on_screen_text.get('raw_dialogue', '') or on_screen_text.get('dialogue', '')
+        dialogue_lower = dialogue_text.lower() if dialogue_text else ''
+        
+        # Check for dialogue indicators
+        dialogue_indicators = [
+            "wild",           # "Wild POOCHYENA appeared!"
+            "appeared",       # Wild Pokemon appear
+            "go!",            # "Go! TREECKO!"
+            "sent out",       # "Trainer sent out..."
+            "used",           # "POOCHYENA used TACKLE!"
+            "fainted",        # "Foe POOCHYENA fainted!"
+            "got away",       # "Got away safely!"
+            "can't escape",   # "Can't escape!" (trainer battle)
+            "couldn't get",   # "Couldn't get away!" (failed wild escape)
+            "gained",         # EXP gained
+            "grew to",        # Level up
+            "learned",        # Learned new move
+        ]
+        
+        if any(indicator in dialogue_lower for indicator in dialogue_indicators):
+            logger.info(f"🔍 [MENU STATE] DIALOGUE detected: '{dialogue_text[:60]}'")
+            return "dialogue"
+        
+        # Check for fight menu (move selection with PP displayed)
+        # Treecko's moves: POUND, LEER (early game)
+        if ("pp" in dialogue_lower or "type/" in dialogue_lower) and \
+           ("pound" in dialogue_lower or "leer" in dialogue_lower or "absorb" in dialogue_lower):
+            logger.info(f"🔍 [MENU STATE] FIGHT_MENU detected: '{dialogue_text[:60]}'")
+            return "fight_menu"
+        
+        # Check for base battle menu prompt
+        if "what will" in dialogue_lower and "do?" in dialogue_lower:
+            logger.info(f"🔍 [MENU STATE] BASE_MENU detected: '{dialogue_text[:60]}'")
+            return "base_menu"
+        
+        # Check for bag menu
+        if "cancel" in dialogue_lower or "close bag" in dialogue_lower:
+            logger.info(f"🔍 [MENU STATE] BAG_MENU detected: '{dialogue_text[:60]}'")
+            return "bag_menu"
+        
+        # Unknown state
+        logger.info(f"🔍 [MENU STATE] UNKNOWN: '{dialogue_text[:60]}'")
+        return "unknown"
+    
     def get_action(self, state_data: Dict[str, Any]) -> Optional[str]:
         """
         Decide the next battle action based on battle type.
@@ -217,126 +277,103 @@ class BattleBot:
             if self._current_battle_type == BattleType.UNKNOWN:
                 self._detect_battle_type(state_data)
             
-            # If still UNKNOWN (e.g., early battle phase), wait for next turn
+            # If still UNKNOWN (e.g., early battle phase), advance dialogue to gather more info
             if self._current_battle_type == BattleType.UNKNOWN:
-                logger.info("⏳ [BATTLE BOT] Battle type not yet determined - waiting")
-                return None
-            
-            # CRITICAL: Check if we're at the action selection menu
-            # Battle intro shows "Wild X appeared!" and "Go! POKEMON!" dialogues
-            # The menu is ready when we see:
-            # 1. "What will [POKEMON] do?" - action prompt
-            # 2. Move names like "POUND", "LEER" - move selection menu visible
-            
-            # Get dialogue text from latest_observation (perception module output)
-            # Use raw_dialogue (unfiltered) because hallucination filter clears dialogue field
-            latest_observation = state_data.get('latest_observation', {})
-            visual_data = latest_observation.get('visual_data', {})
-            on_screen_text = visual_data.get('on_screen_text', {})
-            
-            # Try raw_dialogue first (unfiltered), fallback to dialogue if not available
-            dialogue_text = on_screen_text.get('raw_dialogue', '') or on_screen_text.get('dialogue', '')
-            
-            # Look for indicators that the battle menu is ready
-            action_prompt_ready = False
-            if dialogue_text:
-                dialogue_lower = dialogue_text.lower()
-                
-                # Method 1: "What will POKEMON do?" action prompt
-                if "what will" in dialogue_lower and "do?" in dialogue_lower:
-                    action_prompt_ready = True
-                    logger.info(f"✅ [BATTLE BOT] Action prompt detected: '{dialogue_text}'")
-                    print(f"✅ [BATTLE BOT] Menu ready (action prompt): '{dialogue_text}'")
-                
-                # Method 2: Treecko's move names visible (means we're in move selection)
-                # Treecko starts with POUND and LEER
-                elif ("pound" in dialogue_lower or "leer" in dialogue_lower) and \
-                     ("pp" in dialogue_lower or "type" in dialogue_lower):
-                    action_prompt_ready = True
-                    logger.info(f"✅ [BATTLE BOT] Move menu detected: '{dialogue_text[:50]}'")
-                    print(f"✅ [BATTLE BOT] Menu ready (move list): '{dialogue_text[:50]}'")
-            
-            if not action_prompt_ready:
-                # Still in intro dialogue or attack animations - press A to advance
-                logger.info(f"💬 [BATTLE BOT] Battle dialogue/animation - pressing A to advance (dialogue: '{dialogue_text[:80] if dialogue_text else 'none'}')")
-                print(f"💬 [BATTLE BOT] Advancing battle (current: '{dialogue_text[:50] if dialogue_text else 'none'}')")
-                # Reset navigation sequence since we're not at menu yet
-                self._run_nav_step = 0
+                logger.info("⏳ [BATTLE BOT] Battle type not yet determined - advancing dialogue")
+                print("⏳ [BATTLE BOT] Type unknown - advancing dialogue")
                 return "ADVANCE_BATTLE_DIALOGUE"
             
-            # Menu is ready - proceed with strategy
-            if self._current_battle_type == BattleType.WILD:
-                # Navigate to RUN option in battle menu (2x2 grid, no wraparound)
-                # Menu layout:  FIGHT    BAG
-                #               POKEMON  RUN
-                # 
-                # Navigation sequence (from default FIGHT position):
-                # 1. B (exit any sub-menu we might have entered)
-                # 2. B (ensure we're at main battle menu)
-                # 3. DOWN (move from FIGHT to POKEMON)
-                # 4. RIGHT (move from POKEMON to RUN)
-                # 5. A (select RUN)
-                
-                nav_sequence = ["B", "B", "DOWN", "RIGHT", "A"]
-                
-                if self._run_nav_step >= len(nav_sequence):
-                    # Sequence complete - reset for next time
-                    logger.info("🏃 [BATTLE BOT] RUN navigation sequence complete, resetting")
-                    self._run_nav_step = 0
-                    return "RUN_FROM_WILD"  # Fallback (should not reach here)
-                
-                current_button = nav_sequence[self._run_nav_step]
-                self._run_nav_step += 1
-                
-                logger.info(f"🏃 [BATTLE BOT] Wild battle - RUN nav step {self._run_nav_step}/{len(nav_sequence)}: {current_button}")
-                print(f"🏃 [BATTLE BOT] Navigating to RUN ({self._run_nav_step}/{len(nav_sequence)}): {current_button}")
-                
-                # Return special code that action.py will handle
-                return f"NAV_RUN_STEP_{current_button}"
+            # Detect which menu/state we're in
+            menu_state = self._detect_battle_menu_state(state_data)
             
+            # If in dialogue, advance it
+            if menu_state == "dialogue":
+                logger.info("💬 [BATTLE BOT] In battle dialogue - pressing A to advance")
+                print("💬 [BATTLE BOT] Advancing dialogue")
+                return "ADVANCE_BATTLE_DIALOGUE"
+            
+            # WILD BATTLE STRATEGY: Keep trying to run
+            if self._current_battle_type == BattleType.WILD:
+                # Check if we got the "Couldn't get away!" message
+                latest_observation = state_data.get('latest_observation', {})
+                visual_data = latest_observation.get('visual_data', {})
+                on_screen_text = visual_data.get('on_screen_text', {})
+                dialogue_text = on_screen_text.get('raw_dialogue', '') or on_screen_text.get('dialogue', '')
+                dialogue_lower = dialogue_text.lower() if dialogue_text else ''
+                
+                if "couldn't get" in dialogue_lower or "can't escape" in dialogue_lower:
+                    self._run_attempts += 1
+                    logger.info(f"⚠️ [BATTLE BOT] Escape failed! Attempt #{self._run_attempts} - will try again")
+                    print(f"⚠️ [BATTLE BOT] Escape failed (attempt #{self._run_attempts}) - trying again")
+                
+                # Navigate based on current menu state
+                if menu_state == "base_menu":
+                    # At "What will [POKEMON] do?" - navigate to RUN
+                    # From FIGHT (default): DOWN → RIGHT → A
+                    logger.info("🏃 [BATTLE BOT] At base menu - navigating to RUN")
+                    print(f"🏃 [BATTLE BOT] Selecting RUN (attempt #{self._run_attempts + 1})")
+                    return "SELECT_RUN"  # Special action for navigating DOWN → RIGHT → A
+                
+                elif menu_state == "fight_menu":
+                    # Accidentally entered fight menu - press B to go back
+                    logger.info("🏃 [BATTLE BOT] In fight menu - pressing B to return")
+                    print("🏃 [BATTLE BOT] Exiting fight menu")
+                    return "PRESS_B"
+                
+                elif menu_state == "bag_menu":
+                    # Accidentally entered bag menu - press B to go back
+                    logger.info("🏃 [BATTLE BOT] In bag menu - pressing B to return")
+                    print("🏃 [BATTLE BOT] Exiting bag menu")
+                    return "PRESS_B"
+                
+                else:
+                    # Unknown state - press A to advance (might be dialogue we didn't detect)
+                    logger.info(f"🏃 [BATTLE BOT] Unknown menu state - pressing A")
+                    print("🏃 [BATTLE BOT] Advancing (unknown state)")
+                    return "ADVANCE_BATTLE_DIALOGUE"
+            
+            # TRAINER BATTLE STRATEGY: Fight to win
             elif self._current_battle_type == BattleType.TRAINER:
-                # Get player's current Pokemon for move selection
-                player_pokemon = battle_info.get('player_pokemon', {})
-                opponent_pokemon = battle_info.get('opponent_pokemon', {})
+                # Navigate based on current menu state
+                if menu_state == "base_menu":
+                    # At "What will [POKEMON] do?" - select FIGHT
+                    logger.info("⚔️ [BATTLE BOT] At base menu - selecting FIGHT")
+                    print("⚔️ [BATTLE BOT] Selecting FIGHT")
+                    return "SELECT_FIGHT"  # Just press A (FIGHT is default selection)
                 
-                if not player_pokemon:
-                    logger.warning("⚠️ [BATTLE BOT] No player_pokemon in battle_info")
-                    return None
-                
-                # Log battle status
-                player_species = player_pokemon.get('species', 'Unknown')
-                player_hp = player_pokemon.get('current_hp', 0)
-                player_max_hp = player_pokemon.get('max_hp', 1)
-                player_hp_percent = (player_hp / player_max_hp * 100) if player_max_hp > 0 else 0
-                
-                opp_species = opponent_pokemon.get('species', 'Unknown') if opponent_pokemon else 'Unknown'
-                
-                logger.info(f"⚔️ [BATTLE BOT] Trainer battle: {player_species} ({player_hp}/{player_max_hp} HP, {player_hp_percent:.1f}%) vs {opp_species}")
-                print(f"⚔️ [BATTLE BOT] {player_species} HP: {player_hp}/{player_max_hp} ({player_hp_percent:.1f}%) vs {opp_species}")
-                
-                # TODO: Implement type effectiveness checking
-                # For now, use simple move selection:
-                # - Prefer damaging moves over status moves
-                # - Future: Check opponent type and select super-effective moves
-                # - Future: Don't use Absorb against Grass types
-                # - Future: Use Absorb for HP recovery when low
-                
-                # Get available moves
-                moves = player_pokemon.get('moves', [])
-                if not moves:
-                    logger.warning("⚠️ [BATTLE BOT] No moves available, defaulting to FIGHT")
+                elif menu_state == "fight_menu":
+                    # In fight menu - select first move
+                    player_pokemon = battle_info.get('player_pokemon', {})
+                    opponent_pokemon = battle_info.get('opponent_pokemon', {})
+                    
+                    if not player_pokemon:
+                        logger.warning("⚠️ [BATTLE BOT] No player_pokemon in battle_info")
+                        return "USE_MOVE_1"
+                    
+                    # Log battle status
+                    player_species = player_pokemon.get('species', 'Unknown')
+                    player_hp = player_pokemon.get('current_hp', 0)
+                    player_max_hp = player_pokemon.get('max_hp', 1)
+                    player_hp_percent = (player_hp / player_max_hp * 100) if player_max_hp > 0 else 0
+                    
+                    opp_species = opponent_pokemon.get('species', 'Unknown') if opponent_pokemon else 'Unknown'
+                    
+                    logger.info(f"⚔️ [BATTLE BOT] In fight menu: {player_species} ({player_hp_percent:.1f}% HP) vs {opp_species}")
+                    print(f"⚔️ [BATTLE BOT] Selecting move vs {opp_species}")
+                    
+                    # TODO: Implement type effectiveness checking
+                    # For now, use simple move selection: first damaging move
                     return "USE_MOVE_1"
                 
-                # Simple strategy: Use first move
-                # TODO: Implement smart move selection based on:
-                # 1. Opponent type (from opponent_pokemon.type1, type2)
-                # 2. Move type effectiveness
-                # 3. Current HP (use Absorb if low HP and opponent is not Grass)
-                # 4. PP management (don't waste strong moves on weak opponents)
+                elif menu_state == "bag_menu":
+                    # Accidentally entered bag - go back
+                    logger.info("⚔️ [BATTLE BOT] In bag menu - pressing B to return")
+                    return "PRESS_B"
                 
-                logger.info(f"⚔️ [BATTLE BOT] Trainer battle - using first available move")
-                print(f"⚔️ [BATTLE BOT] Using first move in trainer battle")
-                return "USE_MOVE_1"
+                else:
+                    # Unknown state or dialogue - advance
+                    logger.info("⚔️ [BATTLE BOT] Advancing dialogue/unknown state")
+                    return "ADVANCE_BATTLE_DIALOGUE"
             
             else:
                 # Unknown battle type - default to fighting

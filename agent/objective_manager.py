@@ -40,9 +40,17 @@ class ObjectiveManager:
         self.objectives: List[Objective] = []
         self._initialize_storyline_objectives()
         
-        # Track persistent state for events that shouldn't repeat
-        self.rival_battle_completed = False  # Once true, stays true (battle done)
-        self._was_in_rival_battle = False  # Track if we were in battle (to detect completion)
+        # Track completed sub-goals to prevent repeating actions
+        # This replaces individual flags like rival_battle_completed
+        self.completed_goals = {
+            # Example: 'ROUTE_103_RIVAL_BATTLE': True
+        }
+        
+        # Track previous state for transition detection
+        self._previous_state = {
+            'in_battle': False,
+            'location': None,
+        }
         
         logger.info(f"ObjectiveManager initialized with {len(self.objectives)} storyline objectives")
     
@@ -174,6 +182,23 @@ class ObjectiveManager:
                 milestone_id=obj_data["milestone_id"]
             )
             self.objectives.append(objective)
+    
+    def mark_goal_complete(self, goal_id: str, description: str = ""):
+        """
+        Mark a sub-goal as complete. This is persistent across calls.
+        
+        Args:
+            goal_id: Unique identifier for the goal (e.g., 'ROUTE_103_RIVAL_BATTLE')
+            description: Human-readable description for logging
+        """
+        if goal_id not in self.completed_goals:
+            self.completed_goals[goal_id] = True
+            logger.info(f"✅ [GOAL COMPLETE] {goal_id}: {description}")
+            print(f"✅ [GOAL COMPLETE] {goal_id}" + (f": {description}" if description else ""))
+    
+    def is_goal_complete(self, goal_id: str) -> bool:
+        """Check if a sub-goal has been completed"""
+        return self.completed_goals.get(goal_id, False)
     
     def get_active_objectives(self) -> List[Objective]:
         """Get list of uncompleted objectives"""
@@ -311,26 +336,27 @@ class ObjectiveManager:
         # We use FIRST_RIVAL_BATTLE milestone to track actual battle completion
         # BUT: The milestone system doesn't auto-set FIRST_RIVAL_BATTLE, so we need manual detection
         
-        # Detect battle completion using state transition: was in battle → now not in battle at rival position
+        # Get current battle state
         at_rival_position = (current_x == 9 and current_y == 3 and 'ROUTE 103' in current_location)
         in_battle = state_data.get('in_battle', False)
         
-        # Track battle state transitions
-        if in_battle and at_rival_position:
-            self._was_in_rival_battle = True
+        # Get previous battle state
+        was_in_battle = self._previous_state.get('in_battle', False)
         
-        # Battle is complete if we were in battle and now we're not (at rival position)
-        battle_just_completed = self._was_in_rival_battle and at_rival_position and not in_battle
+        # Detect battle completion: was in battle at rival position → now not in battle
+        if was_in_battle and not in_battle and at_rival_position:
+            self.mark_goal_complete('ROUTE_103_RIVAL_BATTLE', 'Defeated rival May on Route 103')
         
-        # Once battle is detected as complete, set persistent flag (stays true even after leaving position)
-        if battle_just_completed or is_milestone_complete('FIRST_RIVAL_BATTLE'):
-            self.rival_battle_completed = True
-            logger.info(f"✅ [RIVAL BATTLE] Battle completion detected! Setting persistent flag.")
+        # Check if battle is complete (either via our detection or milestone)
+        rival_battle_complete = self.is_goal_complete('ROUTE_103_RIVAL_BATTLE') or \
+                               is_milestone_complete('FIRST_RIVAL_BATTLE')
         
-        rival_battle_complete = self.rival_battle_completed
+        # UPDATE previous state AFTER checking (for next iteration)
+        self._previous_state['in_battle'] = in_battle
+        self._previous_state['location'] = current_location
         
-        logger.info(f"🔍 [RIVAL BATTLE CHECK] at_rival_pos={at_rival_position}, in_battle={in_battle}, was_in_battle={self._was_in_rival_battle}, dialogue={is_dialogue_active()}, complete={rival_battle_complete}")
-        print(f"🔍 [RIVAL BATTLE] Position check: at (9,3)={at_rival_position}, battle={in_battle}, dialogue={is_dialogue_active()}, complete={rival_battle_complete}")
+        logger.info(f"🔍 [RIVAL BATTLE] at (9,3)={at_rival_position}, in_battle={in_battle}, was_in_battle={was_in_battle}, complete={rival_battle_complete}")
+        print(f"🔍 [RIVAL BATTLE] Check: at (9,3)={at_rival_position}, in_battle={in_battle}, was_in_battle={was_in_battle}, complete={rival_battle_complete}")
         
         if is_milestone_complete('ROUTE_103') and not rival_battle_complete:
             # We're on Route 103, need to interact with rival at (9, 3)
