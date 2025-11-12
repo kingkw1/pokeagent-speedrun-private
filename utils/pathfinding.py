@@ -106,7 +106,14 @@ def is_walkable(symbol: str, avoid_warps: bool = True) -> bool:
 def get_neighbors(pos: Tuple[int, int], grid: Dict[Tuple[int, int], str], 
                   avoid_warps: bool = True) -> List[Tuple[int, int]]:
     """
-    Get walkable neighboring positions.
+    Get walkable neighboring positions with ledge support.
+    
+    Ledges are one-way: you can only traverse them in the direction they point.
+    - '↓' ledge: can only move FROM this tile going DOWN (south)
+    - '↑' ledge: can only move FROM this tile going UP (north)  
+    - '→' ledge: can only move FROM this tile going RIGHT (east)
+    - '←' ledge: can only move FROM this tile going LEFT (west)
+    - Diagonal ledges ('↗', '↖', '↘', '↙'): treated as walls (impassable)
     
     Args:
         pos: Current (x, y) position
@@ -118,8 +125,30 @@ def get_neighbors(pos: Tuple[int, int], grid: Dict[Tuple[int, int], str],
     """
     x, y = pos
     neighbors = []
+    current_symbol = grid.get(pos, '?')
     
-    # Check all 4 cardinal directions
+    # Ledge direction mappings: ledge_symbol -> (allowed_dx, allowed_dy)
+    ledge_exits = {
+        '↓': (0, 1),   # Can only exit going DOWN
+        '↑': (0, -1),  # Can only exit going UP
+        '→': (1, 0),   # Can only exit going RIGHT
+        '←': (-1, 0),  # Can only exit going LEFT
+    }
+    
+    # If we're standing ON a ledge, we can only move in the ledge's direction
+    if current_symbol in ledge_exits:
+        allowed_dx, allowed_dy = ledge_exits[current_symbol]
+        new_pos = (x + allowed_dx, y + allowed_dy)
+        
+        if new_pos in grid:
+            next_symbol = grid[new_pos]
+            # The landing tile must be walkable (not a wall)
+            if is_walkable(next_symbol, avoid_warps=avoid_warps):
+                neighbors.append(new_pos)
+        
+        return neighbors  # Can ONLY move in ledge direction
+    
+    # Not on a ledge - check all 4 cardinal directions
     for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:  # DOWN, UP, RIGHT, LEFT
         new_pos = (x + dx, y + dy)
         
@@ -128,6 +157,21 @@ def get_neighbors(pos: Tuple[int, int], grid: Dict[Tuple[int, int], str],
             continue
         
         symbol = grid[new_pos]
+        
+        # CANNOT move ONTO diagonal ledges - they are treated as walls
+        if symbol in ['↗', '↖', '↘', '↙']:
+            continue
+        
+        # CANNOT move onto a ledge from the wrong direction
+        # e.g., cannot move UP onto a '↓' ledge (it points down, not up)
+        if symbol == '↓' and dy == -1:  # Can't approach from south (moving up)
+            continue
+        if symbol == '↑' and dy == 1:   # Can't approach from north (moving down)
+            continue
+        if symbol == '→' and dx == -1:  # Can't approach from east (moving left)
+            continue
+        if symbol == '←' and dx == 1:   # Can't approach from west (moving right)
+            continue
         
         # Check if walkable
         if is_walkable(symbol, avoid_warps=avoid_warps):

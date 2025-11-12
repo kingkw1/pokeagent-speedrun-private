@@ -301,6 +301,16 @@ class ObjectiveManager:
     
     def get_strategic_plan_description(self, state_data: Dict[str, Any]) -> Optional[str]:
         """Generate a strategic plan description for the current state"""
+        # CRITICAL FIX: Use the current directive's description if available
+        # This ensures the VLM gets the RIGHT goal (e.g., "Walk south to Oldale Town")
+        # instead of the outdated milestone goal (e.g., "Battle rival trainer")
+        current_directive = self.get_next_action_directive(state_data)
+        if current_directive and current_directive.get('description'):
+            directive_desc = current_directive['description']
+            directive_action = current_directive.get('action', 'UNKNOWN')
+            return f"CURRENT GOAL: {directive_desc} (Action: {directive_action})"
+        
+        # Fallback to milestone-based objective
         current_objective = self.get_current_strategic_objective(state_data)
         
         if current_objective:
@@ -434,22 +444,23 @@ class ObjectiveManager:
             # First, need to get to Oldale Town if we're still on Route 103
             if 'ROUTE 103' in current_location:
                 logger.info(f"📍 [DIRECTIVE] Still on Route 103, navigate south to Oldale Town")
-                # Route 103 exit is at the bottom/south - navigate to approximate exit position
-                # The exit from Route 103 is around (8, 19) based on the map
+                # Route 103 exit is at the bottom/south - there are ledges at (8, 19)
+                # The ledge will automatically transition to Oldale Town when walked over
+                # Use NAVIGATE instead of NAVIGATE_AND_INTERACT (no need to press A on ledge)
                 return {
-                    'action': 'NAVIGATE_AND_INTERACT',
+                    'action': 'NAVIGATE',
                     'target': (8, 19, 'ROUTE 103'),
-                    'description': 'Leave Route 103 south to return to Oldale Town',
+                    'description': 'Walk south over ledge to return to Oldale Town',
                     'milestone': None
                 }
             
             # After rival battle, go to Pokemon Center
             if 'OLDALE TOWN' in current_location and 'POKEMON CENTER' not in current_location:
-                # Outside, need to enter Pokemon Center at (6, 16)
+                # Outside, need to walk to Pokemon Center door at (6, 16) - it will auto-warp
                 return {
-                    'action': 'NAVIGATE_AND_INTERACT',
+                    'action': 'NAVIGATE',
                     'target': (6, 16, 'OLDALE TOWN'),
-                    'description': 'Enter Oldale Pokemon Center to heal',
+                    'description': 'Walk to Oldale Pokemon Center door (auto-warp)',
                     'milestone': None  # No milestone for entering
                 }
             elif 'POKEMON CENTER 1F' in current_location:
@@ -474,11 +485,11 @@ class ObjectiveManager:
         if is_milestone_complete('HEALED_AFTER_RIVAL') and not is_milestone_complete('RECEIVED_POKEDEX'):
             # Need to return to Littleroot Town and talk to Birch
             if 'LITTLEROOT TOWN' in current_location and 'LAB' not in current_location:
-                # Navigate to Birch's Lab entrance at (7, 16)
+                # Walk to Birch's Lab entrance at (7, 16) - door will auto-warp
                 return {
-                    'action': 'NAVIGATE_AND_INTERACT',
+                    'action': 'NAVIGATE',
                     'target': (7, 16, 'LITTLEROOT TOWN'),
-                    'description': 'Enter Birch Lab to receive Pokedex',
+                    'description': 'Walk to Birch Lab door (auto-warp)',
                     'milestone': None
                 }
             elif 'BIRCHS LAB' in current_location or 'BIRCH LAB' in current_location:

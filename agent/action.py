@@ -1020,9 +1020,11 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
                     return ["A"]
                 
                 elif battle_decision == "SELECT_RUN":
-                    # Navigate to RUN from base menu (DOWN → RIGHT → A)
-                    logger.info("🏃 [BATTLE BOT] Selecting RUN: DOWN → RIGHT → A")
-                    return ["DOWN", "RIGHT", "A"]
+                    # Navigate to RUN from base menu
+                    # CRITICAL: Press B twice first to clear any menus/states
+                    # Then: DOWN → RIGHT → A to select RUN
+                    logger.info("🏃 [BATTLE BOT] Selecting RUN: B → B → DOWN → RIGHT → A (menu clearing)")
+                    return ["B", "B", "DOWN", "RIGHT", "A"]
                 
                 elif battle_decision == "SELECT_FIGHT":
                     # Select FIGHT from base menu (just press A, it's the default)
@@ -1449,6 +1451,114 @@ Answer with just the button name:"""
                 if action_type == 'DIALOGUE':
                     logger.info(f"💬 [DIRECTIVE] Advancing dialogue with A button")
                     return ['A']
+                
+                # Handle NAVIGATE directive (navigate without interaction - for map transitions, ledges, etc.)
+                if action_type == 'NAVIGATE' and target:
+                    target_x, target_y, target_map = target
+                    
+                    logger.info(f"📍 [DIRECTIVE NAVIGATE] Moving to: ({target_x}, {target_y}, {target_map}) - NO interaction")
+                    
+                    # Create NavigationGoal WITHOUT interaction
+                    nav_goal = NavigationGoal(
+                        x=target_x,
+                        y=target_y,
+                        map_location=target_map,
+                        should_interact=False,  # Just walk, don't press A
+                        description=description
+                    )
+                    
+                    # Process NavigationGoal using the existing navigation logic
+                    goal_x = nav_goal.x
+                    goal_y = nav_goal.y
+                    goal_map = nav_goal.map_location.upper()
+                    should_interact = nav_goal.should_interact
+                    
+                    # Get current position
+                    player_data = state_data.get('player', {})
+                    position = player_data.get('position', {})
+                    current_x = position.get('x', 0)
+                    current_y = position.get('y', 0)
+                    current_map = player_data.get('location', '').upper()
+                    
+                    logger.info(f"📍 [DIRECTIVE NAV] Current: ({current_x}, {current_y}, {current_map}), Goal: ({goal_x}, {goal_y}, {goal_map})")
+                    
+                    # Check if we're at the goal
+                    dx = goal_x - current_x
+                    dy = goal_y - current_y
+                    distance = abs(dx) + abs(dy)
+                    
+                    # At goal - just continue (no interaction)
+                    if current_x == goal_x and current_y == goal_y and goal_map in current_map:
+                        logger.info(f"📍 [DIRECTIVE NAV] At goal position - continuing")
+                        nav_action = None  # Let VLM handle what's next
+                    else:
+                        # Not at goal yet - navigate using A*
+                        nav_action = None
+                        
+                        # Try coordinate-based global A* first (if on same map)
+                        if goal_map in current_map:
+                            stitched_map_info = state_data.get('map', {}).get('stitched_map_info')
+                            
+                            if stitched_map_info and stitched_map_info.get('available'):
+                                current_area = stitched_map_info.get('current_area', {})
+                                grid_serializable = current_area.get('grid')
+                                bounds = current_area.get('bounds')
+                                origin_offset = current_area.get('origin_offset')
+                                
+                                if grid_serializable and bounds and origin_offset:
+                                    logger.info(f"📍 [DIRECTIVE NAV] Using coordinate-based global A*")
+                                    
+                                    # Convert grid to proper format
+                                    location_grid = {}
+                                    for key, value in grid_serializable.items():
+                                        x, y = map(int, key.split(','))
+                                        location_grid[(x, y)] = value
+                                    
+                                    # Convert world coordinates to grid coordinates
+                                    # bounds is a dict with keys: min_x, max_x, min_y, max_y
+                                    min_x = int(bounds['min_x'])
+                                    max_x = int(bounds['max_x'])
+                                    min_y = int(bounds['min_y'])
+                                    max_y = int(bounds['max_y'])
+                                    
+                                    # Determine goal direction from coordinates
+                                    dx = goal_x - current_x
+                                    dy = goal_y - current_y
+                                    
+                                    # Map to cardinal direction for A* function
+                                    if abs(dy) > abs(dx):
+                                        goal_direction = 'south' if dy > 0 else 'north'
+                                    else:
+                                        goal_direction = 'east' if dx > 0 else 'west'
+                                    
+                                    logger.info(f"📍 [DIRECTIVE NAV] Using A* with goal_direction={goal_direction}, dx={dx}, dy={dy}")
+                                    
+                                    # Call A* pathfinding with direction
+                                    pathfind_action = _astar_pathfind_with_grid_data(
+                                        location_grid=location_grid,
+                                        bounds=bounds,  # Pass bounds dict directly
+                                        current_pos=(current_x, current_y),  # Use world coords
+                                        location=current_map,
+                                        goal_direction=goal_direction,
+                                        recent_positions=_recent_positions
+                                    )
+                                    
+                                    if pathfind_action:
+                                        logger.info(f"📍 [DIRECTIVE NAV] A* recommends: {pathfind_action}")
+                                        nav_action = [pathfind_action]
+                        
+                        # Fallback: Simple directional movement
+                        if not nav_action:
+                            if abs(dx) > abs(dy):
+                                nav_action = ['RIGHT'] if dx > 0 else ['LEFT']
+                            else:
+                                nav_action = ['DOWN'] if dy > 0 else ['UP']
+                            logger.info(f"📍 [DIRECTIVE NAV] Using simple direction: {nav_action[0]}")
+                    
+                    # If we have a navigation action, return it
+                    if nav_action:
+                        logger.info(f"📍 [DIRECTIVE NAV] Executing: {nav_action[0]}")
+                        return nav_action
                 
                 # Handle NAVIGATE_AND_INTERACT directive (most common)
                 if action_type == 'NAVIGATE_AND_INTERACT' and target:
