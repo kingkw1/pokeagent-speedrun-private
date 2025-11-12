@@ -204,6 +204,15 @@ JSON response:"""
                     logger.info("[PERCEPTION] VLM extraction successful")
                     
                     # ============================================================
+                    # SAVE RAW DIALOGUE - Before hallucination filtering
+                    # ============================================================
+                    # Battle bot needs access to unfiltered dialogue to detect "What will POKEMON do?"
+                    # Save it before the hallucination filter clears it
+                    raw_dialogue = visual_data.get('on_screen_text', {}).get('dialogue', '')
+                    if raw_dialogue:
+                        visual_data['on_screen_text']['raw_dialogue'] = raw_dialogue
+                    
+                    # ============================================================
                     # HALLUCINATION FILTERING - Known VLM hallucinations
                     # ============================================================
                     # The VLM consistently hallucinates specific phrases that are NOT in the game

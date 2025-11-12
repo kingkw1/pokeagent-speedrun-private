@@ -979,6 +979,9 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         battle_bot = get_battle_bot()
         
         if battle_bot.should_handle(state_data):
+            # Add latest_observation to state_data so battle_bot can access dialogue text
+            state_data['latest_observation'] = latest_observation
+            
             battle_decision = battle_bot.get_action(state_data)
             
             if battle_decision is not None:
@@ -1006,17 +1009,33 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
                 button_recommendation = None
                 decision_explanation = ""
                 
-                if battle_decision == "BATTLE_FIGHT" or battle_decision == "USE_MOVE_1":
+                if battle_decision == "ADVANCE_BATTLE_DIALOGUE":
+                    # Battle intro dialogue - press A to advance
+                    button_recommendation = "A"
+                    decision_explanation = "Advance battle intro dialogue"
+                    logger.info("💬 [BATTLE BOT] Advancing battle dialogue with A")
+                    return ["A"]
+                
+                elif battle_decision == "BATTLE_FIGHT" or battle_decision == "USE_MOVE_1":
                     button_recommendation = "A"
                     decision_explanation = "Select FIGHT to use first available move"
+                    
+                elif battle_decision.startswith("NAV_RUN_STEP_"):
+                    # Hard-coded RUN navigation sequence
+                    # Format: NAV_RUN_STEP_<BUTTON>
+                    button_recommendation = battle_decision.split("_")[-1]  # Extract button name
+                    decision_explanation = f"Navigating to RUN option (step: {button_recommendation})"
+                    logger.info(f"🏃 [BATTLE BOT] RUN navigation: pressing {button_recommendation}")
+                    
+                    # Bypass VLM for navigation sequence - directly return button
+                    return [button_recommendation]
+                    
                 elif battle_decision == "RUN_FROM_WILD":
-                    # TODO: Implement menu navigation to select RUN option
-                    # For now, we'll just press A and let the VLM handle it
-                    # Future: Navigate RIGHT to RUN, then press A
+                    # Fallback if we somehow get the old decision
                     button_recommendation = "A"
                     decision_explanation = "Navigate to RUN option and select it (WILD BATTLE)"
-                    logger.info("🏃 [BATTLE BOT] Wild battle detected - need to implement RUN navigation")
-                    print("🏃 [BATTLE BOT] TODO: Implement menu navigation to RUN option")
+                    logger.warning("🏃 [BATTLE BOT] Got old RUN_FROM_WILD decision - this shouldn't happen")
+                    
                 elif battle_decision == "RUN_FROM_BATTLE":
                     button_recommendation = "RUN"  # Will need to navigate to RUN option
                     decision_explanation = "Select RUN to flee from battle"
