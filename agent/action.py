@@ -1006,9 +1006,17 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
                 button_recommendation = None
                 decision_explanation = ""
                 
-                if battle_decision == "BATTLE_FIGHT":
+                if battle_decision == "BATTLE_FIGHT" or battle_decision == "USE_MOVE_1":
                     button_recommendation = "A"
                     decision_explanation = "Select FIGHT to use first available move"
+                elif battle_decision == "RUN_FROM_WILD":
+                    # TODO: Implement menu navigation to select RUN option
+                    # For now, we'll just press A and let the VLM handle it
+                    # Future: Navigate RIGHT to RUN, then press A
+                    button_recommendation = "A"
+                    decision_explanation = "Navigate to RUN option and select it (WILD BATTLE)"
+                    logger.info("🏃 [BATTLE BOT] Wild battle detected - need to implement RUN navigation")
+                    print("🏃 [BATTLE BOT] TODO: Implement menu navigation to RUN option")
                 elif battle_decision == "RUN_FROM_BATTLE":
                     button_recommendation = "RUN"  # Will need to navigate to RUN option
                     decision_explanation = "Select RUN to flee from battle"
