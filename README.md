@@ -8,7 +8,16 @@ This project is built upon the official starter kit but features a custom, learn
 
 ## Current Status & Recent Achievements
 
-**🎉 Navigation System Complete (November 7, 2025)**
+**� Directive System Operational (November 12, 2025)**
+
+Successfully implemented tactical directive system for post-opener gameplay:
+
+- ✅ **Route 103 Rival Battle**: Navigates to rival, triggers battle, completes dialogue
+- ✅ **Persistent State Tracking**: Battle completion persists even after moving
+- ✅ **Dialogue Integration**: Detects and completes post-battle dialogue before navigating
+- ✅ **Bug Fixed**: Solved position oscillation after battle completion
+
+**�🎉 Navigation System Complete (November 7, 2025)**
 
 We've successfully implemented a robust navigation system that solves critical pathfinding bugs:
 
@@ -40,12 +49,27 @@ Our agent uses a **Hybrid Hierarchical Controller (HHC)** that combines programm
 ### 1. Master Controller (`action.py`)
 The master controller orchestrates all decision-making with a priority system:
 
-1.  **Priority 0: Opener Bot** - Handles deterministic opening sequence
-2.  **Priority 1: Battle System** - Handles combat encounters  
-3.  **Priority 2: Navigation System** - Handles pathfinding with VLM fallback
-4.  **Priority 3: VLM Action Selection** - General-purpose decision making
+1.  **Priority 0A: Battle Bot** - Handles combat encounters
+2.  **Priority 0B: Opener Bot** - Handles deterministic opening sequence
+3.  **Priority 0C: Directive System** - Provides tactical guidance for story progression
+4.  **Priority 1: Dialogue Detection** - Handles active dialogue
+5.  **Priority 2: Navigation System** - Handles pathfinding with VLM fallback
+6.  **Priority 3: VLM Action Selection** - General-purpose decision making
 
 ### 2. Specialized Sub-Controllers
+
+#### **Directive System** ✅ OPERATIONAL
+- **Status**: Fully implemented and tested
+- **Purpose**: Provides tactical guidance between high-level objectives and actions
+- **Coverage**: Route 103 rival battle, post-battle dialogue, navigation
+- **Key Features**:
+  - Position-based state tracking (e.g., battle completion at 9,3)
+  - Persistent state flags (battle completion persists after moving)
+  - Dialogue priority (completes dialogue before navigating)
+  - A* pathfinding integration for obstacle avoidance
+- **Competition Compliant**: All actions route through VLM executor
+
+See `docs/DIRECTIVE_SYSTEM.md` for complete documentation.
 
 #### **Opener Bot** ✅ OPERATIONAL
 - **Status**: Fully implemented and tested
@@ -96,6 +120,15 @@ This "Neural Network Executor" pattern satisfies competition rules (final action
 
 ## Development Progress
 
+**November 12, 2025: Directive System Complete**
+
+- ✅ **Tactical Directives**: Implemented ObjectiveManager.get_next_action_directive()
+- ✅ **Route 103 Rival Battle**: Navigate to (9,3), interact, trigger battle
+- ✅ **Dialogue Integration**: Detect and complete post-battle dialogue
+- ✅ **Persistent State**: Battle completion persists after moving away
+- ✅ **Bug Fixes**: Solved position oscillation and dialogue detection issues
+- ✅ **Testing**: All unit tests passing, integration tests successful
+
 **November 7, 2025: Navigation & Pathfinding Complete**
 
 - ✅ **Local BFS Pathfinding**: Implemented breadth-first search on 15x15 grid
@@ -120,16 +153,17 @@ This "Neural Network Executor" pattern satisfies competition rules (final action
 - ✅ **Action System**: Created intelligent action sequencing
 - ✅ **Critical Bug Fixes**: Resolved "brain confusion" issues with VLM JSON parsing
 
-**Current Focus**: Expanding navigation capabilities and battle system implementation.
+**Current Focus**: Implementing Pokemon Center healing and continuing toward first gym.
 
 ---
 
 ## Key Features
 
-- **🧠 Hybrid Hierarchical Controller:** Master controller delegates to specialized sub-controllers (Opener, Navigator, Battle) based on game context
+- **🧠 Hybrid Hierarchical Controller:** Master controller delegates to specialized sub-controllers (Battle, Opener, Directive, Navigator) based on game context
+- **🎯 Directive System (OPERATIONAL):** Tactical guidance for story progression with persistent state tracking
 - **🤖 Opener Bot (OPERATIONAL):** Programmatic state machine handles title → starter selection with 95%+ reliability
 - **🗺️ Local BFS Pathfinding (OPERATIONAL):** Navigates around obstacles using 15x15 visible grid  
-- **� Map Validation:** Detects stale map data and prevents navigation errors
+- **✅ Map Validation:** Detects stale map data and prevents navigation errors
 - **⚔️ VLM Integration:** Strategic use for adaptive navigation and general gameplay
 - **🎯 Goal-Driven Planning:** Extracts navigation targets from strategic plans
 - **📊 Full A* Available:** Complete long-range pathfinding system ready for future use
