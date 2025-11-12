@@ -1,102 +1,94 @@
-To reach and defeat the first Gym Leader (Roxanne) in Pokémon Emerald and receive the Stone Badge, only a specific subset of actions are strictly required, with many common activities being optional for speedrunning. Below is a list of absolutely necessary steps, clearly marking optional actions that help but are not strictly required.
-
 ### Required Steps to Obtain Stone Badge
 
 III. SPLIT 03 - Defeat rival and talk to Birch
 3. Travel from Littleroot Town to Oldale to Route 103 (9,3, route 103)
-    - Battle your Rival (9,3, ROUTE 103) on Route 103 
-    - OPTIONAL: heal at poke center.
-    - Go north to Route 103 and defeat May/Brendan in your first rival battle. This is necessary to progress.
-    - RECOMMENDED: heal at poke center after
-    - auto dialog with may on way south to birch
-
+    - NAVIGATE: from littleroot Town to Oldale
+    - MILESTONE: OLDALE_TOWN
+    - NAVIGATE: from Oldale to Route 103
+    - MILESTONE: ROUTE_103
+    - INTERACT: Interact with your Rival (9,3, ROUTE_103) 
+    - BATTLE: with rival at (9, 3, ROUTE_103)
+    - NAVIGATE: to poke center (6, 16, OLDALE TOWN)
+    - INTERACT: Interact with poke center (7, 3, OLDALE TOWN POKEMON CENTER 1F)
+    - NAVIGATE: out of poke center (7, 9, OLDALE TOWN POKEMON CENTER 1F)
+    - NAVIGATE: to ROUTE 103 (8, 19, OLDALE TOWN)
+    - DIALOG: auto dialog with may on way south to birch
+    
 4. Navigate from Route 103 to Oldale to Littleroot Town
-    - Navigate to Birch Lab (7,16, Littleroot Town)
-    - Complete automatic dialog with Birch 
-    - Navigate out of Birch lab (6,13)
+    - NAVIGATE: to Birch Lab (7,16, Littleroot Town)
+    - DIALOG: Complete automatic dialog with Birch 
+    - MILESTONE: RECEIVED_POKEDEX
+    - NAVIGATE: out of Birch lab (6,13, BIRCH LAB)
 
 IV. SPLIT 04 - Travel to Petalburg City, Talk to Dad, and Help Wally
-    - Navigate north (10,9 LittleRoot Town) & auto-dialog with mom
-    - Continue to Petalburg city
-    
-5a. Prep to leave OLDALE TOWN
-    - OPTIONAL: Buy potions 
-    - OPTIONAL: Enter pokecenter & heal
-
 6. Travel to Petalburg City via Route 102
-    - Travel through Route 102 westward, entering Petalburg City.
-    - MANDATORY Battle at (33,15, ROUTE102)
-    - RECOMMENDED BATTLE at (25, 14, ROUTE102)
-    - RECOMMENDED BATTLE AT (19, 7, ROUTE102)
-    - OPTIONAL ITEM - PECHA BERRIES AT (25, 2, ROUTE102) -- cures poison
-    - OPTIONAL ITEM - ORAN BERRIES AT (25, 2, ROUTE102) -- heals 10hp
-    - SKIP BATTLE at (8, 8, ROUTE102) -- AVOID due to shroomish causing sleep and Treecko struggling with him
-
-6b. Prepare to leave Petalburg
-    - OPTIONAL: Buy potions
-    - OPTIONAL: Buy repel
+    - NAVIGATE: TO (10,9 LittleRoot Town)
+    - DIALOG: auto-dialog with mom
+    - NAVIGATE: TO ROUTE101 
+    - NAVIGATE: TO Petalburg city
+    - NAVIGATE to ROUTE_102
+    - MILESTONE: ROUTE_102
+    - BATTLE AT (33,15, ROUTE_102)
+    - NAVIGATE TO (25, 14, ROUTE_102)
+    - BATTLE AT (25, 14, ROUTE_102)
+    - NAVIGATE TO (19, 7, ROUTE_102)
+    - BATTLE AT (19, 7, ROUTE_102)
+    - NAVIGATE TO PETLABURG_CITY
+    - MILESTONE: PETALBURG_CITY
    
 7. Assist Wally in catching a Pokémon
-    - Enter Petalburg Gym (15, 8 PETALBURG CITY)
-    - Interact with dad (15, 9, PETALBURG CITY GYM) <-- SHOULD THIS BE (4,107)?>
-    - Wally tutorial cinematic -- spam A or wait until dialog opens again and press A
-    - Leave gym (4, 112)
+    - NAVIGATE: TO Petalburg Gym (15, 8 PETALBURG CITY)
+    - INTERACT: with dad (15, 9, PETALBURG CITY GYM) <-- SHOULD THIS BE (4,107)?>
+    - MILESTONE: DAD_FIRST_MEETING
+    - DIALOG: Wally tutorial cinematic 
+    - MILESTONE: GYM_EXPLANATION
+    - NAVIGATE: out of gym (4, 112)
 
 V. SPLIT 05 - 8. Proceed to Rustboro City via Route 104 (WEST) and Petalburg Woods
 8a. ROUTE 104 SOUTH -> PETALBURG WOODS
-    - MANDATORY automatic dialog when leaving 
-    - OPTIONAL ITEM - PECHA BERRIES AT (24, 41, ROUTE102) -- cures poison
-    - OPTIONAL ITEM - ORAN BERRIES AT (22, 41, ROUTE102) -- heals 10hp
-    - OPTIONAL BATTLE AT (11, 43, ROUTE103) -- ANNOYING DUE TO FULL RESTORE
+    - NAVIGATE: to (4, 12, PETALBURG CITY)
+    - DIALOG: automatic dialog with team aqua when leaving 
+    - NAVIGATE: to route 104 south
+    - NAVIGATE: TO PETALBURG_WOODS
+        - AVOID BATTLE AT (11, 43, ROUTE_103) -- avoid due to full restore
+    - MILESTONE: PETALBURG_WOODS
 
 8b. PETALBURG WOODS -> ROUTE 104 NORTH
-    - MANDATORY BATTLE AT (9, 32, PETALBURG WOODS)
-    - MANDATORY DIALOG & BATTLE AT (26, 23, PETALBURG WOODS)
-    - MANDATORY BATTLE AT (7, 14, PETALBURG WOODS)
-    - OPTIONAL ITEM - ETHER AT (4, 8, PETALBURG WOODS) -- RESTORES 10 PP
+    - NAVIGATE: TO (9, 32, PETALBURG WOODS)
+    - BATTLE AT (9, 32, PETALBURG WOODS)
+    - NAVIGATE: TO (26, 23, PETALBURG WOODS)
+    - DIALOG AT (26, 23, PETALBURG WOODS)
+    - BATTLE AT (26, 23, PETALBURG WOODS)
+    - DIALOG AT (26, 23, PETALBURG WOODS)
+    - MILESTONE: TEAM_AQUA_GRUNT_DEFEATED
+    - NAVIGATE TO (7, 14, PETALBURG WOODS)
+    - BATTLE AT (7, 14, PETALBURG WOODS)
+    - NAVIGATE TO ROUTE 104
+    - MILESTONE: ROUTE_104_NORTH
 
 8c. ROUTE 104 -> RUSTBORO CITY
-    - OPTIONAL ITEM - ORAN BERRY AT (3, 23, ROUTE104) -- HEALS 10HP
-    - OPTIONAL ITEM - CHERI BERRY AT (4, 25, ROUTE104) -- CURES PARALYSIS
-    - OPTIONAL BATTLE AT (19, 25, ROUTE104)
-    - OPTIONAL BATTLE AT (24, 24, ROUTE104) -- annoying do to shroomish's high health
+    - NAVIGATE TO (19, 25, ROUTE104)
+    - BATTLE AT (19, 25, ROUTE104)
+    - NAVIGATE TO RUSTBORO_CITY
+        - AVOID BATTLE AT (24, 24, ROUTE104) -- avoid due to shroomish
+    - MILESTONE: RUSTBORO_CITY
 
 VI. SPLIT 06 - Enter Gym and defeat roxanne
 9. Rustoboro city -> RUSTBORO CITY GYM (27, 19, RUSTBORO CITY)
-    - OPTIONAL heal at pokecenter (16, 38, Rustboro city -> counter at 7, 3)  This really is necessary.
+    - NAVIGATE: TO RUSTBORO CITY POKEMON CENTER (16, 38, RUSTBORO CITY)
+    - NAVIGATE: TO (7, 3 RUSTBORO CITY POKEMON CENTER 1F)
+    - INTERACT: with nurse at (7, 3, RUSTBORO CITY POKEMON CENTER 1F)
+    - NAVIGATE: TO (7, 9 RUSTBORO CITY POKEMON CENTER 1F)
+    - NAVIGATE: TO RUSTBORO CITY GYM (27, 19, RUSTBORO CITY)
+    - MILESTONE: RUSTBORO_GYM_ENTERED
 
 10. RUSTBORO CITY GYM
-    - Interact with roxanne at (5, 2 RUSTBORO CITY GYM) -- STA
-    - NOTE: all trainers can be skipped
-    - NOTE: Mudkip can win at lvl 13 -- heavy luck.
-    - NOTE: Treecko can beat roxanne starting fight at 12, but needs 10+ PP for absorbs(?)
-    - NOTE: Trecko can 1 shot roxanne's geodudes at lvl 13
-    - NOTE: split 6, Treecko can beat whole gym, including roxanne with absorb (need 15PP, so must heal first)
-
-### Optional But Helpful Steps
-
-- Pick up Poké Balls or items in Poké Marts, houses, Berry patches, etc. (not strictly needed unless your Pokémon faints or you want to catch extra Pokémon)
-- Speak with NPCs for extra Running Shoes, healing items, or TMs (e.g., HM01 Cut in Cutter’s House: Cut cannot be used until after you have the badge)
-- Fight extra wild Pokémon to level up your party for easier battles, but grinding is not strictly required if you can defeat the necessary opponents.
-- Catch additional Pokémon to assist in battles or for type advantages. The starting Pokémon alone can defeat all mandatory opponents with enough luck or skill.
-
-***
-
-**Summary Table**
-
-| Step                     | Strictly Required | Optional          |
-|--------------------------|------------------|-------------------|
-| Set clock/new room       | Yes       |                   |
-| Rescue Birch             | Yes       |                   |
-| Rival battle (Route 103) | Yes       |                   |
-| Pokédex/Poké Balls       | Yes       |                   |
-| Running Shoes            | Yes       |                   |
-| Assist Wally             | Yes       |                   |
-| Defeat Aqua in Woods     | Yes       |                   |
-| Enter Rustboro Gym       | Yes       |                   |
-| Defeat Roxanne           | Yes       |                   |
-| Poké Marts/Berries       |                  | Helpful |
-| Use Cut                  |                  | After badge |
-| Battle/train extra Mons  |                  | Helpful |
-
-Only perform extra actions as needed for your agent’s speedrun strategy or safety; all strictly required events are noted above. Optional actions can help, but skipping them may reduce time if battles can be completed reliably.
+    - NAVIGATE: TO (1,16, RUSTBORO CITY GYM)
+    - NAVIGATE: TO (2,10, RUSTBORO CITY GYM)
+    - NAVIGATE: TO (2,9, RUSTBORO CITY GYM)
+    - BATTLE: AT (2,9, RUSTBORO CITY GYM)
+    - NAVIGATE: TO (5, 2 RUSTBORO CITY GYM)
+    - INTERACT: with roxanne at (5, 2 RUSTBORO CITY GYM)
+    - MILESTONE: ROXANNE_DEFEATED
+    - MILESTONE: FIRST_GYM_COMPLETE
+    - MILESTONE: STONE_BADGE
