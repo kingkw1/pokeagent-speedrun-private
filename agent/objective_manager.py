@@ -460,28 +460,39 @@ class ObjectiveManager:
             # Navigate from Route 103 → Oldale → Route 101 → Littleroot → Birch Lab
             
             if 'ROUTE 103' in current_location:
-                # From Route 103, go south to Oldale Town portal at (10, 22)
+                # From Route 103, head south to Oldale Town
+                # Portal at (10, 22) based on previous attempts - navigate to it, then directional when close
                 return {
-                    'action': 'NAVIGATE',
-                    'target': (10, 22, 'ROUTE 103'),
-                    'description': 'Walk south to Oldale Town portal at bottom of Route 103',
+                    'action': 'NAVIGATE_DIRECTION',
+                    'direction': 'south',
+                    'target_location': 'OLDALE TOWN',
+                    'portal_coords': (10, 22),  # Known portal location
+                    'proximity_radius': 5,  # Switch to directional within 5 tiles
+                    'description': 'Navigate to Oldale Town portal (10, 22)',
                     'milestone': None
                 }
             elif 'OLDALE TOWN' in current_location:
-                # From Oldale, go south to Route 101 portal at (10, 19)
-                # CRITICAL: Portal is at Y=19, not Y=18! Agent was getting stuck at 18.
+                # From Oldale, head south to Route 101
+                # Portal at (10, 19) - navigate to it, then use directional movement when close
                 return {
-                    'action': 'NAVIGATE',
-                    'target': (10, 19, 'OLDALE TOWN'),
-                    'description': 'Walk south to Route 101 portal at bottom of Oldale Town',
+                    'action': 'NAVIGATE_DIRECTION',
+                    'direction': 'south',
+                    'target_location': 'ROUTE 101',
+                    'portal_coords': (10, 19),  # Known portal location
+                    'proximity_radius': 5,  # Switch to directional within 5 tiles
+                    'description': 'Navigate to Route 101 portal (10, 19)',
                     'milestone': None
                 }
             elif 'ROUTE 101' in current_location:
-                # From Route 101, go south to Littleroot portal at (11, 22)
+                # From Route 101, head south to Littleroot
+                # Portal at (10, 22) - navigate to it, then directional when close
                 return {
-                    'action': 'NAVIGATE',
-                    'target': (11, 22, 'ROUTE 101'),
-                    'description': 'Walk south to Littleroot Town portal at bottom of Route 101',
+                    'action': 'NAVIGATE_DIRECTION',
+                    'direction': 'south',
+                    'target_location': 'LITTLEROOT TOWN',
+                    'portal_coords': (10, 22),  # Known portal location
+                    'proximity_radius': 5,  # Switch to directional within 5 tiles
+                    'description': 'Navigate to Littleroot Town portal (10, 22)',
                     'milestone': None
                 }
             elif 'LITTLEROOT TOWN' in current_location and 'LAB' not in current_location:
@@ -516,12 +527,14 @@ class ObjectiveManager:
                     'milestone': None
                 }
             elif 'LITTLEROOT TOWN' in current_location:
-                # Head to Route 102 (go north to Route 101, then northwest to Route 102)
-                # First, get to Route 101 portal at (7, 1) in Littleroot
+                # Head to Route 101 portal - portal at (7, 2) based on gameplay script
                 return {
-                    'action': 'NAVIGATE',
-                    'target': (7, 1, 'LITTLEROOT TOWN'),
-                    'description': 'Walk north to Route 101 (heading to Route 102)',
+                    'action': 'NAVIGATE_DIRECTION',
+                    'direction': 'north',
+                    'target_location': 'ROUTE 101',
+                    'portal_coords': (7, 2),  # Known portal location
+                    'proximity_radius': 5,  # Switch to directional within 5 tiles
+                    'description': 'Navigate to Route 101 portal (7, 2)',
                     'milestone': None
                 }
         

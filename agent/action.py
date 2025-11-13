@@ -1581,6 +1581,113 @@ Answer with just the button name:"""
                     logger.info(f"💬 [DIRECTIVE] Advancing dialogue with A button")
                     return ['A']
                 
+                # Handle NAVIGATE_DIRECTION - hybrid approach:
+                # 1. If portal_coords provided and we're far from it: navigate to portal
+                # 2. If within proximity_radius of portal: use directional A* to find any path through
+                # 3. If no portal_coords: use directional A* only
+                elif action_type == 'NAVIGATE_DIRECTION':
+                    direction = directive.get('direction', 'south')  # 'north', 'south', 'east', 'west'
+                    target_location = directive.get('target_location', '').upper()
+                    portal_coords = directive.get('portal_coords')  # (x, y) tuple or None
+                    proximity_radius = directive.get('proximity_radius', 5)  # Default 5 tiles
+                    
+                    player_data = state_data.get('player', {})
+                    current_location = player_data.get('location', '').upper()
+                    position = player_data.get('position', {})
+                    current_x = position.get('x', 0)
+                    current_y = position.get('y', 0)
+                    
+                    # Check if we've reached the target location
+                    if target_location in current_location:
+                        logger.info(f"✅ [NAVIGATE_DIRECTION] Reached target location: {target_location}")
+                        return []  # Success - let objective manager provide next directive
+                    
+                    # Calculate distance to portal if coordinates provided
+                    use_directional = True  # Default to directional navigation
+                    if portal_coords:
+                        portal_x, portal_y = portal_coords
+                        distance = abs(current_x - portal_x) + abs(current_y - portal_y)  # Manhattan distance
+                        
+                        if distance > proximity_radius:
+                            # Far from portal - navigate directly to portal coordinates
+                            use_directional = False
+                            logger.info(f"🎯 [NAVIGATE_DIRECTION] Distance to portal ({portal_x}, {portal_y}): {distance} tiles (>{proximity_radius}) - navigating directly to portal")
+                        else:
+                            # Close to portal - use directional A* to find any path through
+                            logger.info(f"🎯 [NAVIGATE_DIRECTION] Distance to portal ({portal_x}, {portal_y}): {distance} tiles (<={proximity_radius}) - using directional A* to find path through")
+                    
+                    # Use A* pathfinding
+                    stitched_map_info = state_data.get('map', {}).get('stitched_map_info')
+                    
+                    if stitched_map_info and stitched_map_info.get('available'):
+                        current_area = stitched_map_info.get('current_area', {})
+                        grid_serializable = current_area.get('grid')
+                        bounds = current_area.get('bounds')
+                        
+                        if grid_serializable and bounds:
+                            # Convert grid to proper format
+                            location_grid = {}
+                            for key, value in grid_serializable.items():
+                                x, y = map(int, key.split(','))
+                                location_grid[(x, y)] = value
+                            
+                            if use_directional:
+                                # Use directional A* - find any path in the specified direction
+                                logger.info(f"🗺️ [NAVIGATE_DIRECTION] Using directional A* moving {direction} to reach {target_location}")
+                                
+                                pathfind_action = _astar_pathfind_with_grid_data(
+                                    location_grid=location_grid,
+                                    bounds=bounds,
+                                    current_pos=(current_x, current_y),
+                                    location=current_location,
+                                    goal_direction=direction,
+                                    recent_positions=_recent_positions
+                                )
+                            else:
+                                # Navigate directly to portal coordinates
+                                logger.info(f"🗺️ [NAVIGATE_DIRECTION] Navigating to portal at ({portal_x}, {portal_y})")
+                                
+                                pathfind_action = _astar_pathfind_with_grid_data(
+                                    location_grid=location_grid,
+                                    bounds=bounds,
+                                    current_pos=(current_x, current_y),
+                                    location=current_location,
+                                    goal_direction=direction,  # Still need a direction for fallback
+                                    goal_coords=(portal_x, portal_y),  # FIXED: Use goal_coords not goal
+                                    recent_positions=_recent_positions
+                                )
+                            
+                            if pathfind_action:
+                                logger.info(f"🗺️ [NAVIGATE_DIRECTION] A* recommends: {pathfind_action}")
+                                return [pathfind_action]
+                            else:
+                                logger.warning(f"⚠️ [NAVIGATE_DIRECTION] A* found no path, trying direct movement")
+                                # Fallback: just move in the specified direction
+                                direction_map = {'north': 'UP', 'south': 'DOWN', 'east': 'RIGHT', 'west': 'LEFT'}
+                                return [direction_map.get(direction, 'DOWN')]
+                    
+                    # Fallback if no map data: just move in the direction
+                    logger.info(f"🗺️ [NAVIGATE_DIRECTION] No map data, moving {direction} directly")
+                    direction_map = {'north': 'UP', 'south': 'DOWN', 'east': 'RIGHT', 'west': 'LEFT'}
+                    return [direction_map.get(direction, 'DOWN')]
+                
+                # Handle MOVE_UNTIL_MAP_CHANGE - keep moving in direction until location changes
+                elif action_type == 'MOVE_UNTIL_MAP_CHANGE':
+                    direction = directive.get('direction')
+                    target_location = directive.get('target_location', '').upper()
+                    
+                    player_data = state_data.get('player', {})
+                    current_location = player_data.get('location', '').upper()
+                    
+                    # Check if we've reached the target location
+                    if target_location in current_location:
+                        logger.info(f"✅ [MAP TRANSITION] Reached target location: {target_location}")
+                        return []  # Success - let objective manager provide next directive
+                    
+                    # Keep moving in the specified direction
+                    logger.info(f"🗺️ [MAP TRANSITION] Moving {direction} to reach {target_location} (currently in {current_location})")
+                    return [direction]
+                
                 # Handle NAVIGATE directive (navigate without interaction - for map transitions, ledges, etc.)
                 elif action_type == 'NAVIGATE' and target:
                     try:
