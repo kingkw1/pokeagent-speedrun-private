@@ -283,6 +283,12 @@ class BattleBot:
         logger.debug(f"🔍 [MENU DETECT] dialogue_text='{dialogue_text[:50] if dialogue_text else 'EMPTY'}...', phase={battle_phase}, phase_name={battle_phase_name}")
         print(f"🔍 [MENU DETECT] dialogue='{dialogue_text[:30] if dialogue_text else 'EMPTY'}', phase={battle_phase}, name={battle_phase_name}")
         
+        # CRITICAL: Check battle phase for action selection (base menu)
+        # Phase 175 or any phase with "action" in name = base battle menu
+        if battle_phase == 175 or (battle_phase_name and 'action' in battle_phase_name.lower()):
+            logger.info(f"🔍 [MENU STATE] BASE_MENU detected via phase: {battle_phase} ({battle_phase_name})")
+            return "base_menu"
+        
         # Check for dialogue indicators (battle intro/outro, move effects, etc.)
         dialogue_indicators = [
             "wild",           # "Wild POOCHYENA appeared!"
@@ -323,11 +329,6 @@ class BattleBot:
         # This handles cases where VLM doesn't return the "What will X do?" text
         if battle_phase >= 3 and not dialogue_text:
             logger.info(f"🔍 [MENU STATE] BASE_MENU (fallback) - Phase {battle_phase}, no dialogue")
-            return "base_menu"
-        
-        # Check battle phase name for action selection
-        if battle_phase_name and 'action' in battle_phase_name.lower():
-            logger.info(f"🔍 [MENU STATE] BASE_MENU detected via phase name: {battle_phase_name}")
             return "base_menu"
         
         # Unknown state
