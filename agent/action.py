@@ -21,6 +21,10 @@ _recent_positions = deque(maxlen=10)
 # Tracks how many frames we've waited at a specific portal tile
 _portal_wait_frames = {}
 
+# Track which direction we approached each portal from
+# Used to continue in the same direction when at the portal tile
+_portal_approach_direction = {}
+
 # Track dismissed player monologues to avoid spamming A on them
 _dismissed_monologues = set()
 
@@ -1618,19 +1622,22 @@ Answer with just the button name:"""
                     
                     # Clear portal wait counter if we're NOT at any portal position
                     # (Means we successfully warped or moved away)
-                    global _portal_wait_frames
+                    global _portal_wait_frames, _portal_approach_direction
                     
                     # CRITICAL: Detect if location changed (successful warp during movement)
                     # If we were targeting a portal on map X and now we're on map Y, the warp worked!
                     if goal_map not in current_map and _portal_wait_frames:
                         logger.info(f"✅ [PORTAL] Location changed from {goal_map} to {current_map} - portal warp successful!")
                         _portal_wait_frames.clear()  # Clear all portal tracking
+                        _portal_approach_direction.clear()  # Clear approach directions
                     elif _portal_wait_frames:
                         # Check if current position matches any tracked portal
                         current_key = (current_x, current_y, current_map)
                         to_remove = [key for key in _portal_wait_frames.keys() if key != current_key]
                         for key in to_remove:
                             del _portal_wait_frames[key]
+                            if key in _portal_approach_direction:
+                                del _portal_approach_direction[key]
                             logger.info(f"✅ [PORTAL] Cleared wait counter for {key} - moved away from portal")
                     
                     # Check if we're at the goal
@@ -1658,23 +1665,45 @@ Answer with just the button name:"""
                         
                         if wait_count < 5:
                             # Try to move through the portal by continuing in the same direction
-                            logger.info(f"📍 [PORTAL] At portal tile ({goal_x}, {goal_y}), attempt {wait_count + 1}/5 - continuing movement to trigger warp")
-                            # Determine which direction to keep moving
-                            # For Oldale→Route101, we're at (10,19) and should keep moving DOWN
-                            # This will attempt to move to (10,20) which should trigger the warp
-                            if dx == 0 and dy >= 0:
-                                return ['DOWN']
-                            elif dx == 0 and dy < 0:
-                                return ['UP']
-                            elif dx > 0:
-                                return ['RIGHT']
-                            elif dx < 0:
-                                return ['LEFT']
+                            # Use the saved approach direction if available
+                            approach_dir = _portal_approach_direction.get(portal_key)
+                            
+                            if approach_dir:
+                                logger.info(f"📍 [PORTAL] At portal tile ({goal_x}, {goal_y}), attempt {wait_count + 1}/5 - continuing in saved direction: {approach_dir}")
+                                return [approach_dir]
                             else:
-                                return []  # Exact center, wait one frame
+                                # First time at portal - determine direction from objective
+                                # The portal is at the goal coords, so we need to figure out which way to continue
+                                # Based on the map transition direction
+                                logger.info(f"📍 [PORTAL] At portal tile ({goal_x}, {goal_y}) for first time, attempt {wait_count + 1}/5")
+                                
+                                # For Route 101 → Oldale Town: portal at (11, 0) - need to go UP (north)
+                                # For Oldale Town → Route 101: portal at (10, 19) - need to go DOWN (south)
+                                # For Littleroot → Route 101: portal at (7, 1) - need to go UP (north)
+                                # For Route 101 → Littleroot: portal at (11, 22) - need to go DOWN (south)
+                                
+                                # Heuristic: If y=0 or y=1 (top edge), go UP. If y>=19 (bottom edge), go DOWN.
+                                # If x<=7 (left edge), go LEFT. If x>=15 (right edge), go RIGHT.
+                                if goal_y <= 1:
+                                    direction = 'UP'
+                                elif goal_y >= 19:
+                                    direction = 'DOWN'
+                                elif goal_x <= 7:
+                                    direction = 'LEFT'
+                                elif goal_x >= 15:
+                                    direction = 'RIGHT'
+                                else:
+                                    # Default to UP for unknown portals
+                                    direction = 'UP'
+                                
+                                _portal_approach_direction[portal_key] = direction
+                                logger.info(f"📍 [PORTAL] Saved approach direction: {direction}")
+                                return [direction]
                         else:
                             logger.warning(f"⚠️ [PORTAL] Failed to warp after 5 attempts at ({goal_x}, {goal_y})")
                             _portal_wait_frames[portal_key] = 0
+                            if portal_key in _portal_approach_direction:
+                                del _portal_approach_direction[portal_key]
                             return []  # Give up, let objective manager handle
                     
                     # Not at goal yet - navigate using A* pathfinding
@@ -1682,6 +1711,17 @@ Answer with just the button name:"""
                         # Special logging if within 1 tile (may trigger mid-movement warp)
                         if distance == 1 and goal_map in current_map:
                             logger.info(f"📍 [PORTAL] Within 1 tile of portal ({goal_x}, {goal_y}) - navigating to trigger warp")
+                            # Save the approach direction when we're 1 tile away
+                            portal_key = (goal_x, goal_y, goal_map)
+                            if dy < 0:
+                                _portal_approach_direction[portal_key] = 'UP'
+                            elif dy > 0:
+                                _portal_approach_direction[portal_key] = 'DOWN'
+                            elif dx < 0:
+                                _portal_approach_direction[portal_key] = 'LEFT'
+                            elif dx > 0:
+                                _portal_approach_direction[portal_key] = 'RIGHT'
+                            logger.info(f"📍 [PORTAL] Saved approach direction: {_portal_approach_direction.get(portal_key)}")
                         
                         # Not at goal yet - navigate using A*
                         nav_action = None
