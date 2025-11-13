@@ -526,29 +526,31 @@ def _astar_pathfind_to_coords_with_grid(
             print(f"⚠️ [COORD A*] No grid data provided")
             return None
         
-        # Convert absolute coords to relative coords
+        # CRITICAL: Grid keys are in WORLD coordinates, not relative coordinates!
+        # The current_pos and target_pos are already in world coordinates from the emulator
+        # Do NOT convert them to relative coordinates - use them directly
         current_x, current_y = current_pos
         target_x, target_y = target_pos
         
-        rel_current_x = current_x - bounds['min_x']
-        rel_current_y = current_y - bounds['min_y']
-        rel_target_x = target_x - bounds['min_x']
-        rel_target_y = target_y - bounds['min_y']
+        # Use world coordinates directly
+        world_current_pos = (current_x, current_y)
+        world_target_pos = (target_x, target_y)
         
-        rel_current_pos = (rel_current_x, rel_current_y)
-        rel_target_pos = (rel_target_x, rel_target_y)
-        
-        # Check if positions are in the grid
-        if rel_current_pos not in location_grid:
+        # Check if positions are in the grid (using world coordinates)
+        if world_current_pos not in location_grid:
             print(f"⚠️ [COORD A*] Current position {current_pos} not in grid")
+            print(f"   Grid has {len(location_grid)} tiles")
+            # Show sample grid keys to help debug
+            sample_keys = list(location_grid.keys())[:5]
+            print(f"   Sample grid keys: {sample_keys}")
             return None
         
-        if rel_target_pos not in location_grid:
+        if world_target_pos not in location_grid:
             print(f"⚠️ [COORD A*] Target position {target_pos} not in explored grid")
             return None
         
         print(f"✅ [COORD A*] Pathfinding from {current_pos} to {target_pos}")
-        print(f"   Grid size: {len(location_grid)} tiles, Relative: {rel_current_pos} → {rel_target_pos}")
+        print(f"   Grid size: {len(location_grid)} tiles (world coordinates)")
         
         # Helper function to check if tile is walkable
         def is_walkable(pos: Tuple[int, int]) -> bool:
@@ -575,9 +577,9 @@ def _astar_pathfind_to_coords_with_grid(
         def manhattan_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> int:
             return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
         
-        # A* pathfinding
-        start = rel_current_pos
-        goal = rel_target_pos
+        # A* pathfinding using world coordinates
+        start = world_current_pos
+        goal = world_target_pos
         pq = [(manhattan_distance(start, goal), 0, start, [])]
         visited = {start}
         
@@ -1721,13 +1723,15 @@ Answer with just the button name:"""
                                         x, y = map(int, key.split(','))
                                         location_grid[(x, y)] = value
                                     
-                                    player_grid_x, player_grid_y = player_grid_pos
+                                    # CRITICAL: Grid keys are in WORLD coordinates, so pass world position
+                                    # current_x, current_y are already in world coordinates from emulator
+                                    # Do NOT use player_grid_pos which is in grid coordinates!
                                     
                                     # Call coordinate-based global A* pathfinding
                                     pathfind_action = _astar_pathfind_to_coords_with_grid(
                                         location_grid=location_grid,
                                         bounds=bounds,
-                                        current_pos=(player_grid_x, player_grid_y),
+                                        current_pos=(current_x, current_y),  # Use world coordinates
                                         target_pos=(goal_x, goal_y),
                                         location=current_map,
                                         recent_positions=_recent_positions
@@ -1766,13 +1770,15 @@ Answer with just the button name:"""
                                     x, y = map(int, key.split(','))
                                     location_grid[(x, y)] = value
                                 
-                                player_grid_x, player_grid_y = player_grid_pos
+                                # CRITICAL: Grid keys are in WORLD coordinates, so pass world position
+                                # current_x, current_y are already in world coordinates from emulator
+                                # Do NOT use player_grid_pos which is in grid coordinates!
                                 
                                 # Call global A* pathfinding
                                 pathfind_action = _astar_pathfind_with_grid_data(
                                     location_grid=location_grid,
                                     bounds=bounds,
-                                    current_pos=(player_grid_x, player_grid_y),
+                                    current_pos=(current_x, current_y),  # Use world coordinates
                                     location=current_map,
                                     goal_direction=goal_direction,
                                     recent_positions=_recent_positions

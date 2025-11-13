@@ -708,31 +708,17 @@ class MapStitcher:
         if hasattr(map_area, 'explored_bounds'):
             bounds = map_area.explored_bounds
             
-            # CRITICAL: Calculate grid offset to convert from world coords to grid coords
+            # CRITICAL: Use the stored origin_offset to convert from world coords to grid coords
             # The explored_bounds are in WORLD coordinates, but map_data is indexed by GRID coordinates
-            # We need to reverse the transformation: grid_x = world_x + offset_x
-            # So: world_x = grid_x - offset_x, or offset_x = grid_x - world_x
-            # We can get offset from the first explored tile
-            offset_x = None
-            offset_y = None
+            # The transformation is: grid_x = world_x + offset_x, grid_y = world_y + offset_y
+            # This offset is calculated when the map is first created and stored in origin_offset
             
-            # Find the grid offset by locating the first explored tile
-            for y in range(len(map_area.map_data)):
-                for x in range(len(map_area.map_data[0])):
-                    if map_area.map_data[y][x] is not None:
-                        # Found first tile - calculate offset
-                        # offset_x = grid_x - world_x
-                        # We know grid coords (x, y) and need to find corresponding world coords
-                        # The bounds tell us the min world coords, so we can infer:
-                        offset_x = x - bounds['min_x']
-                        offset_y = y - bounds['min_y']
-                        break
-                if offset_x is not None:
-                    break
-            
-            if offset_x is None or offset_y is None:
-                logger.warning(f"Could not determine grid offset for {location_name}")
+            if not hasattr(map_area, 'origin_offset') or not map_area.origin_offset:
+                logger.warning(f"Map area {location_name} missing origin_offset - cannot convert coordinates")
                 return {}
+            
+            offset_x = map_area.origin_offset.get('x', 0)
+            offset_y = map_area.origin_offset.get('y', 0)
             
             # Now iterate through world coordinates and convert to grid coordinates
             for world_y in range(bounds['min_y'], bounds['max_y'] + 1):

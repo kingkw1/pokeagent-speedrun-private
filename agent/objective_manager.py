@@ -390,11 +390,13 @@ class ObjectiveManager:
         if is_milestone_complete('STARTER_CHOSEN') and not is_milestone_complete('OLDALE_TOWN'):
             # Check if we're on Route 101, heading to Oldale
             if 'ROUTE 101' in current_location:
-                # Navigate to northern portal at (10, 0) which leads to Oldale Town
-                # Portal at Y=0 is the north exit
+                # Navigate to northern portal at (11, 0) which leads to Oldale Town
+                # Portal at Y=0 is the north exit, X=11 based on portal connection data
+                # NOTE: Map stitcher coordinate translation is currently broken, causing A* to fail
+                # This may result in suboptimal navigation until coordinate system is fixed
                 return {
                     'action': 'NAVIGATE',
-                    'target': (10, 0, 'ROUTE 101'),
+                    'target': (11, 0, 'ROUTE 101'),
                     'description': 'Walk north to Oldale Town portal at top of Route 101',
                     'milestone': 'OLDALE_TOWN'
                 }
