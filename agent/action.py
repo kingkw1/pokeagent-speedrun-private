@@ -834,24 +834,30 @@ def _astar_pathfind_with_grid_data(
         
         # Define ledge tile symbols (from map_stitcher.py behavior values)
         # Ledges are one-way: you can only traverse them in their arrow direction
+        # NOTE: Diagonal ledges are IMPASSABLE because player can only move in cardinal directions!
         LEDGE_TILES = {
-            '→': 'RIGHT',   # JUMP_EAST (behavior 56)
-            '←': 'LEFT',    # JUMP_WEST (behavior 57)
-            '↑': 'UP',      # JUMP_NORTH (behavior 58)
-            '↓': 'DOWN',    # JUMP_SOUTH (behavior 59)
-            '↗': 'RIGHT',   # JUMP_NORTHEAST (behavior 60) - simplified to primary direction
-            '↖': 'LEFT',    # JUMP_NORTHWEST (behavior 61)
-            '↘': 'RIGHT',   # JUMP_SOUTHEAST (behavior 62)
-            '↙': 'LEFT',    # JUMP_SOUTHWEST (behavior 63)
+            '→': 'RIGHT',   # JUMP_EAST (behavior 56) - traversable
+            '←': 'LEFT',    # JUMP_WEST (behavior 57) - traversable
+            '↑': 'UP',      # JUMP_NORTH (behavior 58) - traversable
+            '↓': 'DOWN',    # JUMP_SOUTH (behavior 59) - traversable
             'L': None       # Generic ledge (collision 3) - direction unknown, treat conservatively
         }
+        
+        # Diagonal ledges are WALLS - player cannot move diagonally in Pokemon
+        # These exist in the game but are effectively impassable
+        DIAGONAL_LEDGES = ['↗', '↖', '↘', '↙']  # behaviors 60-63
         
         # Helper function to check if tile is walkable
         def is_walkable(pos: Tuple[int, int]) -> bool:
             if pos not in location_grid:
                 return False
             tile = location_grid[pos]
-            # Walkable: path, grass, doors, stairs, AND LEDGES (with directional constraints)
+            
+            # Diagonal ledges are IMPASSABLE - treat as walls
+            if tile in DIAGONAL_LEDGES:
+                return False
+            
+            # Walkable: path, grass, doors, stairs, AND CARDINAL LEDGES (with directional constraints)
             # Note: We include 'D' (doors) and 'S' (stairs) for pathfinding, but safety checks will filter dangerous ones
             # Ledges are conditionally walkable based on approach direction (checked in neighbor loop)
             return tile in ['.', '_', '~', 'D', 'S'] or tile in LEDGE_TILES
