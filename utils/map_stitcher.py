@@ -1590,10 +1590,12 @@ class MapStitcher:
             return 's'  # Sand
         
         # Doors and warps
+        # CRITICAL: Door tiles (behavior 96, 105) are WALKABLE even with collision=1
+        # You walk INTO them to trigger warps, they act as goal tiles
         elif behavior_val == 96:  # NON_ANIMATED_DOOR
-            return 'D'  # Door
+            return 'D'  # Door (walkable goal)
         elif behavior_val == 105:  # ANIMATED_DOOR
-            return 'D'  # Door
+            return 'D'  # Door (walkable goal)
         elif behavior_val in [98, 99, 100, 101]:  # Arrow warps
             return 'D'  # Warp/Door
         elif behavior_val == 97:  # LADDER

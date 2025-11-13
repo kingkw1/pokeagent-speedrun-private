@@ -805,19 +805,25 @@ def _astar_pathfind_with_grid_data(
         print(f"🎯 [A* MAP] Found {len(target_positions)} potential targets in direction '{goal_direction}'")
         
         # Helper function to check if position should be avoided (warp detection)
-        def should_avoid_position(rel_pos: Tuple[int, int]) -> bool:
-            if not recent_positions:
-                return False
+        # TEMPORARILY DISABLED - was blocking valid paths after warping
+        def should_avoid_position(world_pos: Tuple[int, int]) -> bool:
+            """Check if position should be avoided (was a warp to different location).
             
-            # Convert relative pos to absolute for comparison
-            abs_x = rel_pos[0] + bounds['min_x']
-            abs_y = rel_pos[1] + bounds['min_y']
-            
-            # Check if this position matches a recent position with different location
-            for recent_x, recent_y, recent_loc in recent_positions:
-                if recent_x == abs_x and recent_y == abs_y and recent_loc != location:
-                    print(f"🚫 [A* WARP AVOID] Skipping rel {rel_pos} (abs {abs_x},{abs_y}) - recent warp position from '{recent_loc}'")
-                    return True
+            Args:
+                world_pos: Position in WORLD coordinates (matches location_grid keys)
+            """
+            # COMMENTED OUT: This was preventing navigation after warping from Route 103 to Oldale Town
+            # if not recent_positions:
+            #     return False
+            # 
+            # # Position is already in WORLD coordinates - use directly
+            # world_x, world_y = world_pos
+            # 
+            # # Check if this position matches a recent position with different location
+            # for recent_x, recent_y, recent_loc in recent_positions:
+            #     if recent_x == world_x and recent_y == world_y and recent_loc != location:
+            #         print(f"🚫 [A* WARP AVOID] Skipping world pos {world_pos} - recent warp position from '{recent_loc}'")
+            #         return True
             return False
         
         # Helper function to check if tile is walkable

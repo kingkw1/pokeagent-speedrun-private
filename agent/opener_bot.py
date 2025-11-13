@@ -144,16 +144,11 @@ class OpenerBot:
         Determines if the opener bot should be active.
         STATEFUL: Just checks if we're in COMPLETED state or if opener sequence is done.
         """
-        print(f"🤖 [OPENER BOT SHOULD_HANDLE] Current state: {self.current_state_name}")
-        
+
         # Check if we've completed the opener sequence
         milestones = state_data.get('milestones', {})
         starter_chosen = milestones.get('STARTER_CHOSEN', {}).get('completed', False)
         player_loc = state_data.get('player', {}).get('location', '')
-        
-        print(f"🤖 [OPENER BOT SHOULD_HANDLE] Starter chosen: {starter_chosen}, Player location: '{player_loc}'")
-        print(f"🤖 [OPENER BOT DEBUG] 'PROFESSOR BIRCHS LAB' in player_loc: {'PROFESSOR BIRCHS LAB' in player_loc}")
-        print(f"🤖 [OPENER BOT DEBUG] player_loc repr: {repr(player_loc)}")
         
         # CRITICAL FIX: Even if we're in COMPLETED state, re-activate if we're still in lab with starter
         # This handles the nicknaming sequence which happens AFTER starter is chosen
@@ -164,11 +159,6 @@ class OpenerBot:
             print(f"[OPENER BOT] Re-detected state: {detected_state}")
             self._transition_to_state(detected_state)
             return True
-        
-        # If COMPLETED and not in the special case above, stay completed
-        if self.current_state_name == 'COMPLETED':
-            print(f"[OPENER BOT SHOULD_HANDLE] COMPLETED - OpenerBot permanently done. VLM will handle everything now. (Location: {player_loc})")
-            return False
         
         # Check if we should transition to COMPLETED (outside lab after getting starter)
         if starter_chosen:
