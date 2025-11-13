@@ -385,6 +385,20 @@ class ObjectiveManager:
             
             return is_active
         
+        # === INITIAL JOURNEY: ROUTE 101 TO OLDALE TOWN ===
+        # After getting starter, travel north through Route 101 to Oldale Town
+        if is_milestone_complete('STARTER_CHOSEN') and not is_milestone_complete('OLDALE_TOWN'):
+            # Check if we're on Route 101, heading to Oldale
+            if 'ROUTE 101' in current_location:
+                # Navigate to northern portal at (10, 0) which leads to Oldale Town
+                # Portal at Y=0 is the north exit
+                return {
+                    'action': 'NAVIGATE',
+                    'target': (10, 0, 'ROUTE 101'),
+                    'description': 'Walk north to Oldale Town portal at top of Route 101',
+                    'milestone': 'OLDALE_TOWN'
+                }
+        
         # === ROUTE 103: RIVAL BATTLE SEQUENCE ===
         # The ROUTE_103 milestone completes when entering Route 103, not after battle
         # We use FIRST_RIVAL_BATTLE milestone to track actual battle completion
