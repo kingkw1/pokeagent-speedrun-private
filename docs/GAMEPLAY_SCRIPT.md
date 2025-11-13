@@ -108,7 +108,7 @@
     * MILESTONE: GYM_EXPLANATION
     * NAVIGATE: out of gym (4, 112)
 
-### V. SPLIT 05 - 8. Proceed to Rustboro City via Route 104 (WEST) and Petalburg Woods
+### V. SPLIT 05 - Proceed to Rustboro City via Route 104 (WEST) and Petalburg Woods
 12. ROUTE 104 SOUTH -> PETALBURG WOODS
     * NAVIGATE: to (4, 12, PETALBURG CITY)
     * DIALOG: automatic dialog with team aqua when leaving 

@@ -2430,6 +2430,15 @@ class PokemonEmeraldReader:
             # Always set position - (0,0) is a valid coordinate
             # read_coordinates() always returns a tuple, never None
             state["player"]["position"] = {"x": coords[0], "y": coords[1]}
+            
+            # Read current tile behavior (for wild battle detection)
+            try:
+                current_tile = self.read_current_tile_behavior()
+                state["player"]["current_tile_behavior"] = current_tile.name if current_tile else "UNKNOWN"
+            except Exception as e:
+                logger.debug(f"Could not read current tile behavior: {e}")
+                state["player"]["current_tile_behavior"] = "UNKNOWN"
+            
             # print(f"DEBUG: Player coords: {coords}")
             
             try:

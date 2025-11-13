@@ -58,6 +58,7 @@ class BattleBot:
         self._run_attempts = 0  # Track how many times we've tried to run (escape can fail)
         self._dialogue_history = []  # Track recent dialogue to detect trainer battles
         self._post_battle_dialogue = False  # Track if we're in post-battle dialogue
+        self._battle_start_tile = None  # Track the tile type when battle started (for wild detection)
         logger.info("🥊 [BATTLE BOT] Initialized with wild/trainer differentiation")
     
     def should_handle(self, state_data: Dict[str, Any]) -> bool:
@@ -97,9 +98,15 @@ class BattleBot:
         is_post_battle_dialogue = any(indicator in dialogue_lower for indicator in post_battle_indicators)
         
         if in_battle and not self._battle_started:
-            # New battle started
+            # New battle started - capture the tile we were on when battle began
             self._battle_started = True
             self._post_battle_dialogue = False
+            
+            # Store the tile type when battle started (for wild battle detection)
+            player_data = state_data.get('player', {})
+            self._battle_start_tile = player_data.get('current_tile_behavior', 'UNKNOWN')
+            logger.info(f"🥊 [BATTLE BOT] New battle started on tile: {self._battle_start_tile}")
+            
             battle_type = self._detect_battle_type(state_data)
             if battle_type != BattleType.UNKNOWN:
                 logger.info(f"🥊 [BATTLE BOT] New battle detected - Type: {battle_type.value}")
@@ -118,6 +125,7 @@ class BattleBot:
                 self._current_battle_type = BattleType.UNKNOWN
                 self._run_attempts = 0
                 self._dialogue_history = []
+                self._battle_start_tile = None
         elif self._post_battle_dialogue and not is_post_battle_dialogue:
             # Post-battle dialogue finished
             logger.info(f"🥊 [BATTLE BOT] Post-battle dialogue finished, releasing control")
@@ -126,6 +134,7 @@ class BattleBot:
             self._current_battle_type = BattleType.UNKNOWN
             self._run_attempts = 0
             self._dialogue_history = []
+            self._battle_start_tile = None
         
         # Handle if in battle OR in post-battle dialogue
         should_handle = in_battle or self._post_battle_dialogue
@@ -138,10 +147,12 @@ class BattleBot:
         """
         Detect whether this is a wild or trainer battle.
         
-        Uses multiple detection methods:
-        1. Dialogue patterns: "Trainer sent out" vs "Wild X appeared"
-        2. Pre-battle dialogue: Trainer challenges contain "TRAINER" keyword
-        3. Memory flags: battle_type_flags (unreliable during early phases)
+        Detection Priority (Terrain-First Approach):
+        1. TERRAIN CHECK: If battle started in tall grass → assume WILD (guilty until proven innocent)
+        2. DIALOGUE OVERRIDE: Check for trainer indicators ("TRAINER", "Foe", "can't escape") → switch to TRAINER
+        3. MEMORY FLAGS: Fallback to battle type flags if still unknown
+        
+        This implements a "default to wild in grass" strategy with trainer override.
         
         Args:
             state_data: Current game state
@@ -156,7 +167,18 @@ class BattleBot:
             logger.warning("⚠️ [BATTLE TYPE] No battle_info - cannot detect")
             return BattleType.UNKNOWN
         
-        # METHOD 1: Check dialogue text for trainer battle indicators
+        # PRIORITY 1: Check if battle started in tall grass → assume WILD
+        grass_tiles = ['TALL_GRASS', 'LONG_GRASS', 'SHORT_GRASS']
+        if self._battle_start_tile in grass_tiles:
+            # Default assumption: battle in grass = wild battle
+            assumed_type = BattleType.WILD
+            logger.info(f"🌿 [BATTLE TYPE] Battle started in {self._battle_start_tile} → assuming WILD (will check for trainer override)")
+        else:
+            # Not in grass - unknown until we find evidence
+            assumed_type = BattleType.UNKNOWN
+            logger.info(f"📍 [BATTLE TYPE] Battle started on {self._battle_start_tile} → type unknown (waiting for evidence)")
+        
+        # PRIORITY 2: Check dialogue for TRAINER indicators (overrides terrain assumption)
         latest_observation = state_data.get('latest_observation', {})
         visual_data = latest_observation.get('visual_data', {})
         on_screen_text = visual_data.get('on_screen_text', {})
@@ -169,52 +191,39 @@ class BattleBot:
                 self._dialogue_history.pop(0)
         
         # Check BOTH current dialogue and dialogue history for battle type patterns
-        # This catches "Wild POOCHYENA appeared!" immediately when it appears
         dialogue_combined = ' '.join(self._dialogue_history).lower()
         current_dialogue_lower = dialogue_text.lower() if dialogue_text else ''
-        
-        # Combine current + history for comprehensive check
         all_dialogue = (current_dialogue_lower + ' ' + dialogue_combined).strip()
         
-        # Trainer battle indicators in dialogue
+        # Trainer battle indicators (these OVERRIDE terrain assumption)
         trainer_keywords = [
             "trainer",           # "Trainer sent out" or "Trainer may sent out"
             "being a trainer",   # "I'll give you a taste of what being a TRAINER is like"
             "sent out",          # Trainers "send out" Pokemon (e.g., "Trainer may sent out Torchic!")
             "no running from",   # "No! There's no running from a TRAINER BATTLE!"
+            "can't escape",      # Alternative phrasing
+            "foe ",              # "Foe TORCHIC" (trainer battles use "Foe" prefix)
         ]
         
-        wild_keywords = [
-            "wild",              # "Wild POOCHYENA appeared"
-            "appeared",          # Wild Pokemon "appear"
-        ]
+        # CRITICAL: If we see trainer indicators, override terrain assumption
+        has_trainer_evidence = any(keyword in all_dialogue for keyword in trainer_keywords)
         
-        has_trainer_keywords = any(keyword in all_dialogue for keyword in trainer_keywords)
-        has_wild_keywords = any(keyword in all_dialogue for keyword in wild_keywords)
-        
-        # CRITICAL: If we see "no running from", this overrides everything - it's a TRAINER battle
-        if "no running from" in all_dialogue:
+        if has_trainer_evidence:
             self._current_battle_type = BattleType.TRAINER
-            logger.info(f"⚠️ [BATTLE TYPE] CORRECTED: Detected 'no running from' - this is a TRAINER BATTLE!")
-            print(f"⚠️ [BATTLE TYPE] CORRECTED: This is a TRAINER BATTLE (caught run attempt)")
+            logger.info(f"⚔️ [BATTLE TYPE] TRAINER BATTLE detected via dialogue (overriding terrain assumption)")
+            logger.info(f"   Dialogue evidence: '{all_dialogue[:100]}'")
+            print(f"⚔️ [BATTLE TYPE] TRAINER BATTLE - Fighting to win! (dialogue override)")
             return BattleType.TRAINER
         
-        # Log what we're checking
-        if dialogue_text:
-            logger.info(f"🔍 [BATTLE TYPE] Checking dialogue: current='{dialogue_text[:80]}', combined='{all_dialogue[:100]}'")
+        # If we have a terrain-based assumption and no trainer evidence, use it
+        if assumed_type != BattleType.UNKNOWN:
+            self._current_battle_type = assumed_type
+            logger.info(f"✅ [BATTLE TYPE] {assumed_type.value.upper()} BATTLE (based on terrain: {self._battle_start_tile})")
+            if assumed_type == BattleType.WILD:
+                print(f"🏃 [BATTLE TYPE] WILD BATTLE - Will run away! (in grass)")
+            return assumed_type
         
-        if has_trainer_keywords and not has_wild_keywords:
-            self._current_battle_type = BattleType.TRAINER
-            logger.info(f"✅ [BATTLE TYPE] TRAINER BATTLE detected via dialogue: '{dialogue_combined[:100]}'")
-            print(f"⚔️ [BATTLE TYPE] TRAINER BATTLE - Fighting to win! (detected from dialogue)")
-            return BattleType.TRAINER
-        elif has_wild_keywords and not has_trainer_keywords:
-            self._current_battle_type = BattleType.WILD
-            logger.info(f"✅ [BATTLE TYPE] WILD BATTLE detected via dialogue: '{dialogue_combined[:100]}'")
-            print(f"🏃 [BATTLE TYPE] WILD BATTLE - Will run away! (detected from dialogue)")
-            return BattleType.WILD
-        
-        # METHOD 2: Check battle phase and memory flags (fallback)
+        # PRIORITY 3: Check memory flags (fallback if terrain + dialogue inconclusive)
         battle_phase = battle_info.get('battle_phase', 0)
         battle_phase_name = battle_info.get('battle_phase_name', 'unknown')
         
@@ -224,8 +233,7 @@ class BattleBot:
             is_trainer = battle_info.get('is_trainer_battle', False)
             is_wild = battle_info.get('is_wild_battle', False)
             
-            logger.info(f"🔍 [BATTLE TYPE DETECTION] Phase: {battle_phase_name}, Flags: 0x{battle_type_flags:04X}, Trainer: {is_trainer}, Wild: {is_wild}")
-            print(f"🔍 [BATTLE TYPE] Phase: {battle_phase_name}, Flags: 0x{battle_type_flags:04X}, Trainer: {is_trainer}, Wild: {is_wild}")
+            logger.info(f"🔍 [BATTLE TYPE] Checking memory flags - Phase: {battle_phase_name}, Flags: 0x{battle_type_flags:04X}, Trainer: {is_trainer}, Wild: {is_wild}")
             
             if is_trainer:
                 self._current_battle_type = BattleType.TRAINER
@@ -238,8 +246,7 @@ class BattleBot:
                 print(f"🏃 [BATTLE TYPE] WILD BATTLE - Will run away!")
                 return BattleType.WILD
         else:
-            logger.info(f"⏳ [BATTLE TYPE] Battle phase {battle_phase} ({battle_phase_name}) - waiting for flags or dialogue")
-            print(f"⏳ [BATTLE TYPE] Phase {battle_phase_name} - waiting for detection")
+            logger.info(f"⏳ [BATTLE TYPE] Battle phase {battle_phase} ({battle_phase_name}) - waiting for flags")
         
         # Still unknown
         self._current_battle_type = BattleType.UNKNOWN

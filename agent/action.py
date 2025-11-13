@@ -1708,20 +1708,27 @@ Answer with just the button name:"""
                     
                     # Not at goal yet - navigate using A* pathfinding
                     else:
-                        # Special logging if within 1 tile (may trigger mid-movement warp)
+                        # Special handling if within 1 tile of portal - prepare for momentum
                         if distance == 1 and goal_map in current_map:
-                            logger.info(f"📍 [PORTAL] Within 1 tile of portal ({goal_x}, {goal_y}) - navigating to trigger warp")
                             # Save the approach direction when we're 1 tile away
                             portal_key = (goal_x, goal_y, goal_map)
                             if dy < 0:
-                                _portal_approach_direction[portal_key] = 'UP'
+                                approach_dir = 'UP'
                             elif dy > 0:
-                                _portal_approach_direction[portal_key] = 'DOWN'
+                                approach_dir = 'DOWN'
                             elif dx < 0:
-                                _portal_approach_direction[portal_key] = 'LEFT'
+                                approach_dir = 'LEFT'
                             elif dx > 0:
-                                _portal_approach_direction[portal_key] = 'RIGHT'
-                            logger.info(f"📍 [PORTAL] Saved approach direction: {_portal_approach_direction.get(portal_key)}")
+                                approach_dir = 'RIGHT'
+                            else:
+                                approach_dir = None
+                            
+                            if approach_dir:
+                                _portal_approach_direction[portal_key] = approach_dir
+                                logger.info(f"📍 [PORTAL] 1 tile from portal ({goal_x}, {goal_y}) - will continue {approach_dir} through portal")
+                                # Return the approach direction immediately to build momentum
+                                # This ensures we move through the portal without stopping
+                                return [approach_dir]
                         
                         # Not at goal yet - navigate using A*
                         nav_action = None
