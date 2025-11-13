@@ -28,6 +28,10 @@ _portal_approach_direction = {}
 # Track dismissed player monologues to avoid spamming A on them
 _dismissed_monologues = set()
 
+# Stuck detection state
+_stuck_counter = 0
+_last_position = None
+
 def format_observation_for_action(observation):
     """Format observation data for use in action prompts"""
     if isinstance(observation, dict) and 'visual_data' in observation:
@@ -1066,7 +1070,7 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     print("=" * 80)
     
     # Declare global variables at the start of the function
-    global _recent_positions, _dismissed_monologues
+    global _recent_positions, _dismissed_monologues, _stuck_counter, _last_position
     
     # Track current position to avoid immediate backtracking through warps
     try:
@@ -1084,6 +1088,69 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
                 _recent_positions.append(current_pos_key)
     except Exception as e:
         print(f"⚠️ [POSITION TRACKING] Error tracking position: {e}")
+    
+    # 🔄 STUCK DETECTION - Detect if agent stuck trying to move but not making progress
+    # This handles cases where dialogue is active but VLM failed to detect it (e.g., "............." text)
+    try:
+        game_data = state_data.get('game', {})
+        in_battle = game_data.get('in_battle', False)
+        visual_dialogue_detected = visual_dialogue_active  # From VLM perception
+        
+        # Get current position
+        current_pos = (current_x, current_y, location) if current_x is not None and current_y is not None else None
+        
+        # Check if last action was a direction (from recent_actions list)
+        last_action_was_direction = False
+        if recent_actions and len(recent_actions) > 0:
+            last_action = recent_actions[-1]
+            last_action_was_direction = last_action in ['UP', 'DOWN', 'LEFT', 'RIGHT']
+        
+        # VERBOSE LOGGING
+        print(f"🔄 [STUCK DEBUG] visual_dialogue={visual_dialogue_detected}, in_battle={in_battle}, current_pos={current_pos}")
+        print(f"🔄 [STUCK DEBUG] _last_position={_last_position}, last_action_was_direction={last_action_was_direction}")
+        print(f"🔄 [STUCK DEBUG] recent_actions[-1]={recent_actions[-1] if recent_actions else 'None'}")
+        print(f"🔄 [STUCK DEBUG] _stuck_counter={_stuck_counter}")
+        
+        # Check if we're NOT in dialogue (according to VLM) and NOT in battle
+        # This is when we should be able to move freely
+        if not visual_dialogue_detected and not in_battle and current_pos is not None:
+            print(f"🔄 [STUCK DEBUG] Conditions met: not in dialogue, not in battle, has position")
+            
+            # Check if position didn't change since last step AND last action was a direction
+            if _last_position == current_pos and last_action_was_direction:
+                # We tried to move but didn't - increment stuck counter
+                _stuck_counter += 1
+                print(f"🔄 [STUCK DETECTION] Position unchanged after direction input: {current_pos}")
+                print(f"   Last action: {recent_actions[-1] if recent_actions else 'None'}")
+                print(f"   Stuck counter: {_stuck_counter}")
+                
+                # If stuck for 3 attempts, press A to check for hidden dialogue
+                if _stuck_counter >= 3:
+                    print(f"🔄 [STUCK DETECTION] Stuck for {_stuck_counter} attempts!")
+                    print(f"   Pressing A to check for hidden dialogue...")
+                    _stuck_counter = 0  # Reset counter
+                    return ['A']
+            else:
+                # Position changed or we didn't try a direction - reset counter
+                if _stuck_counter > 0:
+                    print(f"🔄 [STUCK DETECTION] Position changed or no direction input - resetting counter")
+                    print(f"   Reason: _last_position={_last_position} vs current_pos={current_pos}")
+                    print(f"   last_action_was_direction={last_action_was_direction}")
+                _stuck_counter = 0
+        else:
+            # In dialogue or battle - reset stuck counter
+            if _stuck_counter > 0 and (visual_dialogue_detected or in_battle):
+                print(f"🔄 [STUCK DETECTION] In dialogue/battle - resetting stuck counter")
+            print(f"🔄 [STUCK DEBUG] Conditions NOT met: dialogue={visual_dialogue_detected}, battle={in_battle}, pos={current_pos}")
+            _stuck_counter = 0
+            
+        # Update last position for next iteration
+        _last_position = current_pos
+        
+    except Exception as e:
+        print(f"⚠️ [STUCK DETECTION] Error in stuck detection: {e}")
+        import traceback
+        traceback.print_exc()
     
     # ⚔️ PRIORITY 0A: BATTLE BOT - Combat State Machine (HIGHEST PRIORITY)
     # This MUST be checked BEFORE opener bot to prevent navigation commands during battles.
@@ -3834,4 +3901,5 @@ Now analyze THIS frame and respond with your reasoning and button:
     logger.info(f"[ACTION] Actions decided: {', '.join(actions)}")
     final_step = len(recent_actions) if recent_actions else 0
     print(f"🎮 [FINAL ACTION] Step {final_step} - Returning actions: {actions}")
+    
     return actions 
