@@ -385,6 +385,17 @@ class ObjectiveManager:
             
             return is_active
         
+        # === PRIORITY: HANDLE ACTIVE DIALOGUE ===
+        # CRITICAL: Always check for dialogue FIRST before any navigation
+        # If dialogue is active, we must complete it before doing anything else
+        if is_dialogue_active():
+            return {
+                'action': 'DIALOGUE',
+                'target': None,
+                'description': 'Press A to advance dialogue',
+                'milestone': None
+            }
+        
         # === INITIAL JOURNEY: ROUTE 101 TO OLDALE TOWN ===
         # After getting starter, travel north through Route 101 to Oldale Town
         if is_milestone_complete('STARTER_CHOSEN') and not is_milestone_complete('OLDALE_TOWN'):
@@ -442,75 +453,37 @@ class ObjectiveManager:
                     'milestone': 'FIRST_RIVAL_BATTLE'
                 }
         
-        # === OLDALE TOWN: POKEMON CENTER HEALING ===
-        # After rival battle, navigate to Pokemon Center
-        if rival_battle_complete and not is_milestone_complete('HEALED_AFTER_RIVAL'):
-            # CRITICAL: Don't navigate while dialogue is active
-            if is_dialogue_active():
-                logger.info(f"💬 [DIRECTIVE] Dialogue active, pressing A to continue")
-                return {
-                    'action': 'DIALOGUE',
-                    'target': None,
-                    'description': 'Press A to advance dialogue',
-                    'milestone': None
-                }
+        # === RETURN TO BIRCH LAB ===
+        # After rival battle, skip Pokemon Center (door detection broken) and go straight to Birch Lab
+        # Navigate from Route 103 → Oldale → Route 101 → Littleroot → Birch Lab
+        if rival_battle_complete and not is_milestone_complete('RECEIVED_POKEDEX'):
+            # Navigate from Route 103 → Oldale → Route 101 → Littleroot → Birch Lab
             
-            logger.info(f"📍 [DIRECTIVE] Rival battle complete, need to heal at Pokemon Center")
-            
-            # First, need to get to Oldale Town if we're still on Route 103
             if 'ROUTE 103' in current_location:
-                logger.info(f"📍 [DIRECTIVE] Still on Route 103, navigate south to Oldale Town")
-                # Route 103 exit portal is at (10, 22) - south from rival battle position
-                # The portal will automatically transition to Oldale Town when walked over
-                # Use NAVIGATE instead of NAVIGATE_AND_INTERACT (no need to press A on portal)
+                # From Route 103, go south to Oldale Town portal at (10, 22)
                 return {
                     'action': 'NAVIGATE',
                     'target': (10, 22, 'ROUTE 103'),
                     'description': 'Walk south to Oldale Town portal at bottom of Route 103',
                     'milestone': None
                 }
-            
-            # === POKEMON CENTER DISABLED ===
-            # Door detection broken - see DOOR_DETECTION_AND_MAP_CORRUPTION_INVESTIGATION.md
-            # Uncomment below to re-enable when map corruption is fixed
-            
-            # if 'OLDALE TOWN' in current_location and 'POKEMON CENTER' not in current_location:
-            #     # Outside, need to walk to Pokemon Center door at (6, 16) - it will auto-warp
-            #     # This is tile 97 with behavior 105 (ANIMATED_DOOR)
-            #     # Even though collision=1, you can walk INTO it to trigger the warp
-            #     return {
-            #         'action': 'NAVIGATE',
-            #         'target': (6, 16, 'OLDALE TOWN'),
-            #         'description': 'Walk to Oldale Pokemon Center door (auto-warp)',
-            #         'milestone': None  # No milestone for entering
-            #     }
-            # elif 'POKEMON CENTER 1F' in current_location:
-            #     # Inside Pokemon Center, interact with Nurse Joy at (7, 3)
-            #     target_x, target_y = 7, 3
-            #     if current_x == target_x and current_y == target_y:
-            #         return {
-            #             'action': 'INTERACT',
-            #             'target': (target_x, target_y, 'OLDALE TOWN POKEMON CENTER 1F'),
-            #             'description': 'Talk to Nurse Joy to heal Pokemon',
-            #             'milestone': 'HEALED_AFTER_RIVAL'
-            #         }
-            #     else:
-            #         return {
-            #             'action': 'NAVIGATE_AND_INTERACT',
-            #             'target': (target_x, target_y, 'OLDALE TOWN POKEMON CENTER 1F'),
-            #             'description': 'Walk to Nurse Joy and press A',
-            #             'milestone': 'HEALED_AFTER_RIVAL'
-            #         }
-            
-            # TEMPORARY: Auto-complete healing milestone to skip Pokemon Center
-            if 'OLDALE TOWN' in current_location:
-                self.mark_milestone_complete('HEALED_AFTER_RIVAL')
-                logger.info("⏭️ [OBJECTIVE] Skipping Pokemon Center (door detection broken), proceeding to Pokedex")
-        
-        # === RETURN TO BIRCH LAB ===
-        if is_milestone_complete('HEALED_AFTER_RIVAL') and not is_milestone_complete('RECEIVED_POKEDEX'):
-            # Need to return to Littleroot Town and talk to Birch
-            if 'LITTLEROOT TOWN' in current_location and 'LAB' not in current_location:
+            elif 'OLDALE TOWN' in current_location:
+                # From Oldale, go south to Route 101 portal at (10, 18)
+                return {
+                    'action': 'NAVIGATE',
+                    'target': (10, 18, 'OLDALE TOWN'),
+                    'description': 'Walk south to Route 101 portal at bottom of Oldale Town',
+                    'milestone': None
+                }
+            elif 'ROUTE 101' in current_location:
+                # From Route 101, go south to Littleroot portal at (11, 22)
+                return {
+                    'action': 'NAVIGATE',
+                    'target': (11, 22, 'ROUTE 101'),
+                    'description': 'Walk south to Littleroot Town portal at bottom of Route 101',
+                    'milestone': None
+                }
+            elif 'LITTLEROOT TOWN' in current_location and 'LAB' not in current_location:
                 # Walk to Birch's Lab entrance at (7, 16) - door will auto-warp
                 return {
                     'action': 'NAVIGATE',
