@@ -2037,13 +2037,44 @@ Answer with just the button name:"""
                     distance = abs(dx) + abs(dy)
                     
                     # First priority: Check if we're at exact goal position
-                    if current_x == goal_x and current_y == goal_y and goal_map in current_map:
-                        if should_interact:
-                            nav_action = ['A']
-                            logger.info(f"📍 [DIRECTIVE NAV] At goal, pressing A to interact")
+                    if current_x == goal_x and current_y == goal_y:
+                        # Check if we're on the CORRECT map
+                        if goal_map in current_map:
+                            # We're at goal on correct map
+                            if should_interact:
+                                nav_action = ['A']
+                                logger.info(f"📍 [DIRECTIVE NAV] At goal, pressing A to interact")
+                            else:
+                                logger.info(f"📍 [DIRECTIVE NAV] At goal (walk-to), continuing past")
+                                nav_action = None  # Let VLM handle
                         else:
-                            logger.info(f"📍 [DIRECTIVE NAV] At goal (walk-to), continuing past")
-                            nav_action = None  # Let VLM handle
+                            # We're at goal coordinates but WRONG map - this is a map transition point
+                            # Need to continue moving to cross into the target map
+                            logger.info(f"📍 [DIRECTIVE NAV] At goal coords ({goal_x}, {goal_y}) but wrong map!")
+                            logger.info(f"   Current map: '{current_map}', Target map: '{goal_map}'")
+                            logger.info(f"   This is likely a map transition - continuing movement")
+                            
+                            # Determine which direction to move based on map transition
+                            # Usually moving UP from Littleroot Town transitions to Route 101
+                            # We'll use the goal_direction if available, or try UP as default
+                            directive_details = self.objective_manager.get_current_directive()
+                            goal_direction = directive_details.get('goal_direction', 'north') if directive_details else 'north'
+                            
+                            # Map direction strings to actions
+                            direction_map = {
+                                'north': 'UP',
+                                'south': 'DOWN',
+                                'east': 'RIGHT',
+                                'west': 'LEFT',
+                                'up': 'UP',
+                                'down': 'DOWN',
+                                'left': 'LEFT',
+                                'right': 'RIGHT'
+                            }
+                            
+                            transition_action = direction_map.get(goal_direction.lower(), 'UP')
+                            nav_action = [transition_action]
+                            logger.info(f"📍 [DIRECTIVE NAV] Attempting map transition with: {transition_action}")
                     
                     # Second priority: Check if adjacent to goal (for interaction goals)
                     elif distance == 1 and should_interact and goal_map in current_map:
@@ -3756,7 +3787,7 @@ Now analyze THIS frame and respond with your reasoning and button:
         elif len(lines) == 1:
             # Only one line - treat as action without reasoning
             action_line = lines[0].upper()
-            print(f"⚠️ [NO REASONING] VLM provided action without reasoning")
+            # print(f"⚠️ [NO REASONING] VLM provided action without reasoning")
             print(f"🎮 [VLM ACTION LINE] {action_line}")
         else:
             # Empty response

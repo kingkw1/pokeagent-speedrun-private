@@ -104,7 +104,7 @@ class OpenerBot:
         # The agent comes BACK to the lab after beating rival to get the Pokedex.
         # We only want to deactivate after truly completing the opener sequence.
         if milestones.get('RECEIVED_POKEDEX', {}).get('completed', False):
-            logger.info("[OPENER BOT] Received Pokedex - opener sequence complete. Handing off to VLM.")
+            # logger.info("[OPENER BOT] Received Pokedex - opener sequence complete. Handing off to VLM.")
             self._transition_to_state('COMPLETED')
             return False
         
@@ -112,7 +112,7 @@ class OpenerBot:
         if milestones.get('STARTER_CHOSEN', {}).get('completed', False):
             player_loc = state_data.get('player', {}).get('location', '')
             if 'BIRCHS_LAB' not in player_loc and 'BIRCH LAB' not in player_loc:
-                logger.info("[OPENER BOT] Starter chosen and outside lab (before Pokedex). Handing off to VLM.")
+                # logger.info("[OPENER BOT] Starter chosen and outside lab (before Pokedex). Handing off to VLM.")
                 self._transition_to_state('COMPLETED')
                 return False
         

@@ -412,6 +412,22 @@ class ObjectiveManager:
                     'milestone': 'OLDALE_TOWN'
                 }
         
+        # === OLDALE TO ROUTE 103 FOR RIVAL BATTLE ===
+        # After reaching Oldale, navigate from Littleroot to Route 103 for rival battle
+        if is_milestone_complete('OLDALE_TOWN') and not is_milestone_complete('ROUTE_103'):
+            if 'LITTLEROOT TOWN' in current_location:
+                # From Littleroot, navigate north to Route 103
+                # Use NAVIGATE_DIRECTION to portal at (9, 3)
+                return {
+                    'action': 'NAVIGATE_DIRECTION',
+                    'direction': 'north',
+                    'target_location': 'ROUTE 103',
+                    'portal_coords': (9, 3),
+                    'proximity_radius': 5,
+                    'description': 'Navigate north to Route 103 from Littleroot',
+                    'milestone': 'ROUTE_103'
+                }
+        
         # === ROUTE 103: RIVAL BATTLE SEQUENCE ===
         # The ROUTE_103 milestone completes when entering Route 103, not after battle
         # We use FIRST_RIVAL_BATTLE milestone to track actual battle completion
@@ -431,7 +447,7 @@ class ObjectiveManager:
         logger.info(f"🔍 [RIVAL BATTLE] at (9,3)={at_rival_position}, in_battle={in_battle}, was_in_battle={was_in_battle}, complete={rival_battle_complete}")
         print(f"🔍 [RIVAL BATTLE] Check: at (9,3)={at_rival_position}, in_battle={in_battle}, was_in_battle={was_in_battle}, complete={rival_battle_complete}")
         
-        if is_milestone_complete('ROUTE_103') and not rival_battle_complete:
+        if is_milestone_complete('ROUTE_103') and not rival_battle_complete and not is_milestone_complete('RECEIVED_POKEDEX'):
             # We're on Route 103, need to interact with rival at (9, 3)
             target_x, target_y, target_map = 9, 3, 'ROUTE 103'
             
@@ -513,17 +529,15 @@ class ObjectiveManager:
                     'milestone': 'RECEIVED_POKEDEX'
                 }
         
-        # === EXIT BIRCH LAB AFTER RECEIVING POKEDEX ===
-        # CRITICAL FIX: After receiving Pokedex, agent needs directive to exit lab
-        # This was causing the agent to get stuck after dialogue completion
+        # === EXIT BIRCH LAB AND TRAVEL TO ROUTE 102 ===
+        # After receiving Pokedex, go to (10,9) to trigger Mom dialogue, then to Route 102
         if is_milestone_complete('RECEIVED_POKEDEX') and not is_milestone_complete('ROUTE_102'):
             if 'BIRCHS LAB' in current_location or 'BIRCH LAB' in current_location:
                 # Exit lab - door is at (6, 13) inside lab coordinates
-                # This will auto-warp back to Littleroot Town
                 return {
                     'action': 'NAVIGATE',
-                    'target': (6, 13, current_location),  # Use current_location to match the exact map name
-                    'description': 'Exit Birch Lab (completed Pokedex dialogue)',
+                    'target': (6, 13, current_location),
+                    'description': 'Exit Birch Lab',
                     'milestone': None
                 }
             elif 'LITTLEROOT TOWN' in current_location:
@@ -531,11 +545,22 @@ class ObjectiveManager:
                 return {
                     'action': 'NAVIGATE_DIRECTION',
                     'direction': 'north',
-                    'target_location': 'ROUTE 101',
-                    'portal_coords': (7, 2),  # Known portal location
-                    'proximity_radius': 5,  # Switch to directional within 5 tiles
-                    'description': 'Navigate to Route 101 portal (7, 2)',
+                    'target_location': 'OLDALE TOWN',
+                    'portal_coords': (11, 0),
+                    'proximity_radius': 5,
+                    'description': 'Navigate to Oldale Town through Route 101',
                     'milestone': None
+                }
+            elif 'OLDALE TOWN' in current_location:
+                # Navigate west from Oldale to Route 102
+                return {
+                    'action': 'NAVIGATE_DIRECTION',
+                    'direction': 'west',
+                    'target_location': 'ROUTE 102',
+                    'portal_coords': (0, 9),  # West exit from Oldale
+                    'proximity_radius': 5,
+                    'description': 'Navigate to Route 102 from Oldale',
+                    'milestone': 'ROUTE_102'
                 }
         
         # === ROUTE 102 TRAINERS ===

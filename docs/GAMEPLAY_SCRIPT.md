@@ -66,7 +66,8 @@
 
 ### III. SPLIT 03 - Defeat rival and talk to Birch
 8. Travel from Littleroot Town to Oldale to Route 103 (9,3, route 103)
-    * NAVIGATE: from littleroot Town to Oldale
+    * NAVIGATE: from littleroot Town to Route 101
+    * NAVIGATE: from Route 101 to Oldale
     * MILESTONE: OLDALE_TOWN
     * NAVIGATE: from Oldale to Route 103
     * MILESTONE: ROUTE_103
@@ -89,7 +90,7 @@
     * NAVIGATE: TO (10,9 LittleRoot Town)
     * DIALOG: auto-dialog with mom
     * NAVIGATE: TO ROUTE101 
-    * NAVIGATE: TO Petalburg city
+    * NAVIGATE: TO OLDALE_TOWN
     * NAVIGATE to ROUTE_102
     * MILESTONE: ROUTE_102
     * BATTLE AT (33,15, ROUTE_102)
