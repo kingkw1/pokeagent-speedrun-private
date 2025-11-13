@@ -90,16 +90,29 @@ class OpenerBot:
         """
         Determines if the opener bot should be active.
         STATEFUL: Just checks if we're in COMPLETED state or if opener sequence is done.
+        
+        CRITICAL FIX: Opener bot completes when RECEIVED_POKEDEX milestone is reached.
+        This prevents reactivation when agent returns to Birch's Lab after rival battle.
         """
         if self.current_state_name == 'COMPLETED':
             return False
             
         # Check if we've completed the opener sequence
         milestones = state_data.get('milestones', {})
+        
+        # FIXED: Check for RECEIVED_POKEDEX instead of just STARTER_CHOSEN + location
+        # The agent comes BACK to the lab after beating rival to get the Pokedex.
+        # We only want to deactivate after truly completing the opener sequence.
+        if milestones.get('RECEIVED_POKEDEX', {}).get('completed', False):
+            logger.info("[OPENER BOT] Received Pokedex - opener sequence complete. Handing off to VLM.")
+            self._transition_to_state('COMPLETED')
+            return False
+        
+        # Legacy check: Also deactivate if starter chosen and outside lab (safety net)
         if milestones.get('STARTER_CHOSEN', {}).get('completed', False):
             player_loc = state_data.get('player', {}).get('location', '')
-            if 'BIRCHS_LAB' not in player_loc:
-                logger.info("[OPENER BOT] Starter chosen and outside lab. Handing off to VLM.")
+            if 'BIRCHS_LAB' not in player_loc and 'BIRCH LAB' not in player_loc:
+                logger.info("[OPENER BOT] Starter chosen and outside lab (before Pokedex). Handing off to VLM.")
                 self._transition_to_state('COMPLETED')
                 return False
         

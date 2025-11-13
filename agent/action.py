@@ -832,14 +832,29 @@ def _astar_pathfind_with_grid_data(
             #         return True
             return False
         
+        # Define ledge tile symbols (from map_stitcher.py behavior values)
+        # Ledges are one-way: you can only traverse them in their arrow direction
+        LEDGE_TILES = {
+            '→': 'RIGHT',   # JUMP_EAST (behavior 56)
+            '←': 'LEFT',    # JUMP_WEST (behavior 57)
+            '↑': 'UP',      # JUMP_NORTH (behavior 58)
+            '↓': 'DOWN',    # JUMP_SOUTH (behavior 59)
+            '↗': 'RIGHT',   # JUMP_NORTHEAST (behavior 60) - simplified to primary direction
+            '↖': 'LEFT',    # JUMP_NORTHWEST (behavior 61)
+            '↘': 'RIGHT',   # JUMP_SOUTHEAST (behavior 62)
+            '↙': 'LEFT',    # JUMP_SOUTHWEST (behavior 63)
+            'L': None       # Generic ledge (collision 3) - direction unknown, treat conservatively
+        }
+        
         # Helper function to check if tile is walkable
         def is_walkable(pos: Tuple[int, int]) -> bool:
             if pos not in location_grid:
                 return False
             tile = location_grid[pos]
-            # Walkable: path, grass, doors, stairs
+            # Walkable: path, grass, doors, stairs, AND LEDGES (with directional constraints)
             # Note: We include 'D' (doors) and 'S' (stairs) for pathfinding, but safety checks will filter dangerous ones
-            return tile in ['.', '_', '~', 'D', 'S']
+            # Ledges are conditionally walkable based on approach direction (checked in neighbor loop)
+            return tile in ['.', '_', '~', 'D', 'S'] or tile in LEDGE_TILES
         
         # Helper function to get movement cost for a tile
         # This allows us to prefer paths that avoid tall grass (wild encounters)
@@ -859,6 +874,11 @@ def _astar_pathfind_with_grid_data(
                 return 999  # Unknown/unwalkable tiles have very high cost
             
             tile = location_grid[pos]
+            
+            # Ledge tiles: Small penalty to avoid "point of no return" unless necessary
+            # Ledges are one-way, so taking them commits you to that path
+            if tile in LEDGE_TILES:
+                return 1.2  # Slight penalty - prefer normal paths if available
             
             if avoid_grass:
                 # SPEEDRUN MODE: Minimize wild encounters
@@ -914,13 +934,22 @@ def _astar_pathfind_with_grid_data(
                     if len(path) > 5:
                         path_preview += f" ... ({len(path)} steps)"
                     
-                    # Count grass tiles in path for debugging
+                    # Count special tiles in path for debugging
                     grass_count = sum(1 for pos in visited if location_grid.get(pos) == '~')
+                    ledge_count = sum(1 for pos in visited if location_grid.get(pos) in LEDGE_TILES)
                     total_cost = g_score
                     
                     print(f"✅ [A* MAP] Found path: {path_preview}")
                     print(f"   First step: {first_step}")
-                    print(f"   Path cost: {total_cost:.1f} (avoided {grass_count} grass tiles in search)")
+                    
+                    # Build informative cost message
+                    cost_parts = [f"Path cost: {total_cost:.1f}"]
+                    if grass_count > 0:
+                        cost_parts.append(f"avoided {grass_count} grass tiles")
+                    if ledge_count > 0:
+                        cost_parts.append(f"used {ledge_count} ledge(s)")
+                    print(f"   {', '.join(cost_parts)}")
+                    
                     return first_step
                 else:
                     print(f"⚠️ [A* MAP] Already at target")
@@ -935,7 +964,47 @@ def _astar_pathfind_with_grid_data(
                 if neighbor in visited:
                     continue
                 
-                # Skip if not walkable
+                # Check if neighbor exists in grid
+                if neighbor not in location_grid:
+                    continue
+                
+                neighbor_tile = location_grid[neighbor]
+                current_tile = location_grid[current]
+                
+                # === LEDGE PHYSICS: ONE-WAY TRAVERSAL ===
+                # Ledges can only be traversed in their arrow direction
+                # This prevents pathfinding from treating ledges as bidirectional paths
+                
+                # RULE 1: Entering a ledge - can only approach from the correct direction
+                if neighbor_tile in LEDGE_TILES:
+                    allowed_direction = LEDGE_TILES[neighbor_tile]
+                    
+                    # Generic ledge 'L' - we don't know direction, so be conservative
+                    # Only allow entering from above (most common in Pokemon)
+                    if allowed_direction is None:
+                        if direction != 'DOWN':
+                            # Blocked: trying to enter generic ledge from wrong direction
+                            continue
+                    # Directional ledge - must match arrow direction
+                    elif direction != allowed_direction:
+                        # Blocked: ledge arrow doesn't match movement direction
+                        continue
+                
+                # RULE 2: Exiting a ledge - if currently ON a ledge, must continue in that direction
+                # This prevents pathfinding from "turning around" mid-jump
+                if current_tile in LEDGE_TILES:
+                    ledge_direction = LEDGE_TILES[current_tile]
+                    
+                    if ledge_direction is None:
+                        # Generic ledge - assume downward motion only
+                        if direction != 'DOWN':
+                            continue
+                    elif direction != ledge_direction:
+                        continue
+                
+                # === END LEDGE PHYSICS ===
+                
+                # Now check basic walkability (after ledge rules)
                 if not is_walkable(neighbor):
                     continue
                 
@@ -947,7 +1016,7 @@ def _astar_pathfind_with_grid_data(
                 new_path = path + [direction]
                 
                 # Use tile cost instead of fixed cost of 1
-                # This makes A* prefer paths that avoid tall grass
+                # This makes A* prefer paths that avoid tall grass and unnecessary ledges
                 tile_cost = get_tile_cost(neighbor, avoid_grass=True)
                 new_g_score = g_score + tile_cost
                 new_f_score = new_g_score + manhattan_distance(neighbor, closest_target)
@@ -1954,9 +2023,10 @@ What button should we press? Respond with ONLY the button name (A, B, UP, DOWN, 
                 
                 # Handle WAIT_FOR_DIALOGUE (don't interrupt dialogue)
                 elif action_type == 'WAIT_FOR_DIALOGUE':
-                    logger.info(f"📍 [DIRECTIVE] Waiting for auto-dialogue to complete")
-                    # Let dialogue detection handle this - fall through
-                    pass
+                    logger.info(f"📍 [DIRECTIVE] Waiting for auto-dialogue to complete - returning empty action")
+                    # Return empty action to wait - don't fall through to VLM
+                    # This prevents the agent from trying to navigate while waiting for dialogue
+                    return []
                 
                 else:
                     logger.warning(f"📍 [DIRECTIVE] Unknown action type: {action_type}")
