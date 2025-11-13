@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 # Store tuples of (x, y, map_location) for the last 10 positions
 _recent_positions = deque(maxlen=10)
 
+# Track portal waiting - dict of {(x, y, map): frame_count}
+# Tracks how many frames we've waited at a specific portal tile
+_portal_wait_frames = {}
+
 # Track dismissed player monologues to avoid spamming A on them
 _dismissed_monologues = set()
 
@@ -1489,16 +1493,29 @@ Answer with just the button name:"""
                 logger.info(f"📍 [DIRECTIVE] Active directive: {description}")
                 print(f"📍 [DIRECTIVE] {description}")
                 
+                # Debug logging to check action_type and target
+                logger.info(f"🔍 [DIRECTIVE DEBUG] action_type='{action_type}', target={target}, type(target)={type(target)}")
+                print(f"🔍 [DIRECTIVE DEBUG] action_type='{action_type}', target={target}")
+                
                 # Handle DIALOGUE action - just press A to advance dialogue
                 if action_type == 'DIALOGUE':
                     logger.info(f"💬 [DIRECTIVE] Advancing dialogue with A button")
                     return ['A']
                 
                 # Handle NAVIGATE directive (navigate without interaction - for map transitions, ledges, etc.)
-                if action_type == 'NAVIGATE' and target:
-                    target_x, target_y, target_map = target
-                    
-                    logger.info(f"📍 [DIRECTIVE NAVIGATE] Moving to: ({target_x}, {target_y}, {target_map}) - NO interaction")
+                elif action_type == 'NAVIGATE' and target:
+                    try:
+                        logger.info(f"🔍 [NAVIGATE BLOCK] Entered NAVIGATE handler")
+                        print(f"🔍 [NAVIGATE BLOCK] Entered NAVIGATE handler")
+                        logger.info(f"🔍 [NAVIGATE BLOCK] About to unpack target: {target}")
+                        target_x, target_y, target_map = target
+                        logger.info(f"🔍 [NAVIGATE BLOCK] Successfully unpacked: x={target_x}, y={target_y}, map={target_map}")
+                        
+                        logger.info(f"📍 [DIRECTIVE NAVIGATE] Moving to: ({target_x}, {target_y}, {target_map}) - NO interaction")
+                    except Exception as nav_error:
+                        logger.error(f"❌ [NAVIGATE BLOCK] Exception in NAVIGATE handler: {nav_error}", exc_info=True)
+                        print(f"❌ [NAVIGATE BLOCK] Exception: {nav_error}")
+                        raise  # Re-raise to be caught by outer handler
                     
                     # Create NavigationGoal WITHOUT interaction
                     nav_goal = NavigationGoal(
@@ -1524,16 +1541,73 @@ Answer with just the button name:"""
                     
                     logger.info(f"📍 [DIRECTIVE NAV] Current: ({current_x}, {current_y}, {current_map}), Goal: ({goal_x}, {goal_y}, {goal_map})")
                     
+                    # Clear portal wait counter if we're NOT at any portal position
+                    # (Means we successfully warped or moved away)
+                    global _portal_wait_frames
+                    
+                    # CRITICAL: Detect if location changed (successful warp during movement)
+                    # If we were targeting a portal on map X and now we're on map Y, the warp worked!
+                    if goal_map not in current_map and _portal_wait_frames:
+                        logger.info(f"✅ [PORTAL] Location changed from {goal_map} to {current_map} - portal warp successful!")
+                        _portal_wait_frames.clear()  # Clear all portal tracking
+                    elif _portal_wait_frames:
+                        # Check if current position matches any tracked portal
+                        current_key = (current_x, current_y, current_map)
+                        to_remove = [key for key in _portal_wait_frames.keys() if key != current_key]
+                        for key in to_remove:
+                            del _portal_wait_frames[key]
+                            logger.info(f"✅ [PORTAL] Cleared wait counter for {key} - moved away from portal")
+                    
                     # Check if we're at the goal
                     dx = goal_x - current_x
                     dy = goal_y - current_y
                     distance = abs(dx) + abs(dy)
                     
-                    # At goal - just continue (no interaction)
+                    # CRITICAL: For pure NAVIGATE directives, we DON'T stop at the goal position
+                    # Portals trigger when you MOVE THROUGH them, not when you stand still on them
+                    # The location change detection will catch when the warp succeeds
+                    
+                    # Detect if location changed (successful warp)
+                    if goal_map not in current_map and _portal_wait_frames:
+                        logger.info(f"✅ [PORTAL] Location changed from {goal_map} to {current_map} - portal warp successful!")
+                        _portal_wait_frames.clear()
+                        # Goal achieved - let objective manager set new goal
+                        return []
+                    
+                    # At goal position on same map - check if this is actually a portal
+                    # If so, keep trying to move through it (portals need momentum)
                     if current_x == goal_x and current_y == goal_y and goal_map in current_map:
-                        logger.info(f"📍 [DIRECTIVE NAV] At goal position - continuing")
-                        nav_action = None  # Let VLM handle what's next
+                        portal_key = (goal_x, goal_y, goal_map)
+                        wait_count = _portal_wait_frames.get(portal_key, 0)
+                        _portal_wait_frames[portal_key] = wait_count + 1
+                        
+                        if wait_count < 5:
+                            # Try to move through the portal by continuing in the same direction
+                            logger.info(f"📍 [PORTAL] At portal tile ({goal_x}, {goal_y}), attempt {wait_count + 1}/5 - continuing movement to trigger warp")
+                            # Determine which direction to keep moving
+                            # For Oldale→Route101, we're at (10,19) and should keep moving DOWN
+                            # This will attempt to move to (10,20) which should trigger the warp
+                            if dx == 0 and dy >= 0:
+                                return ['DOWN']
+                            elif dx == 0 and dy < 0:
+                                return ['UP']
+                            elif dx > 0:
+                                return ['RIGHT']
+                            elif dx < 0:
+                                return ['LEFT']
+                            else:
+                                return []  # Exact center, wait one frame
+                        else:
+                            logger.warning(f"⚠️ [PORTAL] Failed to warp after 5 attempts at ({goal_x}, {goal_y})")
+                            _portal_wait_frames[portal_key] = 0
+                            return []  # Give up, let objective manager handle
+                    
+                    # Not at goal yet - navigate using A* pathfinding
                     else:
+                        # Special logging if within 1 tile (may trigger mid-movement warp)
+                        if distance == 1 and goal_map in current_map:
+                            logger.info(f"📍 [PORTAL] Within 1 tile of portal ({goal_x}, {goal_y}) - navigating to trigger warp")
+                        
                         # Not at goal yet - navigate using A*
                         nav_action = None
                         
@@ -1609,8 +1683,10 @@ Answer with just the button name:"""
                                     if pathfind_action:
                                         logger.info(f"📍 [DIRECTIVE NAV] A* recommends: {pathfind_action}")
                                         nav_action = [pathfind_action]
+                                        logger.info(f"📍 [DIRECTIVE NAV] Set nav_action to: {nav_action}")
                         
                         # Fallback: Simple directional movement
+                        logger.info(f"📍 [DIRECTIVE NAV] After A* block, nav_action = {nav_action}")
                         if not nav_action:
                             if abs(dx) > abs(dy):
                                 nav_action = ['RIGHT'] if dx > 0 else ['LEFT']
@@ -1619,12 +1695,15 @@ Answer with just the button name:"""
                             logger.info(f"📍 [DIRECTIVE NAV] Using simple direction: {nav_action[0]}")
                     
                     # If we have a navigation action, return it
+                    logger.info(f"📍 [DIRECTIVE NAV] Before final check, nav_action = {nav_action}")
                     if nav_action:
                         logger.info(f"📍 [DIRECTIVE NAV] Executing: {nav_action[0]}")
                         return nav_action
+                    else:
+                        logger.warning(f"⚠️ [DIRECTIVE NAV] nav_action is None/empty, NOT returning")
                 
                 # Handle NAVIGATE_AND_INTERACT directive (most common)
-                if action_type == 'NAVIGATE_AND_INTERACT' and target:
+                elif action_type == 'NAVIGATE_AND_INTERACT' and target:
                     target_x, target_y, target_map = target
                     
                     logger.info(f"📍 [DIRECTIVE] Converting to NavigationGoal: ({target_x}, {target_y}, {target_map})")

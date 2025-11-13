@@ -468,10 +468,11 @@ class ObjectiveManager:
                     'milestone': None
                 }
             elif 'OLDALE TOWN' in current_location:
-                # From Oldale, go south to Route 101 portal at (10, 18)
+                # From Oldale, go south to Route 101 portal at (10, 19)
+                # CRITICAL: Portal is at Y=19, not Y=18! Agent was getting stuck at 18.
                 return {
                     'action': 'NAVIGATE',
-                    'target': (10, 18, 'OLDALE TOWN'),
+                    'target': (10, 19, 'OLDALE TOWN'),
                     'description': 'Walk south to Route 101 portal at bottom of Oldale Town',
                     'milestone': None
                 }
