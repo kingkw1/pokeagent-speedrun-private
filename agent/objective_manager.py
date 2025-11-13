@@ -502,6 +502,29 @@ class ObjectiveManager:
                     'milestone': 'RECEIVED_POKEDEX'
                 }
         
+        # === EXIT BIRCH LAB AFTER RECEIVING POKEDEX ===
+        # CRITICAL FIX: After receiving Pokedex, agent needs directive to exit lab
+        # This was causing the agent to get stuck after dialogue completion
+        if is_milestone_complete('RECEIVED_POKEDEX') and not is_milestone_complete('ROUTE_102'):
+            if 'BIRCHS LAB' in current_location or 'BIRCH LAB' in current_location:
+                # Exit lab - door is at (6, 13) inside lab coordinates
+                # This will auto-warp back to Littleroot Town
+                return {
+                    'action': 'NAVIGATE',
+                    'target': (6, 13, current_location),  # Use current_location to match the exact map name
+                    'description': 'Exit Birch Lab (completed Pokedex dialogue)',
+                    'milestone': None
+                }
+            elif 'LITTLEROOT TOWN' in current_location:
+                # Head to Route 102 (go north to Route 101, then northwest to Route 102)
+                # First, get to Route 101 portal at (7, 1) in Littleroot
+                return {
+                    'action': 'NAVIGATE',
+                    'target': (7, 1, 'LITTLEROOT TOWN'),
+                    'description': 'Walk north to Route 101 (heading to Route 102)',
+                    'milestone': None
+                }
+        
         # === ROUTE 102 TRAINERS ===
         if is_milestone_complete('ROUTE_102') and not is_milestone_complete('ROUTE_102_CLEARED'):
             # Battle trainers on Route 102

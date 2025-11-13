@@ -852,6 +852,17 @@ async def get_comprehensive_state():
         # This avoids expensive operations on rapid requests
         state = env.get_comprehensive_state()
         
+        # CRITICAL FIX: Check milestones immediately before returning state
+        # The background milestone updater only runs every 5 seconds, which can cause
+        # milestones to be missed when the agent queries state right after triggering one.
+        # This ensures the agent always sees up-to-date milestone status.
+        if env.milestone_tracker:
+            try:
+                env.check_and_update_milestones(state)
+                logger.debug("Immediate milestone check completed in /state endpoint")
+            except Exception as e:
+                logger.debug(f"Milestone check in /state failed: {e}")
+        
         # CORRECTED: Trust the memory reader's dialogue detection
         # The memory reader CORRECTLY detects dialogue by reading game memory
         # Don't override with broken OCR or stale caches
