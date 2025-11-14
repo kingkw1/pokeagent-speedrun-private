@@ -59,6 +59,8 @@ class BattleBot:
         self._dialogue_history = []  # Track recent dialogue to detect trainer battles
         self._post_battle_dialogue = False  # Track if we're in post-battle dialogue
         self._battle_start_tile = None  # Track the tile type when battle started (for wild detection)
+        self._last_overworld_tile = None  # Track the last tile we were on before battle (updated every non-battle step)
+        self._was_in_battle_last_step = False  # Track previous battle state to detect transitions
         logger.info("🥊 [BATTLE BOT] Initialized with wild/trainer differentiation")
     
     def should_handle(self, state_data: Dict[str, Any]) -> bool:
@@ -69,6 +71,9 @@ class BattleBot:
         - Currently in battle, OR
         - In post-battle dialogue (battle just ended but dialogue still showing)
         
+        This method also tracks the last overworld tile on every step, so when a battle
+        starts, we know what terrain the player was on (critical for wild vs trainer detection).
+        
         Args:
             state_data: Current game state
             
@@ -77,6 +82,71 @@ class BattleBot:
         """
         game_data = state_data.get('game', {})
         in_battle = game_data.get('in_battle', False)
+        player_data = state_data.get('player', {})
+        
+        # 🔍 TILE TRACKING: Update last overworld tile BEFORE checking battle state
+        # This ensures we capture the tile from the step BEFORE battle started
+        if not in_battle:
+            # Get tile from map stitcher
+            map_data = state_data.get('map', {})
+            player_data = state_data.get('player', {})
+            x = player_data.get('x')
+            y = player_data.get('y')
+            
+            # Get player coordinates from map (they might be offset)
+            player_coords = map_data.get('player_coords', {})
+            map_x = player_coords.get('x', x)
+            map_y = player_coords.get('y', y)
+            
+            # Try to get tile behavior from metatile_behaviors lookup
+            current_tile = 'UNKNOWN'
+            
+            if 'tiles' in map_data and map_data['tiles'] and map_x is not None and map_y is not None:
+                # tiles is a 2D list: tiles[row][col] = [tile_id, behavior, collision, elevation]
+                tiles_grid = map_data['tiles']
+                
+                # Map coordinates might need adjustment - try to find player tile
+                if 0 <= map_y < len(tiles_grid) and 0 <= map_x < len(tiles_grid[map_y]):
+                    tile = tiles_grid[map_y][map_x]
+                    
+                    if len(tile) >= 2:
+                        behavior_code = tile[1]  # behavior is at index 1
+                        # Convert behavior code to name
+                        try:
+                            from pokemon_env.enums import MetatileBehavior
+                            behavior_enum = MetatileBehavior(behavior_code)
+                            current_tile = behavior_enum.name
+                            logger.debug(f"✅ [TILE] At ({map_x}, {map_y}): {current_tile} (code={behavior_code})")
+                        except (ValueError, ImportError) as e:
+                            logger.warning(f"⚠️ [TILE] Error converting behavior code {behavior_code}: {e}")
+            
+            # Log tile value (only when it changes or is unknown)
+            if current_tile != self._last_overworld_tile:
+                logger.info(f"🌍 [TILE] Changed to: '{current_tile}' (was: '{self._last_overworld_tile}')")
+            
+            if current_tile != 'UNKNOWN':
+                old_tile = self._last_overworld_tile
+                self._last_overworld_tile = current_tile
+            else:
+                logger.debug(f"⚠️ [TILE] Could not determine tile behavior (map data unavailable)")
+            
+            # 💬 DIALOGUE TRACKING: Also track dialogue BEFORE battle starts
+            # This captures important context like "I'll give you a taste of what being a TRAINER is like"
+            latest_observation = state_data.get('latest_observation', {})
+            visual_data = latest_observation.get('visual_data', {})
+            on_screen_text = visual_data.get('on_screen_text', {})
+            dialogue_text = on_screen_text.get('raw_dialogue', '') or on_screen_text.get('dialogue', '')
+            
+            if dialogue_text and dialogue_text not in self._dialogue_history:
+                self._dialogue_history.append(dialogue_text)
+                if len(self._dialogue_history) > 5:
+                    self._dialogue_history.pop(0)
+                logger.info(f"💬 [PRE-BATTLE DIALOGUE] Captured: '{dialogue_text[:60]}'...")
+        else:
+            # Also print when IN battle to see tile status
+            current_tile = player_data.get('current_tile_behavior', 'UNKNOWN')
+            print(f"🌍 [TILE TRACKING] IN BATTLE - current_tile_behavior: '{current_tile}', last_overworld_tile: '{self._last_overworld_tile}'")
+            logger.info(f"🌍 [TILE TRACKING] IN BATTLE - not updating tile (last_overworld_tile='{self._last_overworld_tile}')")
         
         # Check if we're in post-battle dialogue
         latest_observation = state_data.get('latest_observation', {})
@@ -97,15 +167,26 @@ class BattleBot:
         
         is_post_battle_dialogue = any(indicator in dialogue_lower for indicator in post_battle_indicators)
         
-        if in_battle and not self._battle_started:
-            # New battle started - capture the tile we were on when battle began
+        # 🆕 BATTLE START DETECTION: Check if battle just started (transition from False → True)
+        if in_battle and not self._was_in_battle_last_step:
+            # New battle started - use the tile from LAST STEP (before battle)
             self._battle_started = True
             self._post_battle_dialogue = False
             
-            # Store the tile type when battle started (for wild battle detection)
-            player_data = state_data.get('player', {})
-            self._battle_start_tile = player_data.get('current_tile_behavior', 'UNKNOWN')
-            logger.info(f"🥊 [BATTLE BOT] New battle started on tile: {self._battle_start_tile}")
+            # Use the tile we were on BEFORE battle started (not current tile which is now battle screen)
+            self._battle_start_tile = self._last_overworld_tile or 'UNKNOWN'
+            
+            logger.info(f"=" * 80)
+            logger.info(f"🥊 [BATTLE START] New battle detected!")
+            logger.info(f"   _last_overworld_tile: '{self._last_overworld_tile}'")
+            logger.info(f"   _battle_start_tile: '{self._battle_start_tile}'")
+            logger.info(f"   current_tile_behavior (in battle): '{player_data.get('current_tile_behavior', 'N/A')}'")
+            logger.info(f"=" * 80)
+            
+            # Log if we have no tile info (shouldn't happen, but good to catch)
+            if self._battle_start_tile == 'UNKNOWN':
+                logger.warning(f"⚠️ [BATTLE BOT] Battle started but no overworld tile tracked! This shouldn't happen.")
+                logger.warning(f"   This likely means battle started before we captured any overworld tile.")
             
             battle_type = self._detect_battle_type(state_data)
             if battle_type != BattleType.UNKNOWN:
@@ -135,6 +216,9 @@ class BattleBot:
             self._run_attempts = 0
             self._dialogue_history = []
             self._battle_start_tile = None
+        
+        # Update battle state tracking for next step
+        self._was_in_battle_last_step = in_battle
         
         # Handle if in battle OR in post-battle dialogue
         should_handle = in_battle or self._post_battle_dialogue
@@ -167,18 +251,30 @@ class BattleBot:
             logger.warning("⚠️ [BATTLE TYPE] No battle_info - cannot detect")
             return BattleType.UNKNOWN
         
-        # PRIORITY 1: Check if battle started in tall grass → assume WILD
+        # PRIORITY 1: Check terrain - infer battle type from tile
         grass_tiles = ['TALL_GRASS', 'LONG_GRASS', 'SHORT_GRASS']
-        if self._battle_start_tile in grass_tiles:
-            # Default assumption: battle in grass = wild battle
-            assumed_type = BattleType.WILD
-            logger.info(f"🌿 [BATTLE TYPE] Battle started in {self._battle_start_tile} → assuming WILD (will check for trainer override)")
-        else:
-            # Not in grass - unknown until we find evidence
-            assumed_type = BattleType.UNKNOWN
-            logger.info(f"📍 [BATTLE TYPE] Battle started on {self._battle_start_tile} → type unknown (waiting for evidence)")
+        water_tiles = ['WATER', 'POND', 'OCEAN', 'DIVE', 'SURF']
         
-        # PRIORITY 2: Check dialogue for TRAINER indicators (overrides terrain assumption)
+        logger.info(f"🔍 [BATTLE TYPE DETECT] Starting detection...")
+        logger.info(f"   _battle_start_tile: '{self._battle_start_tile}'")
+        
+        if self._battle_start_tile in grass_tiles or self._battle_start_tile in water_tiles:
+            # Default assumption: battle in grass/water = wild battle
+            assumed_type = BattleType.WILD
+            logger.info(f"🌿 [BATTLE TYPE] Battle in {self._battle_start_tile} → assuming WILD (dialogue can override)")
+        elif self._battle_start_tile == 'UNKNOWN' or self._battle_start_tile is None:
+            # No tile data - MUST wait for dialogue/memory evidence
+            assumed_type = BattleType.UNKNOWN
+            logger.warning(f"⚠️ [BATTLE TYPE] No tile data (_battle_start_tile={self._battle_start_tile})")
+            logger.warning(f"   Will rely on dialogue/memory flags")
+        else:
+            # Battle on NORMAL tile (not grass/water) → assume TRAINER
+            # Wild Pokemon only appear in grass/water, so battles elsewhere are trainers
+            assumed_type = BattleType.TRAINER
+            logger.info(f"📍 [BATTLE TYPE] Battle on '{self._battle_start_tile}' (not grass/water) → assuming TRAINER")
+            logger.info(f"   Wild battles only occur in grass/water")
+        
+        # PRIORITY 2: Check dialogue for TRAINER indicators (HIGHEST PRIORITY - overrides everything)
         latest_observation = state_data.get('latest_observation', {})
         visual_data = latest_observation.get('visual_data', {})
         on_screen_text = visual_data.get('on_screen_text', {})
@@ -195,7 +291,12 @@ class BattleBot:
         current_dialogue_lower = dialogue_text.lower() if dialogue_text else ''
         all_dialogue = (current_dialogue_lower + ' ' + dialogue_combined).strip()
         
-        # Trainer battle indicators (these OVERRIDE terrain assumption)
+        logger.info(f"🔍 [BATTLE TYPE DETECT] Checking dialogue for battle type keywords...")
+        logger.info(f"   Current dialogue: '{dialogue_text[:50] if dialogue_text else '(empty)'}...'")
+        logger.info(f"   Dialogue history: {self._dialogue_history}")
+        logger.info(f"   Combined (lowercase): '{all_dialogue[:100]}...'")
+        
+        # Trainer battle indicators (these OVERRIDE everything - terrain AND memory flags)
         trainer_keywords = [
             "trainer",           # "Trainer sent out" or "Trainer may sent out"
             "being a trainer",   # "I'll give you a taste of what being a TRAINER is like"
@@ -205,25 +306,47 @@ class BattleBot:
             "foe ",              # "Foe TORCHIC" (trainer battles use "Foe" prefix)
         ]
         
-        # CRITICAL: If we see trainer indicators, override terrain assumption
+        # Wild battle indicators (override memory if present)
+        wild_keywords = [
+            "wild ",             # "Wild WURMPLE appeared!"
+            "appeared!",         # Wild battles say "appeared", trainers say "sent out"
+        ]
+        
+        # Check for trainer evidence (highest priority)
         has_trainer_evidence = any(keyword in all_dialogue for keyword in trainer_keywords)
+        
+        logger.info(f"   Trainer keywords found: {has_trainer_evidence}")
+        if has_trainer_evidence:
+            matching_keywords = [kw for kw in trainer_keywords if kw in all_dialogue]
+            logger.info(f"   Matching keywords: {matching_keywords}")
         
         if has_trainer_evidence:
             self._current_battle_type = BattleType.TRAINER
-            logger.info(f"⚔️ [BATTLE TYPE] TRAINER BATTLE detected via dialogue (overriding terrain assumption)")
+            logger.info(f"⚔️ [BATTLE TYPE] TRAINER BATTLE detected via dialogue (OVERRIDING all other detection)")
             logger.info(f"   Dialogue evidence: '{all_dialogue[:100]}'")
             print(f"⚔️ [BATTLE TYPE] TRAINER BATTLE - Fighting to win! (dialogue override)")
             return BattleType.TRAINER
+        
+        # Check for wild evidence
+        has_wild_evidence = any(keyword in all_dialogue for keyword in wild_keywords)
+        if has_wild_evidence:
+            self._current_battle_type = BattleType.WILD
+            logger.info(f"🌿 [BATTLE TYPE] WILD BATTLE detected via dialogue (OVERRIDING terrain/memory)")
+            logger.info(f"   Dialogue evidence: '{all_dialogue[:100]}'")
+            print(f"🏃 [BATTLE TYPE] WILD BATTLE - Will run away! (dialogue confirms)")
+            return BattleType.WILD
         
         # If we have a terrain-based assumption and no trainer evidence, use it
         if assumed_type != BattleType.UNKNOWN:
             self._current_battle_type = assumed_type
             logger.info(f"✅ [BATTLE TYPE] {assumed_type.value.upper()} BATTLE (based on terrain: {self._battle_start_tile})")
+            logger.info(f"   No trainer dialogue found, using terrain-based detection")
             if assumed_type == BattleType.WILD:
                 print(f"🏃 [BATTLE TYPE] WILD BATTLE - Will run away! (in grass)")
             return assumed_type
         
         # PRIORITY 3: Check memory flags (fallback if terrain + dialogue inconclusive)
+        logger.info(f"🔍 [BATTLE TYPE DETECT] No terrain assumption, checking memory flags...")
         battle_phase = battle_info.get('battle_phase', 0)
         battle_phase_name = battle_info.get('battle_phase_name', 'unknown')
         
