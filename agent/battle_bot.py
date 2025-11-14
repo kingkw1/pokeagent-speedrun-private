@@ -96,6 +96,11 @@ class BattleBot:
         'MASQUERAIN',   # Bug/Flying
         'SHEDINJA',     # Bug/Ghost
         'TORCHIC',      # Fire
+        'CASCOON',       # Bug
+        'SEEDOT',        # Grass/Normal
+        'SILCOON',       # Bug
+        'TREECKO',       # Grass
+
     }
     
     # Pokemon species where Absorb is EFFECTIVE (neutral or super effective)
@@ -111,27 +116,11 @@ class BattleBot:
         'RALTS',        # Psychic
         'MEDITE',       # Fighting (Meditite)
         'MEDITITE',     # Fighting (alternate spelling)
+        'MARILL',       # Water/Fairy 
+        'MAGIKARP',     # Water
+        'MUDKIP',       # Water/Ground
+        'SLAKOTH',      # Normal
     }
-    
-
-    """
-    need to address following additions:
-    cascoon
-
-    magikarp
-
-    marill
-
-    mudkip
-
-    seedot
-
-    silcoon
-
-    slakoth
-
-    treecko
-    """
 
     def __init__(self):
         """Initialize the battle bot"""
@@ -380,10 +369,18 @@ class BattleBot:
         print(f"🔍 [BATTLE TYPE DEBUG] dialogue_text from perception: '{dialogue_text}'")
         print(f"🔍 [BATTLE TYPE DEBUG] on_screen_text dict: {on_screen_text}")
         
-        # Add to dialogue history (keep last 5 messages)
-        if dialogue_text and dialogue_text not in self._dialogue_history:
-            self._dialogue_history.append(dialogue_text)
-            if len(self._dialogue_history) > 5:
+        # Add to dialogue history (keep last 10 messages for Pokemon switch detection)
+        # CRITICAL: Track ALL dialogue to detect when trainers switch Pokemon
+        if dialogue_text:
+            if dialogue_text not in self._dialogue_history:
+                self._dialogue_history.append(dialogue_text)
+                logger.info(f"💬 [DIALOGUE ADDED] '{dialogue_text}' (history now has {len(self._dialogue_history)} entries)")
+                print(f"💬 [DIALOGUE ADDED] '{dialogue_text[:50]}'")
+            else:
+                logger.debug(f"💬 [DIALOGUE SKIP] Duplicate: '{dialogue_text[:50]}'")
+            
+            # Keep last 10 messages (increased from 5 to better track Pokemon switches)
+            if len(self._dialogue_history) > 10:
                 self._dialogue_history.pop(0)
         
         # Check BOTH current dialogue and dialogue history for battle type patterns
@@ -604,13 +601,51 @@ class BattleBot:
         
         Returns:
             Species name (e.g., "POOCHYENA") or "Unknown" if not found
+        
+        CRITICAL: Always check the MOST RECENT dialogue first to detect Pokemon switches.
+        If trainer sends out a new Pokemon, we must update the cache immediately.
         """
-        # Check if we already cached the species
+        logger.info(f"🔍 [SPECIES EXTRACT] Searching dialogue history ({len(self._dialogue_history)} entries)")
+        print(f"🔍 [SPECIES EXTRACT] Dialogue history: {[d[:40] for d in self._dialogue_history]}")
+        print(f"🔍 [SPECIES EXTRACT] Cached opponent: '{self._opponent_species_from_dialogue}'")
+        
+        # CRITICAL: Check the most recent 3 dialogue entries FIRST for Pokemon switches
+        # This ensures we detect when trainers send out new Pokemon (e.g., Zigzagoon → Shroomish)
+        for i, dialogue_entry in enumerate(list(reversed(self._dialogue_history))[:3]):
+            dialogue_lower = dialogue_entry.lower()
+            
+            # Check for "sent out" pattern (trainer switching Pokemon)
+            if 'sent out' in dialogue_lower:
+                logger.info(f"🔍 [SPECIES RECENT] Found 'sent out' in recent dialogue: '{dialogue_entry}'")
+                
+                try:
+                    # Extract species name after "sent out"
+                    after_sent = dialogue_entry.lower().split('sent out')[1]
+                    species = after_sent.strip(' !.').upper()
+                    species_name = species.split()[0] if species.split() else 'Unknown'
+                    
+                    # Fix common VLM misspellings
+                    species_name = self._fix_species_name(species_name)
+                    
+                    # Update cache with new Pokemon
+                    if species_name != self._opponent_species_from_dialogue:
+                        logger.info(f"🔄 [SPECIES SWITCH] Opponent changed: '{self._opponent_species_from_dialogue}' → '{species_name}'")
+                        print(f"🔄 [SPECIES SWITCH] Opponent changed: '{self._opponent_species_from_dialogue}' → '{species_name}'")
+                    
+                    self._opponent_species_from_dialogue = species_name
+                    logger.info(f"✅ [SPECIES] Current opponent: '{species_name}'")
+                    print(f"✅ [SPECIES] Found opponent: {species_name}")
+                    return species_name
+                except Exception as e:
+                    logger.warning(f"⚠️ [SPECIES] Failed to parse 'sent out' dialogue: {e}")
+                    continue
+        
+        # If no recent "sent out", use cached value if available
         if self._opponent_species_from_dialogue:
             logger.info(f"🔍 [SPECIES CACHE] Using cached opponent: '{self._opponent_species_from_dialogue}'")
             return self._opponent_species_from_dialogue
         
-        logger.info(f"🔍 [SPECIES EXTRACT] Searching dialogue history ({len(self._dialogue_history)} entries)")
+        logger.info(f"🔍 [SPECIES EXTRACT] No recent 'sent out', searching full history ({len(self._dialogue_history)} entries)")
         
         # Search recent dialogue for "sent out" or "sent" pattern (trainer battles)
         for i, dialogue_entry in enumerate(reversed(self._dialogue_history)):
@@ -846,6 +881,26 @@ class BattleBot:
             game_data = state_data.get('game', {})
             battle_info = game_data.get('battle_info', {})
             in_battle = game_data.get('in_battle', False)
+            
+            # 💬 CRITICAL: Track dialogue on EVERY battle step (not just when detecting battle type)
+            # This ensures we capture Pokemon switch messages like "LASS TIANA sent out SHROOMISH!"
+            # Must happen BEFORE battle type lock check, so it runs regardless of lock status
+            latest_observation = state_data.get('latest_observation', {})
+            visual_data = latest_observation.get('visual_data', {})
+            on_screen_text = visual_data.get('on_screen_text', {})
+            dialogue_text = on_screen_text.get('raw_dialogue', '') or on_screen_text.get('dialogue', '')
+            
+            if dialogue_text:
+                if dialogue_text not in self._dialogue_history:
+                    self._dialogue_history.append(dialogue_text)
+                    logger.info(f"💬 [DIALOGUE ADDED] '{dialogue_text}' (history now has {len(self._dialogue_history)} entries)")
+                    print(f"💬 [DIALOGUE ADDED] '{dialogue_text[:50]}'")
+                else:
+                    logger.debug(f"💬 [DIALOGUE SKIP] Duplicate: '{dialogue_text[:50]}'")
+                
+                # Keep last 10 messages (increased from 5 to better track Pokemon switches)
+                if len(self._dialogue_history) > 10:
+                    self._dialogue_history.pop(0)
             
             # If we're in post-battle dialogue (not in_battle but should_handle returned True),
             # just advance dialogue

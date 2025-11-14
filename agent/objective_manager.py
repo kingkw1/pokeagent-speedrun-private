@@ -447,25 +447,25 @@ class ObjectiveManager:
         
         # === ROUTE 102 TRAINERS (SPECIAL CASE) ===
         # Navigate to specific trainer positions
-        if is_milestone_complete('ROUTE_102') and not is_milestone_complete('ROUTE_102_CLEARED'):
-            # Battle trainers on Route 102
-            # Trainer positions from gameplay script: (33,15), (25,14), (19,7)
-            trainer_positions = [
-                (33, 15, 'ROUTE 102', 'Trainer 1'),
-                (25, 14, 'ROUTE 102', 'Trainer 2'),
-                (19, 7, 'ROUTE 102', 'Trainer 3')
-            ]
+        # if is_milestone_complete('ROUTE_102') and not is_milestone_complete('PETALBURG_CITY'):
+            # # Battle trainers on Route 102
+            # # Trainer positions from gameplay script: (33,15), (25,14), (19,7)
+            # trainer_positions = [
+            #     (33, 15, 'ROUTE 102', 'Trainer 1'),
+            #     (25, 14, 'ROUTE 102', 'Trainer 2'),
+            #     (19, 7, 'ROUTE 102', 'Trainer 3')
+            # ]
             
-            if 'ROUTE 102' in current_location or 'ROUTE102' in current_location:
-                # Check which trainers we've already battled (would need battle tracking)
-                # For now, just navigate to first trainer position
-                target_x, target_y, target_map, trainer_name = trainer_positions[0]
-                return {
-                    'goal_coords': (target_x, target_y, target_map),
-                    'should_interact': True,  # Will trigger battle when we reach trainer
-                    'description': f'Navigate to {trainer_name} for battle',
-                    'milestone': None  # Intermediate battles don't have milestones
-                }
+            # if 'ROUTE 102' in current_location or 'ROUTE102' in current_location:
+            #     # Check which trainers we've already battled (would need battle tracking)
+            #     # For now, just navigate to first trainer position
+            #     target_x, target_y, target_map, trainer_name = trainer_positions[0]
+            #     return {
+            #         'goal_coords': (target_x, target_y, target_map),
+            #         'should_interact': True,  # Will trigger battle when we reach trainer
+            #         'description': f'Navigate to {trainer_name} for battle',
+            #         'milestone': None  # Intermediate battles don't have milestones
+            #     }
         
         # SPECIAL CASE: On Route 103 but rival battle not complete
         # Logic: if ROUTE_103 complete AND RECEIVED_POKEDEX not complete AND rival battle not complete
@@ -520,6 +520,11 @@ class ObjectiveManager:
             target_location = 'ROUTE_102'
             expected_milestone = 'ROUTE_102'
             journey_reason = "Head to Route 102 to continue adventure"
+            
+        elif is_milestone_complete('ROUTE_102') and not is_milestone_complete('PETALBURG_CITY'):
+            target_location = 'PETALBURG_CITY'
+            expected_milestone = 'PETALBURG_CITY'
+            journey_reason = "Navigate west through Route 102 to Petalburg City"
         
         # If we have a target, use the navigation planner
         if target_location:
@@ -680,6 +685,11 @@ class ObjectiveManager:
         elif is_milestone_complete('RECEIVED_POKEDEX') and not is_milestone_complete('ROUTE_102'):
             target_location = 'ROUTE_102'
             journey_reason = "Head to Route 102 after receiving Pokedex"
+        
+        # ROUTE_102 → PETALBURG_CITY
+        elif is_milestone_complete('ROUTE_102') and not is_milestone_complete('PETALBURG_CITY'):
+            target_location = 'PETALBURG_CITY'
+            journey_reason = "Navigate west through Route 102 to Petalburg City"
         
         # DEBUG: Log what target was determined
         logger.info(f"🔍 [TARGET DEBUG] target_location={target_location}, target_coords={target_coords}, graph_location={graph_location}")
