@@ -892,6 +892,13 @@ class ObjectiveManager:
                             'description': f'Failed to plan journey from {graph_location} to {target_location}',
                             'error': True
                         }
+                elif self.navigation_planner.journey_start != graph_location:
+                    # Location changed unexpectedly (agent wandered or warped) - replan from current location
+                    print(f"\n⚠️ [NAV PLANNER] Location changed unexpectedly: planned start was {self.navigation_planner.journey_start}, now at {graph_location}")
+                    print(f"Replanning journey from current location...\n")
+                    self.navigation_planner.clear_plan()
+                    # Recursive call with same parameters
+                    return self._get_navigation_planner_directive(state_data, target_location, target_coords, journey_reason)
                 elif self.navigation_planner.journey_end != target_location:
                     # Journey target changed - replan
                     print(f"\n⚠️ [NAV PLANNER] Target changed from {self.navigation_planner.journey_end} to {target_location}")
