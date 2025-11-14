@@ -680,31 +680,30 @@ class BattleBot:
             
             # Pattern 2: "YOUNGSTER CALVIN sent POOCHYENA!" (VLM sometimes drops "out")
             elif ' sent ' in dialogue_lower and 'sent out' not in dialogue_lower:
-                # Make sure it's a trainer name, not just random "sent"
-                # Trainer names typically come before "sent"
-                if any(trainer in dialogue_lower for trainer in ['youngster', 'lass', 'bug catcher', 'school kid', 'calvin', 'casey']):
-                    logger.info(f"🔍 [SPECIES] Found 'sent' (without out) in: '{dialogue_entry}'")
+                # VLM sometimes drops "out" from "sent out"
+                # Just look for "sent" - trainers send out Pokemon, no need to validate trainer names
+                logger.info(f"🔍 [SPECIES] Found 'sent' (without out) in: '{dialogue_entry}'")
+                
+                try:
+                    # Split on "sent" and take the part after
+                    after_sent = dialogue_entry.lower().split(' sent ')[1]
+                    # Remove punctuation and whitespace
+                    species = after_sent.strip(' !.').upper()
+                    # Take first word (species name)
+                    species_name = species.split()[0] if species.split() else 'Unknown'
                     
-                    try:
-                        # Split on "sent" and take the part after
-                        after_sent = dialogue_entry.lower().split(' sent ')[1]
-                        # Remove punctuation and whitespace
-                        species = after_sent.strip(' !.').upper()
-                        # Take first word (species name)
-                        species_name = species.split()[0] if species.split() else 'Unknown'
-                        
-                        logger.info(f"✅ [SPECIES] Extracted (no 'out'): '{species_name}' from '{dialogue_entry}'")
-                        print(f"✅ [SPECIES] Found opponent: {species_name}")
-                        
-                        # Fix common VLM misspellings
-                        species_name = self._fix_species_name(species_name)
-                        
-                        # Cache the result
-                        self._opponent_species_from_dialogue = species_name
-                        return species_name
-                    except Exception as e:
-                        logger.warning(f"⚠️ [SPECIES] Failed to parse 'sent' dialogue: {e}")
-                        continue
+                    logger.info(f"✅ [SPECIES] Extracted (no 'out'): '{species_name}' from '{dialogue_entry}'")
+                    print(f"✅ [SPECIES] Found opponent: {species_name}")
+                    
+                    # Fix common VLM misspellings
+                    species_name = self._fix_species_name(species_name)
+                    
+                    # Cache the result
+                    self._opponent_species_from_dialogue = species_name
+                    return species_name
+                except Exception as e:
+                    logger.warning(f"⚠️ [SPECIES] Failed to parse 'sent' dialogue: {e}")
+                    continue
             
             # Pattern: "Wild ZIGZAGOON appeared!"
             if 'wild' in dialogue_lower and 'appeared' in dialogue_lower:
