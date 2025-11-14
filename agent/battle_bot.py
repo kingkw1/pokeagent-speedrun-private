@@ -343,21 +343,27 @@ class BattleBot:
         logger.info(f"🔍 [BATTLE TYPE DETECT] Starting detection...")
         logger.info(f"   _battle_start_tile: '{self._battle_start_tile}'")
         
-        if self._battle_start_tile in grass_tiles or self._battle_start_tile in water_tiles:
-            # Default assumption: battle in grass/water = wild battle
-            assumed_type = BattleType.WILD
-            logger.info(f"🌿 [BATTLE TYPE] Battle in {self._battle_start_tile} → assuming WILD (dialogue can override)")
-        elif self._battle_start_tile == 'UNKNOWN' or self._battle_start_tile is None:
-            # No tile data - MUST wait for dialogue/memory evidence
-            assumed_type = BattleType.UNKNOWN
-            logger.warning(f"⚠️ [BATTLE TYPE] No tile data (_battle_start_tile={self._battle_start_tile})")
-            logger.warning(f"   Will rely on dialogue/memory flags")
-        else:
-            # Battle on NORMAL tile (not grass/water) → assume TRAINER
-            # Wild Pokemon only appear in grass/water, so battles elsewhere are trainers
-            assumed_type = BattleType.TRAINER
-            logger.info(f"📍 [BATTLE TYPE] Battle on '{self._battle_start_tile}' (not grass/water) → assuming TRAINER")
-            logger.info(f"   Wild battles only occur in grass/water")
+        # TILE LOGIC DISABLED - unreliable, defaults to WILD unless dialogue proves TRAINER
+        assumed_type = BattleType.WILD  # SAFE DEFAULT: Try to run, fail if trainer
+        logger.info(f"🌿 [BATTLE TYPE] Defaulting to WILD (tile logic disabled - safer to fail running than fight wild)")
+        logger.info(f"   Tile was: '{self._battle_start_tile}' (ignored)")
+        
+        # # OLD TILE LOGIC (COMMENTED OUT - UNRELIABLE):
+        # if self._battle_start_tile in grass_tiles or self._battle_start_tile in water_tiles:
+        #     # Default assumption: battle in grass/water = wild battle
+        #     assumed_type = BattleType.WILD
+        #     logger.info(f"🌿 [BATTLE TYPE] Battle in {self._battle_start_tile} → assuming WILD (dialogue can override)")
+        # elif self._battle_start_tile == 'UNKNOWN' or self._battle_start_tile is None:
+        #     # No tile data - MUST wait for dialogue/memory evidence
+        #     assumed_type = BattleType.UNKNOWN
+        #     logger.warning(f"⚠️ [BATTLE TYPE] No tile data (_battle_start_tile={self._battle_start_tile})")
+        #     logger.warning(f"   Will rely on dialogue/memory flags")
+        # else:
+        #     # Battle on NORMAL tile (not grass/water) → assume TRAINER
+        #     # Wild Pokemon only appear in grass/water, so battles elsewhere are trainers
+        #     assumed_type = BattleType.TRAINER
+        #     logger.info(f"📍 [BATTLE TYPE] Battle on '{self._battle_start_tile}' (not grass/water) → assuming TRAINER")
+        #     logger.info(f"   Wild battles only occur in grass/water")
         
         # PRIORITY 2: Check dialogue for TRAINER indicators (HIGHEST PRIORITY - overrides everything)
         latest_observation = state_data.get('latest_observation', {})
@@ -437,13 +443,13 @@ class BattleBot:
             print(f"⚔️ [BATTLE TYPE] TRAINER BATTLE - Fighting to win! (dialogue detected)")
             return BattleType.TRAINER
         
-        # If we have a terrain-based assumption and no trainer evidence, use it
+        # If no trainer evidence found, use default assumption (WILD)
         if assumed_type != BattleType.UNKNOWN:
             self._current_battle_type = assumed_type
-            logger.info(f"✅ [BATTLE TYPE] {assumed_type.value.upper()} BATTLE (based on terrain: {self._battle_start_tile})")
-            logger.info(f"   No trainer dialogue found, using terrain-based detection")
+            logger.info(f"✅ [BATTLE TYPE] {assumed_type.value.upper()} BATTLE (default - no trainer dialogue found)")
+            logger.info(f"   Tile was: '{self._battle_start_tile}' (ignored - tile logic disabled)")
             if assumed_type == BattleType.WILD:
-                print(f"🏃 [BATTLE TYPE] WILD BATTLE - Will run away! (in grass)")
+                print(f"🏃 [BATTLE TYPE] WILD BATTLE - Will run away! (default)")
             return assumed_type
         
         # PRIORITY 3: Check memory flags (fallback if terrain + dialogue inconclusive)
