@@ -423,8 +423,8 @@ class ObjectiveManager:
         rival_battle_complete = self.is_goal_complete('ROUTE_103_RIVAL_BATTLE') or \
                                is_milestone_complete('FIRST_RIVAL_BATTLE')
         
-        logger.info(f"🔍 [RIVAL BATTLE] at (9,3)={at_rival_position}, in_battle={in_battle}, was_in_battle={was_in_battle}, complete={rival_battle_complete}")
-        print(f"🔍 [RIVAL BATTLE] Check: at (9,3)={at_rival_position}, in_battle={in_battle}, was_in_battle={was_in_battle}, complete={rival_battle_complete}")
+        # logger.info(f"🔍 [RIVAL BATTLE] at (9,3)={at_rival_position}, in_battle={in_battle}, was_in_battle={was_in_battle}, complete={rival_battle_complete}")
+        # print(f"🔍 [RIVAL BATTLE] Check: at (9,3)={at_rival_position}, in_battle={in_battle}, was_in_battle={was_in_battle}, complete={rival_battle_complete}")
         
         # === SPECIAL CASE: INSIDE BIRCH LAB ===
         # Wait for dialogue to auto-trigger (bypass planner)
@@ -512,7 +512,7 @@ class ObjectiveManager:
             journey_reason = "Navigate to Route 103 to battle rival May"
             
         elif rival_battle_complete and not is_milestone_complete('RECEIVED_POKEDEX'):
-            target_location = 'PROFESSOR_BIRCH_LAB'
+            target_location = 'PROFESSOR_BIRCHS_LAB'  # Note: BIRCHS with S to match location_graph
             expected_milestone = 'RECEIVED_POKEDEX'
             journey_reason = "Return to Birch Lab to receive Pokedex"
             
@@ -592,8 +592,8 @@ class ObjectiveManager:
             'ROUTE 104': 'ROUTE_104_SOUTH',  # May need to distinguish north/south
             'PETALBURG WOODS': 'PETALBURG_WOODS',
             'RUSTBORO CITY': 'RUSTBORO_CITY',
-            'BIRCHS LAB': 'PROFESSOR_BIRCH_LAB',
-            'BIRCH LAB': 'PROFESSOR_BIRCH_LAB',
+            'BIRCHS LAB': 'PROFESSOR_BIRCHS_LAB',  # Note: BIRCHS with S to match location_graph
+            'BIRCH LAB': 'PROFESSOR_BIRCHS_LAB',
         }
         
         # Find matching location
@@ -641,7 +641,7 @@ class ObjectiveManager:
             target_coords = (9, 3)  # Rival position
             journey_reason = "Head to Route 103 to battle rival May"
     
-        # ON ROUTE_103 → Navigate to rival if battle not complete
+        # ON ROUTE_103 → Navigate to rival if battle not complete, else return to lab
         elif 'ROUTE 103' in current_location:
             logger.info(f"🔍 [ROUTE 103 CHECK] In Route 103 - checking rival battle status")
             print(f"🔍 [ROUTE 103 CHECK] current_location={current_location}, graph_location={graph_location}")
@@ -660,13 +660,20 @@ class ObjectiveManager:
                 
                 logger.info(f"🎯 [ROUTE 103] Setting target: location={target_location}, coords={target_coords}")
                 print(f"🎯 [ROUTE 103] Setting target: location={target_location}, coords={target_coords}")
+            else:
+                # Rival battle complete - return to Birch's Lab to get Pokedex
+                target_location = 'PROFESSOR_BIRCHS_LAB'  # Note: BIRCHS with S to match location_graph
+                journey_reason = "Return to Birch Lab to get Pokedex after defeating rival"
+                
+                logger.info(f"🎯 [ROUTE 103] Rival defeated - returning to lab")
+                print(f"🎯 [ROUTE 103] Rival battle complete - heading back to Birch's Lab")
         
         # ROUTE_103 → Back to Birch Lab (after rival battle)
         elif is_milestone_complete('ROUTE_103') and not is_milestone_complete('RECEIVED_POKEDEX'):
             rival_battle_complete = self.is_goal_complete('ROUTE_103_RIVAL_BATTLE') or \
                                    is_milestone_complete('FIRST_RIVAL_BATTLE')
             if rival_battle_complete:
-                target_location = 'PROFESSOR_BIRCH_LAB'
+                target_location = 'PROFESSOR_BIRCHS_LAB'  # Note: BIRCHS with S to match location_graph
                 journey_reason = "Return to Birch Lab to get Pokedex"
         
         # RECEIVED_POKEDEX → ROUTE_102

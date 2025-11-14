@@ -1985,7 +1985,7 @@ Answer with just the button name:"""
                     return [direction_map.get(direction, 'DOWN')]
                 
                 # Handle MOVE_UNTIL_MAP_CHANGE - keep moving in direction until location changes
-                elif action_type == 'MOVE_UNTIL_MAP_CHANGE':
+                elif directive.get('action') == 'MOVE_UNTIL_MAP_CHANGE':
                     direction = directive.get('direction')
                     target_location = directive.get('target_location', '').upper()
                     
@@ -2002,7 +2002,8 @@ Answer with just the button name:"""
                     return [direction]
                 
                 # Handle NAVIGATE directive (navigate without interaction - for map transitions, ledges, etc.)
-                elif action_type == 'NAVIGATE' and target:
+                elif directive.get('action') == 'NAVIGATE' and directive.get('target'):
+                    target = directive.get('target')
                     try:
                         logger.info(f"🔍 [NAVIGATE BLOCK] Entered NAVIGATE handler")
                         print(f"🔍 [NAVIGATE BLOCK] Entered NAVIGATE handler")
@@ -2245,7 +2246,8 @@ Answer with just the button name:"""
                         logger.warning(f"⚠️ [DIRECTIVE NAV] nav_action is None/empty, NOT returning")
                 
                 # Handle NAVIGATE_AND_INTERACT directive (most common)
-                elif action_type == 'NAVIGATE_AND_INTERACT' and target:
+                elif directive.get('action') == 'NAVIGATE_AND_INTERACT' and directive.get('target'):
+                    target = directive.get('target')
                     target_x, target_y, target_map = target
                     
                     logger.info(f"📍 [DIRECTIVE] Converting to NavigationGoal: ({target_x}, {target_y}, {target_map})")
@@ -2495,7 +2497,7 @@ Confirm by responding with the exact action: {nav_action[0]}
                             return [nav_action[0]]
                 
                 # Handle INTERACT directive (at target, just press A)
-                elif action_type == 'INTERACT':
+                elif directive.get('action') == 'INTERACT':
                     logger.info(f"📍 [DIRECTIVE] INTERACT directive - pressing A")
                     
                     # VLM executor for compliance
@@ -2525,15 +2527,22 @@ What button should we press? Respond with ONLY the button name (A, B, UP, DOWN, 
                         logger.error(f"📍 [DIRECTIVE] VLM executor error: {e}, defaulting to A")
                         return ['A']
                 
+                # Handle DIALOGUE (press A to advance dialogue)
+                elif directive.get('action') == 'DIALOGUE':
+                    logger.info(f"📍 [DIRECTIVE] DIALOGUE - pressing A to advance")
+                    # Simple case: just press A to advance dialogue
+                    return ['A']
+                
                 # Handle WAIT_FOR_DIALOGUE (don't interrupt dialogue)
-                elif action_type == 'WAIT_FOR_DIALOGUE':
+                elif directive.get('action') == 'WAIT_FOR_DIALOGUE':
                     logger.info(f"📍 [DIRECTIVE] Waiting for auto-dialogue to complete - returning empty action")
                     # Return empty action to wait - don't fall through to VLM
                     # This prevents the agent from trying to navigate while waiting for dialogue
                     return []
                 
                 else:
-                    logger.warning(f"📍 [DIRECTIVE] Unknown action type: {action_type}")
+                    action_value = directive.get('action', 'UNKNOWN')
+                    logger.warning(f"📍 [DIRECTIVE] Unknown action type: {action_value}")
         else:
             logger.debug(f"📍 [DIRECTIVE] ObjectiveManager not initialized yet")
             
