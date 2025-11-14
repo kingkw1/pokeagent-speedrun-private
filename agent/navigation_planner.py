@@ -300,8 +300,14 @@ class NavigationPlanner:
             if current_location == stage.expected_next_location:
                 return True
         
-        # NAVIGATE: advance when we reach target coordinates
+        # NAVIGATE: advance when we reach target coordinates OR if we're in a different location
         elif stage.stage_type == StageType.NAVIGATE:
+            # If agent is in a different location than the stage expects, skip this stage
+            if current_location != stage.location:
+                logger.info(f"🔍 [STAGE SKIP] Agent in {current_location} but stage expects {stage.location} - auto-advancing")
+                return True
+            
+            # Otherwise, advance when we reach target coordinates
             if current_coords and stage.target_coords:
                 if current_coords == stage.target_coords:
                     return True
