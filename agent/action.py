@@ -1241,6 +1241,23 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
                     logger.info("⚔️ [BATTLE BOT] Selecting FIGHT: A")
                     return ["A"]
                 
+                elif battle_decision == "USE_MOVE_ABSORB":
+                    # Select ABSORB from fight menu
+                    # ABSORB is bottom-left in Treecko's moveset (after POUND and LEER)
+                    # Sequence: B → B → UP → LEFT → A (FIGHT) → DOWN → LEFT → A (ABSORB)
+                    # B twice to clear any menus, then navigate to FIGHT, then to ABSORB
+                    logger.info("🌿 [BATTLE BOT] Selecting ABSORB: B → B → UP → LEFT → A → DOWN → LEFT → A")
+                    print("🌿 [BATTLE BOT] Using ABSORB (Grass-type, drains HP)")
+                    return ["B", "B", "UP", "LEFT", "A", "DOWN", "LEFT", "A"]
+                
+                elif battle_decision == "USE_MOVE_POUND":
+                    # Select POUND from fight menu
+                    # POUND is top-left in Treecko's moveset (first move)
+                    # Sequence: B → B → UP → LEFT → A (FIGHT) → UP → LEFT → A (POUND)
+                    logger.info("🥊 [BATTLE BOT] Selecting POUND: B → B → UP → LEFT → A → UP → LEFT → A")
+                    print("🥊 [BATTLE BOT] Using POUND (Normal-type)")
+                    return ["B", "B", "UP", "LEFT", "A", "UP", "LEFT", "A"]
+                
                 elif battle_decision == "PRESS_B":
                     # Exit submenu (fight menu or bag menu)
                     logger.info("🔙 [BATTLE BOT] Exiting submenu with B")

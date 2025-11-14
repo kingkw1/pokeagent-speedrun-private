@@ -13,6 +13,33 @@ ARCHITECTURE:
 - action.py routes these through VLM executor for competition compliance
 - VLM translates symbolic decision to button press (satisfies neural network rule)
 
+⚠️⚠️⚠️ CRITICAL WARNING - MEMORY READER LIMITATIONS ⚠️⚠️⚠️
+
+The memory reader has SEVERE LIMITATIONS that have been proven through extensive testing:
+
+1. opponent_pokemon: ALWAYS EMPTY {} - Never populated, not a bug, architectural limitation
+   - Do NOT attempt to read opponent species from battle_info.get('opponent_pokemon')
+   - Do NOT attempt to use opponent_pokemon.get('species')
+   - Any code checking if opponent_pokemon is populated is DEAD CODE
+
+2. BATTLE_COMMUNICATION: ALWAYS 175 - Never changes during entire battle
+   - Do NOT attempt to use BATTLE_COMMUNICATION to detect battle phases
+   - Do NOT attempt to use phase_name (always "phase_175")
+   - Any code checking BATTLE_COMMUNICATION value is DEAD CODE
+
+3. What DOES work from memory reader:
+   - player_pokemon: Actually populated with HP, moves, species, status
+   - in_battle: Boolean flag works correctly
+
+4. How to get opponent information:
+   - Extract from VLM dialogue: "YOUNGSTER CALVIN sent out POOCHYENA!"
+   - Parse battle intro text for species name
+   - Use dialogue history tracking (self._dialogue_history)
+   - Cache extracted species (self._opponent_species_from_dialogue)
+   - Use fuzzy string matching to handle VLM misspellings (difflib)
+
+⚠️⚠️⚠️ END CRITICAL WARNING ⚠️⚠️⚠️
+
 USAGE:
     from agent.battle_bot import get_battle_bot
     
@@ -25,6 +52,7 @@ USAGE:
 import logging
 from typing import Dict, Any, Optional
 from enum import Enum
+from difflib import get_close_matches
 
 logger = logging.getLogger(__name__)
 
@@ -42,18 +70,57 @@ class BattleBot:
     
     Strategy:
     1. WILD BATTLES: Run immediately to conserve HP and save time
-    2. TRAINER BATTLES: Fight to win using optimal move selection
+    2. TRAINER BATTLES: Fight to win using optimal move selection with type effectiveness
     
-    Future Enhancements:
-    - Type effectiveness checking (e.g., don't use Absorb against Grass types)
-    - Move selection based on opponent type
-    - HP-based switching logic
-    - PP management
+    Move Selection (Treecko):
+    - ABSORB: Grass-type move - super effective vs Water/Ground/Rock
+      - Use against: Zigzagoon, Wingull, Poochyena, Lotad, Nincada, Geodude, Nosepass, 
+                     Ralts, Makuhita, Medite, Barboach, Whismur, Numel
+      - DON'T use against: Shroomish, Taillow, Wurmple, Dustox, Masquerain, Shedinja, Torchic
+    - POUND: Normal-type move - neutral damage, fallback when Absorb not effective
+    
+    Enhancements:
+    - Type effectiveness checking based on opponent species
+    - Automatic move selection (Absorb vs Pound)
+    - HP-draining with Absorb reduces need for healing items
+    - Fuzzy string matching to handle VLM misspellings (handles extra/missing/substituted letters)
     """
+    
+    # Pokemon species where Absorb is NOT effective (resistant or immune)
+    # From ABSORB_EFFECTIVE_TYPES.md: Flying, Poison, Bug, Fire, Grass, Dragon, Steel types
+    ABSORB_NOT_EFFECTIVE = {
+        'SHROOMISH',    # Grass
+        'TAILLOW',      # Flying/Normal
+        'WURMPLE',      # Bug
+        'DUSTOX',       # Bug/Poison
+        'MASQUERAIN',   # Bug/Flying
+        'SHEDINJA',     # Bug/Ghost
+        'TORCHIC',      # Fire
+    }
+    
+    # Pokemon species where Absorb is EFFECTIVE (neutral or super effective)
+    # Everything not in the above list - Water, Ground, Rock, Normal, Dark, Psychic, Fighting
+    ABSORB_EFFECTIVE = {
+        'ZIGZAGOON',    # Normal
+        'WINGULL',      # Water/Flying (Water makes it effective despite Flying)
+        'POOCHYENA',    # Dark
+        'LOTAD',        # Water/Grass (Water makes it effective despite Grass)
+        'NINCADA',      # Bug/Ground (Ground makes it effective despite Bug)
+        'GEODUDE',      # Rock/Ground (SUPER EFFECTIVE)
+        'NOSEPASS',     # Rock (SUPER EFFECTIVE)
+        'RALTS',        # Psychic
+        'MAKUHITA',     # Fighting
+        'MEDITE',       # Fighting (Meditite)
+        'MEDITITE',     # Fighting (alternate spelling)
+        'BARBOACH',     # Water/Ground (SUPER EFFECTIVE)
+        'WHISMUR',      # Normal
+        'NUMEL',        # Fire/Ground (Ground makes it effective despite Fire)
+    }
     
     def __init__(self):
         """Initialize the battle bot"""
         self._current_battle_type = BattleType.UNKNOWN
+        self._battle_type_locked = False  # Lock battle type once confidently determined
         self._battle_started = False
         self._run_attempts = 0  # Track how many times we've tried to run (escape can fail)
         self._dialogue_history = []  # Track recent dialogue to detect trainer battles
@@ -61,7 +128,11 @@ class BattleBot:
         self._battle_start_tile = None  # Track the tile type when battle started (for wild detection)
         self._last_overworld_tile = None  # Track the last tile we were on before battle (updated every non-battle step)
         self._was_in_battle_last_step = False  # Track previous battle state to detect transitions
-        logger.info("🥊 [BATTLE BOT] Initialized with wild/trainer differentiation")
+        self._current_opponent = None  # Track current opponent to detect Pokemon switches
+        self._unknown_state_count = 0  # Track consecutive unknown menu states (VLM hallucination detector)
+        self._wild_battle_dialogue_turns = 0  # Track dialogue turns in wild battle (force base_menu after N turns)
+        self._opponent_species_from_dialogue = None  # Cache opponent species extracted from "sent out" dialogue
+        logger.info("🥊 [BATTLE BOT] Initialized with type-effective move selection")
     
     def should_handle(self, state_data: Dict[str, Any]) -> bool:
         """
@@ -173,6 +244,10 @@ class BattleBot:
             self._battle_started = True
             self._post_battle_dialogue = False
             
+            # Clear opponent species cache for new battle
+            self._opponent_species_from_dialogue = None
+            logger.info(f"🔄 [BATTLE START] Cleared opponent species cache")
+            
             # Use the tile we were on BEFORE battle started (not current tile which is now battle screen)
             self._battle_start_tile = self._last_overworld_tile or 'UNKNOWN'
             
@@ -204,9 +279,13 @@ class BattleBot:
                 self._battle_started = False
                 self._post_battle_dialogue = False
                 self._current_battle_type = BattleType.UNKNOWN
+                self._battle_type_locked = False  # Reset lock for next battle
                 self._run_attempts = 0
                 self._dialogue_history = []
                 self._battle_start_tile = None
+                self._current_opponent = None  # Reset opponent tracking
+                self._unknown_state_count = 0  # Reset VLM hallucination counter
+                self._wild_battle_dialogue_turns = 0  # Reset wild battle dialogue counter
         elif self._post_battle_dialogue and not is_post_battle_dialogue:
             # Post-battle dialogue finished
             logger.info(f"🥊 [BATTLE BOT] Post-battle dialogue finished, releasing control")
@@ -216,6 +295,7 @@ class BattleBot:
             self._run_attempts = 0
             self._dialogue_history = []
             self._battle_start_tile = None
+            self._current_opponent = None  # Reset opponent tracking
         
         # Update battle state tracking for next step
         self._was_in_battle_last_step = in_battle
@@ -304,8 +384,8 @@ class BattleBot:
         # Trainer battle indicators (these OVERRIDE everything - terrain AND memory flags)
         trainer_keywords = [
             "trainer",           # "Trainer sent out" or "Trainer may sent out"
-            "being a trainer",   # "I'll give you a taste of what being a TRAINER is like"
             "sent out",          # Trainers "send out" Pokemon (e.g., "Trainer may sent out Torchic!")
+            "sent ",             # VLM sometimes says "sent poochyena" without "out"
             "no running from",   # "No! There's no running from a TRAINER BATTLE!"
             "can't escape",      # Alternative phrasing
             "foe ",              # "Foe TORCHIC" (trainer battles use "Foe" prefix)
@@ -331,10 +411,10 @@ class BattleBot:
         # Check for trainer evidence (second priority)
         has_trainer_evidence = any(keyword in all_dialogue for keyword in trainer_keywords)
         
-        logger.info(f"   Trainer keywords found: {has_trainer_evidence}")
         if has_trainer_evidence:
             matching_keywords = [kw for kw in trainer_keywords if kw in all_dialogue]
-            logger.info(f"   Matching keywords: {matching_keywords}")
+            logger.info(f"✅ [BATTLE TYPE] Trainer keywords matched: {matching_keywords}")
+            logger.info(f"   All dialogue: '{all_dialogue[:100]}...'")
             print(f"🔍 [BATTLE TYPE DEBUG] Trainer keywords matched: {matching_keywords}")
         
         if has_trainer_evidence:
@@ -390,6 +470,25 @@ class BattleBot:
             - "bag_menu": In bag menu
             - "unknown": Cannot determine
         """
+        # First, check memory for reliable battle state info
+        game_data = state_data.get('game', {})
+        battle_info = game_data.get('battle_info', {})
+        player_pokemon = battle_info.get('player_pokemon', {})
+        opponent_pokemon = battle_info.get('opponent_pokemon', {})
+        
+        # Log available battle info from memory
+        logger.info(f"🔍 [MENU DETECT] Memory battle_info available: player={bool(player_pokemon)}, opponent={bool(opponent_pokemon)}")
+        if player_pokemon:
+            player_species = player_pokemon.get('species', 'Unknown')
+            player_hp = player_pokemon.get('current_hp', 0)
+            player_max_hp = player_pokemon.get('max_hp', 1)
+            logger.info(f"🔍 [MENU DETECT] Player: {player_species} HP={player_hp}/{player_max_hp}")
+        if opponent_pokemon:
+            opp_species = opponent_pokemon.get('species', 'Unknown')
+            opp_hp = opponent_pokemon.get('current_hp', 0)
+            opp_max_hp = opponent_pokemon.get('max_hp', 1)
+            logger.info(f"🔍 [MENU DETECT] Opponent: {opp_species} HP={opp_hp}/{opp_max_hp}")
+        
         # Extract dialogue text from latest_observation (where VLM perception puts it)
         latest_observation = state_data.get('latest_observation', {})
         visual_data = latest_observation.get('visual_data', {})
@@ -400,15 +499,51 @@ class BattleBot:
         dialogue_lower = dialogue_text.lower() if dialogue_text else ''
         
         # DEBUG: Log what we're checking
-        logger.debug(f"🔍 [MENU DETECT] dialogue_text='{dialogue_text[:50] if dialogue_text else 'EMPTY'}...'")
+        logger.info(f"🔍 [MENU DETECT] VLM dialogue_text='{dialogue_text[:80] if dialogue_text else 'EMPTY'}...'")
         print(f"🔍 [MENU DETECT] dialogue='{dialogue_text[:30] if dialogue_text else 'EMPTY'}'")
         
         # Check for base battle menu prompt FIRST (most reliable)
         # Matches: "What will TREECKO do?" or "What will I do with TREECKO?" (VLM variations)
         if "what will" in dialogue_lower and ("do?" in dialogue_lower or "do with" in dialogue_lower):
-            logger.info(f"🔍 [MENU STATE] BASE_MENU detected: '{dialogue_text[:60]}'")
-            print(f"✅ [MENU STATE] BASE_MENU detected")
+            logger.info(f"✅ [MENU STATE] BASE_MENU detected: '{dialogue_text[:60]}'")
+            print(f"✅ [MENU STATE] BASE_MENU - selecting FIGHT")
             return "base_menu"
+        
+        # Check for fight menu (move selection with PP displayed)
+        # This is CRITICAL - needs to happen BEFORE general dialogue check
+        # Pattern 1: Traditional "POUND PP 35/35" format
+        # Pattern 2: VLM might report as "POOCHYENA: POUND, LEER, ABSORB" (listing moves)
+        has_pp_display = "pp" in dialogue_lower or "type/" in dialogue_lower
+        has_move_names = any(move in dialogue_lower for move in ["pound", "leer", "absorb", "tackle", "scratch"])
+        # DEFENSIVE: dialogue_text might be None if VLM fails
+        has_move_list_format = (dialogue_text and ":" in dialogue_text and "," in dialogue_text and has_move_names)
+        
+        if (has_pp_display and has_move_names) or has_move_list_format:
+            logger.info(f"✅ [MENU STATE] FIGHT_MENU detected: '{dialogue_text[:60] if dialogue_text else 'N/A'}'")
+            print(f"✅ [MENU STATE] FIGHT_MENU - selecting move")
+            return "fight_menu"
+        
+        # Alternative: If we have battle_info from memory BUT VLM shows generic text,
+        # we might be in the action selection phase
+        # Look for visual_elements that indicate menu is showing
+        visual_elements = visual_data.get('visual_elements', {})
+        menu_visible = visual_elements.get('menu_visible', False)
+        
+        # IMPORTANT: opponent_pokemon from memory is ALWAYS EMPTY (proven useless)
+        # So we check for player_pokemon ONLY (which works) + menu_visible
+        # This fallback is critical when VLM hallucinates during battle animations
+        if player_pokemon and menu_visible:
+            logger.info(f"🔍 [MENU STATE] Have player_pokemon + menu_visible - checking for fight menu")
+            # Check if we can see move names in entities or other fields
+            visible_entities = visual_data.get('visible_entities', [])
+            logger.info(f"🔍 [MENU DETECT] visible_entities: {visible_entities}")
+            
+            # If we see move-like entities, we're in fight menu
+            move_indicators = ['POUND', 'LEER', 'ABSORB', 'TACKLE', 'GROWL', 'SCRATCH']
+            if any(move.upper() in str(visible_entities).upper() for move in move_indicators):
+                logger.info(f"✅ [MENU STATE] FIGHT_MENU detected via entities: {visible_entities}")
+                print(f"✅ [MENU STATE] FIGHT_MENU - selecting move via entities")
+                return "fight_menu"
         
         # Check for dialogue indicators (battle intro/outro, move effects, etc.)
         dialogue_indicators = [
@@ -428,13 +563,8 @@ class BattleBot:
         
         if any(indicator in dialogue_lower for indicator in dialogue_indicators):
             logger.info(f"🔍 [MENU STATE] DIALOGUE detected: '{dialogue_text[:60]}'")
+            print(f"� [MENU STATE] DIALOGUE - pressing A to continue")
             return "dialogue"
-        
-        # Check for fight menu (move selection with PP displayed)
-        if ("pp" in dialogue_lower or "type/" in dialogue_lower) and \
-           ("pound" in dialogue_lower or "leer" in dialogue_lower or "absorb" in dialogue_lower):
-            logger.info(f"🔍 [MENU STATE] FIGHT_MENU detected: '{dialogue_text[:60]}'")
-            return "fight_menu"
         
         # Check for bag menu
         if "cancel" in dialogue_lower or "close bag" in dialogue_lower:
@@ -442,8 +572,223 @@ class BattleBot:
             return "bag_menu"
         
         # Unknown state - return unknown instead of guessing
-        logger.info(f"🔍 [MENU STATE] UNKNOWN: dialogue='{dialogue_text[:60] if dialogue_text else 'EMPTY'}'")
+        logger.warning(f"❓ [MENU STATE] UNKNOWN: dialogue='{dialogue_text[:60] if dialogue_text else 'EMPTY'}'")
+        print(f"❓ [MENU STATE] UNKNOWN - pressing A as fallback")
         return "unknown"
+    
+    def _extract_opponent_species_from_dialogue(self) -> str:
+        """
+        Extract opponent Pokemon species from dialogue history.
+        
+        Looks for patterns like:
+        - "YOUNGSTER CALVIN sent out POOCHYENA!"
+        - "Wild ZIGZAGOON appeared!"
+        - "Go! TREECKO!" (ignore - this is our pokemon)
+        
+        Returns:
+            Species name (e.g., "POOCHYENA") or "Unknown" if not found
+        """
+        # Check if we already cached the species
+        if self._opponent_species_from_dialogue:
+            logger.info(f"🔍 [SPECIES CACHE] Using cached opponent: '{self._opponent_species_from_dialogue}'")
+            return self._opponent_species_from_dialogue
+        
+        logger.info(f"🔍 [SPECIES EXTRACT] Searching dialogue history ({len(self._dialogue_history)} entries)")
+        
+        # Search recent dialogue for "sent out" or "sent" pattern (trainer battles)
+        for i, dialogue_entry in enumerate(reversed(self._dialogue_history)):
+            dialogue_lower = dialogue_entry.lower()
+            logger.debug(f"  [{i}] Checking: '{dialogue_entry[:60]}'")
+            
+            # Pattern 1: "YOUNGSTER CALVIN sent out POOCHYENA!" (standard)
+            if 'sent out' in dialogue_lower:
+                logger.info(f"🔍 [SPECIES] Found 'sent out' in: '{dialogue_entry}'")
+                
+                # Extract species name after "sent out"
+                try:
+                    # Split on "sent out" and take the part after
+                    after_sent = dialogue_entry.lower().split('sent out')[1]
+                    # Remove punctuation and whitespace
+                    species = after_sent.strip(' !.').upper()
+                    # Take first word (species name)
+                    species_name = species.split()[0] if species.split() else 'Unknown'
+                    
+                    logger.info(f"✅ [SPECIES] Extracted: '{species_name}' from '{dialogue_entry}'")
+                    print(f"✅ [SPECIES] Found opponent: {species_name}")
+                    
+                    # Fix common VLM misspellings
+                    species_name = self._fix_species_name(species_name)
+                    
+                    # Cache the result
+                    self._opponent_species_from_dialogue = species_name
+                    return species_name
+                except Exception as e:
+                    logger.warning(f"⚠️ [SPECIES] Failed to parse 'sent out' dialogue: {e}")
+                    continue
+            
+            # Pattern 2: "YOUNGSTER CALVIN sent POOCHYENA!" (VLM sometimes drops "out")
+            elif ' sent ' in dialogue_lower and 'sent out' not in dialogue_lower:
+                # Make sure it's a trainer name, not just random "sent"
+                # Trainer names typically come before "sent"
+                if any(trainer in dialogue_lower for trainer in ['youngster', 'lass', 'bug catcher', 'school kid', 'calvin', 'casey']):
+                    logger.info(f"🔍 [SPECIES] Found 'sent' (without out) in: '{dialogue_entry}'")
+                    
+                    try:
+                        # Split on "sent" and take the part after
+                        after_sent = dialogue_entry.lower().split(' sent ')[1]
+                        # Remove punctuation and whitespace
+                        species = after_sent.strip(' !.').upper()
+                        # Take first word (species name)
+                        species_name = species.split()[0] if species.split() else 'Unknown'
+                        
+                        logger.info(f"✅ [SPECIES] Extracted (no 'out'): '{species_name}' from '{dialogue_entry}'")
+                        print(f"✅ [SPECIES] Found opponent: {species_name}")
+                        
+                        # Fix common VLM misspellings
+                        species_name = self._fix_species_name(species_name)
+                        
+                        # Cache the result
+                        self._opponent_species_from_dialogue = species_name
+                        return species_name
+                    except Exception as e:
+                        logger.warning(f"⚠️ [SPECIES] Failed to parse 'sent' dialogue: {e}")
+                        continue
+            
+            # Pattern: "Wild ZIGZAGOON appeared!"
+            if 'wild' in dialogue_lower and 'appeared' in dialogue_lower:
+                logger.info(f"🔍 [SPECIES] Found 'wild appeared' in: '{dialogue_entry}'")
+                
+                try:
+                    # Extract word between "wild" and "appeared"
+                    parts = dialogue_entry.lower().split('wild')[1].split('appeared')[0]
+                    species_name = parts.strip(' !.').upper()
+                    
+                    logger.info(f"✅ [SPECIES] Extracted wild: '{species_name}' from '{dialogue_entry}'")
+                    print(f"✅ [SPECIES] Found wild: {species_name}")
+                    
+                    # Fix common VLM misspellings
+                    species_name = self._fix_species_name(species_name)
+                    
+                    # Cache the result
+                    self._opponent_species_from_dialogue = species_name
+                    return species_name
+                except Exception as e:
+                    logger.warning(f"⚠️ [SPECIES] Failed to parse 'wild appeared' dialogue: {e}")
+                    continue
+        
+        logger.warning(f"⚠️ [SPECIES] No 'sent out' or 'wild appeared' found in dialogue history")
+        logger.warning(f"   Recent dialogue: {[d[:40] for d in self._dialogue_history[-5:]]}")
+        return 'Unknown'
+    
+    def _fix_species_name(self, species: str) -> str:
+        """
+        Fix VLM misspellings using fuzzy string matching.
+        
+        Uses similarity matching to find the closest Pokemon name from our
+        known lists (ABSORB_EFFECTIVE + ABSORB_NOT_EFFECTIVE).
+        
+        This handles:
+        - Extra/missing letters: "POOOCHIENYA" vs "POOCHYENA"
+        - Substituted letters: "POECHIENYA" vs "POOCHYENA"  
+        - Transposed letters: "POOCHEYNA" vs "POOCHYENA"
+        
+        Args:
+            species: Raw species name from VLM (e.g., "POOCHENNA", "POOHVENA")
+            
+        Returns:
+            Closest matching Pokemon name from our known lists
+        """
+        species_upper = species.upper().strip()
+        
+        # Combine all known Pokemon species
+        all_known_species = list(self.ABSORB_EFFECTIVE | self.ABSORB_NOT_EFFECTIVE)
+        
+        # Use difflib to find closest match
+        # cutoff=0.6 means at least 60% similarity required
+        matches = get_close_matches(species_upper, all_known_species, n=1, cutoff=0.6)
+        
+        if matches:
+            corrected = matches[0]
+            if corrected != species_upper:
+                logger.info(f"🔧 [SPECIES FIX] Fuzzy matched '{species_upper}' → '{corrected}'")
+                print(f"🔧 [SPELL FIX] '{species_upper}' → '{corrected}'")
+            return corrected
+        
+        # No close match found - return original
+        logger.warning(f"⚠️ [SPECIES FIX] No fuzzy match found for '{species_upper}' (tried {len(all_known_species)} known species)")
+        logger.warning(f"   Known species: {sorted(all_known_species)}")
+        return species_upper
+    
+    def _should_use_absorb(self, species: str) -> bool:
+        """
+        Determine if Absorb should be used against this opponent.
+        
+        Strategy:
+        - Use ABSORB against Pokemon where it's effective (neutral or super effective)
+        - Use POUND against Pokemon where Absorb is not very effective
+        
+        Args:
+            species: Name of opponent Pokemon (e.g., "POOCHYENA")
+            
+        Returns:
+            True if should use Absorb, False if should use Pound
+        """
+        logger.info(f"=" * 60)
+        logger.info(f"🔍 [MOVE SELECT] _should_use_absorb() called with species='{species}'")
+        print(f"=" * 50)
+        print(f"🔍 [ANALYZING] Species = '{species}'")
+        
+        if not species or species == 'Unknown':
+            logger.warning("⚠️ [MOVE SELECT] No opponent species - defaulting to POUND")
+            print(f"⚠️ [MOVE SELECT] No opponent → POUND (safe default)")
+            logger.info(f"=" * 60)
+            print(f"=" * 50)
+            return False
+        
+        # Normalize species name (uppercase, strip whitespace)
+        species_normalized = species.upper().strip()
+        logger.info(f"🔍 [MOVE SELECT] Normalized: '{species}' → '{species_normalized}'")
+        logger.info(f"🔍 [MOVE SELECT] Checking against type-effectiveness lists...")
+        print(f"🔍 [NORMALIZED] '{species}' → '{species_normalized}'")
+        
+        # Check if in "not effective" list (use Pound instead)
+        logger.info(f"🔍 [MOVE SELECT] Checking ABSORB_NOT_EFFECTIVE list: {self.ABSORB_NOT_EFFECTIVE}")
+        print(f"🔍 [CHECK 1] Is '{species_normalized}' in NOT_EFFECTIVE list?")
+        
+        if species_normalized in self.ABSORB_NOT_EFFECTIVE:
+            logger.info(f"🟡 [MOVE SELECT] ✅ MATCH! {species_normalized} in ABSORB_NOT_EFFECTIVE list → Use POUND")
+            logger.info(f"   Reason: This Pokemon resists Grass-type moves")
+            print(f"🥊 [RESULT] YES! {species_normalized} resists Grass → POUND")
+            logger.info(f"=" * 60)
+            print(f"=" * 50)
+            return False
+        else:
+            logger.info(f"🔍 [MOVE SELECT] ❌ NOT in ABSORB_NOT_EFFECTIVE list")
+            print(f"🔍 [CHECK 1] NO - not in NOT_EFFECTIVE list")
+        
+        # Check if in "effective" list (use Absorb)
+        logger.info(f"🔍 [MOVE SELECT] Checking ABSORB_EFFECTIVE list: {self.ABSORB_EFFECTIVE}")
+        print(f"🔍 [CHECK 2] Is '{species_normalized}' in EFFECTIVE list?")
+        
+        if species_normalized in self.ABSORB_EFFECTIVE:
+            logger.info(f"🟢 [MOVE SELECT] ✅ MATCH! {species_normalized} in ABSORB_EFFECTIVE list → Use ABSORB")
+            logger.info(f"   Reason: Absorb is effective against this Pokemon + HP drain")
+            print(f"🌿 [RESULT] YES! {species_normalized} weak to Grass → ABSORB (heal!)")
+            logger.info(f"=" * 60)
+            print(f"=" * 50)
+            return True
+        else:
+            logger.info(f"🔍 [MOVE SELECT] ❌ NOT in ABSORB_EFFECTIVE list")
+            print(f"🔍 [CHECK 2] NO - not in EFFECTIVE list")
+        
+        # Unknown Pokemon - default to Pound (conservative choice)
+        logger.warning(f"⚠️ [MOVE SELECT] Unknown Pokemon '{species_normalized}' - not in either list")
+        logger.warning(f"   ABSORB_NOT_EFFECTIVE ({len(self.ABSORB_NOT_EFFECTIVE)} species): {self.ABSORB_NOT_EFFECTIVE}")
+        logger.warning(f"   ABSORB_EFFECTIVE ({len(self.ABSORB_EFFECTIVE)} species): {self.ABSORB_EFFECTIVE}")
+        print(f"⚠️ [RESULT] Unknown Pokemon '{species_normalized}' → POUND (safe choice)")
+        logger.info(f"=" * 60)
+        print(f"=" * 50)
+        return False
     
     def get_action(self, state_data: Dict[str, Any]) -> Optional[str]:
         """
@@ -472,9 +817,32 @@ class BattleBot:
                 logger.warning("⚠️ [BATTLE BOT] No battle_info in state - cannot decide")
                 return None
             
-            # Ensure we have detected battle type
-            if self._current_battle_type == BattleType.UNKNOWN:
-                self._detect_battle_type(state_data)
+            # CRITICAL: Re-detect battle type ONLY if not yet locked
+            # Lock ONLY when we detect TRAINER (prevents dialogue history aging from reverting TRAINER → WILD)
+            # Never lock on WILD - allow WILD → TRAINER upgrade at any time
+            # (Reason: WILD is default/fallback, TRAINER requires explicit evidence)
+            if not self._battle_type_locked:
+                logger.info("🔍 [BATTLE BOT] Battle type not locked yet - re-checking...")
+                latest_battle_type = self._detect_battle_type(state_data)
+                
+                # Always update the current type (unless locked)
+                if latest_battle_type != self._current_battle_type and latest_battle_type != BattleType.UNKNOWN:
+                    logger.warning(f"⚠️ [BATTLE TYPE DETERMINATION] Type changed: {self._current_battle_type.value} → {latest_battle_type.value}")
+                    print(f"⚠️ [BATTLE TYPE] Changed to {latest_battle_type.value}")
+                    self._current_battle_type = latest_battle_type
+                elif latest_battle_type != BattleType.UNKNOWN:
+                    # Type confirmed again
+                    logger.debug(f"✅ [BATTLE TYPE] Confirmed as {latest_battle_type.value}")
+                    self._current_battle_type = latest_battle_type
+                
+                # LOCK ONLY if TRAINER detected (never lock on WILD/UNKNOWN)
+                # This allows WILD to upgrade to TRAINER when trainer dialogue appears
+                if latest_battle_type == BattleType.TRAINER:
+                    self._battle_type_locked = True
+                    logger.info(f"� [BATTLE TYPE] LOCKED as TRAINER - will not change for this battle")
+                    print(f"🔒 [BATTLE TYPE] Locked as TRAINER")
+            else:
+                logger.debug(f"🔒 [BATTLE TYPE] Locked as {self._current_battle_type.value} - skipping re-detection")
             
             # If still UNKNOWN (e.g., early battle phase), advance dialogue to gather more info
             if self._current_battle_type == BattleType.UNKNOWN:
@@ -515,11 +883,30 @@ class BattleBot:
                 self._detect_battle_type(state_data)
             
             # Handle dialogue states - just advance with A
-            # (Don't try to distinguish auto-advancing vs blocking - just press A)
+            # BUT: In wild battles, force base_menu assumption after seeing intro dialogue
+            # (VLM often hallucinates after "Go! TREECKO!" preventing us from detecting base_menu)
             if menu_state == "dialogue":
-                logger.info("💬 [BATTLE BOT] In dialogue - pressing A to advance")
-                print("💬 [BATTLE BOT] Advancing dialogue")
-                return "ADVANCE_BATTLE_DIALOGUE"
+                if self._current_battle_type == BattleType.WILD:
+                    self._wild_battle_dialogue_turns += 1
+                    logger.info(f"💬 [WILD BATTLE] Dialogue turn #{self._wild_battle_dialogue_turns}")
+                    
+                    # After 3 dialogue turns in wild battle, assume we're at base_menu
+                    # Typical sequence: "Wild X appeared!" → "Go! POKEMON!" → <VLM hallucination>
+                    # Force RUN attempt after intro is done
+                    if self._wild_battle_dialogue_turns >= 3:
+                        logger.warning(f"⚠️ [WILD BATTLE] {self._wild_battle_dialogue_turns} dialogue turns - forcing base_menu assumption")
+                        print(f"🏃 [WILD BATTLE] Intro done, forcing RUN (dialogue turn #{self._wild_battle_dialogue_turns})")
+                        # Override menu_state to base_menu to trigger RUN logic below
+                        menu_state = "base_menu"
+                    else:
+                        logger.info("💬 [WILD BATTLE] Advancing intro dialogue")
+                        print(f"💬 [WILD BATTLE] Advancing dialogue (turn {self._wild_battle_dialogue_turns})")
+                        return "ADVANCE_BATTLE_DIALOGUE"
+                else:
+                    # Trainer battle - just advance dialogue normally
+                    logger.info("💬 [BATTLE BOT] In dialogue - pressing A to advance")
+                    print("💬 [BATTLE BOT] Advancing dialogue")
+                    return "ADVANCE_BATTLE_DIALOGUE"
             
             # WILD BATTLE STRATEGY: Keep trying to run
             if self._current_battle_type == BattleType.WILD:
@@ -558,21 +945,35 @@ class BattleBot:
             
             # TRAINER BATTLE STRATEGY: Fight to win
             elif self._current_battle_type == BattleType.TRAINER:
+                logger.info(f"⚔️ [BATTLE BOT] Trainer battle - menu_state={menu_state}")
+                print(f"⚔️ [BATTLE BOT] Trainer battle - menu_state={menu_state}")
+                
                 # Navigate based on current menu state
                 if menu_state == "base_menu":
                     # At "What will [POKEMON] do?" - select FIGHT
                     logger.info("⚔️ [BATTLE BOT] At base menu - selecting FIGHT")
                     print("⚔️ [BATTLE BOT] Selecting FIGHT")
+                    self._unknown_state_count = 0  # Reset counter
                     return "SELECT_FIGHT"  # Just press A (FIGHT is default selection)
                 
                 elif menu_state == "fight_menu":
-                    # In fight menu - select first move
+                    # In fight menu - select move based on type effectiveness
+                    # 
+                    # ⚠️⚠️⚠️ CRITICAL WARNING - DO NOT USE MEMORY READER FOR OPPONENT DATA ⚠️⚠️⚠️
+                    # Memory reader's opponent_pokemon is ALWAYS EMPTY and NEVER populated.
+                    # BATTLE_COMMUNICATION is always 175 and never changes.
+                    # These have been proven useless through extensive testing and logging.
+                    # DO NOT attempt to use battle_info.get('opponent_pokemon') - it will ALWAYS be {}.
+                    # DO NOT attempt to use BATTLE_COMMUNICATION - it's stuck at 175 forever.
+                    # Any code relying on these values is DEAD CODE and will never execute.
+                    # ⚠️⚠️⚠️ END CRITICAL WARNING ⚠️⚠️⚠️
+                    
                     player_pokemon = battle_info.get('player_pokemon', {})
-                    opponent_pokemon = battle_info.get('opponent_pokemon', {})
                     
                     if not player_pokemon:
                         logger.warning("⚠️ [BATTLE BOT] No player_pokemon in battle_info")
-                        return "USE_MOVE_1"
+                        print("⚠️ [BATTLE BOT] No player_pokemon - defaulting to POUND")
+                        return "USE_MOVE_POUND"  # Safe default
                     
                     # Log battle status
                     player_species = player_pokemon.get('species', 'Unknown')
@@ -580,24 +981,100 @@ class BattleBot:
                     player_max_hp = player_pokemon.get('max_hp', 1)
                     player_hp_percent = (player_hp / player_max_hp * 100) if player_max_hp > 0 else 0
                     
-                    opp_species = opponent_pokemon.get('species', 'Unknown') if opponent_pokemon else 'Unknown'
+                    # Extract opponent species from dialogue history
+                    # VLM sees "YOUNGSTER CALVIN sent out POOCHYENA!" during battle intro
+                    # We need to extract species name from that dialogue
+                    opp_species = self._extract_opponent_species_from_dialogue()
+                    logger.info(f"🔍 [SPECIES EXTRACTION] Extracted opponent: '{opp_species}'")
+                    print(f"🔍 [SPECIES] Opponent = '{opp_species}'")
                     
                     logger.info(f"⚔️ [BATTLE BOT] In fight menu: {player_species} ({player_hp_percent:.1f}% HP) vs {opp_species}")
-                    print(f"⚔️ [BATTLE BOT] Selecting move vs {opp_species}")
+                    print(f"⚔️ [BATTLE BOT] Fight menu: {player_species} ({player_hp_percent:.0f}% HP) vs {opp_species}")
                     
-                    # TODO: Implement type effectiveness checking
-                    # For now, use simple move selection: first damaging move
-                    return "USE_MOVE_1"
+                    # Log dialogue history for debugging
+                    logger.info(f"📜 [DIALOGUE HISTORY] {len(self._dialogue_history)} entries:")
+                    for i, d in enumerate(self._dialogue_history):
+                        logger.info(f"   [{i}] {d[:80]}")
+                    print(f"📜 [DIALOGUE] Last 3: {[d[:30] for d in self._dialogue_history[-3:]]}")
+                    
+                    # Check if opponent changed (trainer switched Pokemon)
+                    if self._current_opponent != opp_species:
+                        if self._current_opponent is not None:
+                            logger.info(f"🔄 [BATTLE BOT] Opponent changed: {self._current_opponent} → {opp_species}")
+                            print(f"🔄 [BATTLE BOT] New Pokemon! {self._current_opponent} → {opp_species}")
+                        self._current_opponent = opp_species
+                    
+                    self._unknown_state_count = 0  # Reset counter
+                    
+                    # Type-effectiveness based move selection
+                    logger.info(f"🎯 [MOVE DECISION] Determining move for opponent: '{opp_species}'")
+                    print(f"🎯 [DECIDING] Should we use Absorb vs '{opp_species}'?")
+                    
+                    use_absorb = self._should_use_absorb(opp_species)
+                    logger.info(f"🎯 [MOVE DECISION] _should_use_absorb('{opp_species}') = {use_absorb}")
+                    print(f"🎯 [DECISION] Use Absorb? {use_absorb}")
+                    
+                    if use_absorb:
+                        logger.info(f"🌿 [BATTLE BOT] Using ABSORB vs {opp_species} (effective + HP drain)")
+                        print(f"🌿 [BATTLE BOT] ABSORB → {opp_species} (drain HP!)")
+                        return "USE_MOVE_ABSORB"
+                    else:
+                        logger.info(f"🥊 [BATTLE BOT] Using POUND vs {opp_species} (Absorb not effective)")
+                        print(f"🥊 [BATTLE BOT] POUND → {opp_species} (Absorb resisted)")
+                        return "USE_MOVE_POUND"
                 
                 elif menu_state == "bag_menu":
                     # Accidentally entered bag - go back
                     logger.info("⚔️ [BATTLE BOT] In bag menu - pressing B to return")
+                    print("⏪ [BATTLE BOT] Exiting bag menu")
+                    self._unknown_state_count = 0  # Reset counter
                     return "PRESS_B"
                 
-                else:
-                    # Unknown state or dialogue - advance
-                    logger.info("⚔️ [BATTLE BOT] Advancing dialogue/unknown state")
+                elif menu_state == "dialogue":
+                    # Battle dialogue - advance
+                    logger.info("💬 [BATTLE BOT] Advancing battle dialogue")
+                    print("💬 [BATTLE BOT] Advancing dialogue")
+                    self._unknown_state_count = 0  # Reset counter
                     return "ADVANCE_BATTLE_DIALOGUE"
+                
+                else:
+                    # Unknown state - increment counter and decide strategy
+                    self._unknown_state_count += 1
+                    logger.warning(f"❓ [BATTLE BOT] Unknown menu state '{menu_state}' (count: {self._unknown_state_count})")
+                    print(f"❓ [BATTLE BOT] Unknown state '{menu_state}' (#{self._unknown_state_count})")
+                    
+                    # If we've been stuck in unknown state for 3+ turns, VLM is likely hallucinating
+                    # Force navigation to fight menu as fallback
+                    if self._unknown_state_count >= 5:
+                        logger.warning(f"⚠️ [BATTLE BOT] Stuck in unknown state for {self._unknown_state_count} turns!")
+                        logger.warning("   VLM completely stuck - forcing MOVE selection blindly")
+                        print(f"⚠️ [BATTLE BOT] VLM broken! Forcing move selection (attempt #{self._unknown_state_count - 4})")
+                        
+                        # Extract opponent species and make move decision
+                        opp_species = self._extract_opponent_species_from_dialogue()
+                        logger.info(f"🔍 [BLIND DECISION] Opponent from dialogue: '{opp_species}'")
+                        print(f"🔍 [BLIND] Opponent = '{opp_species}'")
+                        
+                        use_absorb = self._should_use_absorb(opp_species)
+                        logger.info(f"🎯 [BLIND DECISION] _should_use_absorb('{opp_species}') = {use_absorb}")
+                        
+                        if use_absorb:
+                            logger.info(f"🌿 [BLIND SELECT] Using ABSORB vs {opp_species}")
+                            print(f"🌿 [BLIND] ABSORB → {opp_species}")
+                            return "USE_MOVE_ABSORB"
+                        else:
+                            logger.info(f"🥊 [BLIND SELECT] Using POUND vs {opp_species}")
+                            print(f"🥊 [BLIND] POUND → {opp_species}")
+                            return "USE_MOVE_POUND"
+                    elif self._unknown_state_count >= 3:
+                        logger.warning(f"⚠️ [BATTLE BOT] Stuck in unknown state for {self._unknown_state_count} turns!")
+                        logger.warning("   VLM may be hallucinating - forcing FIGHT menu navigation")
+                        print(f"⚠️ [BATTLE BOT] VLM stuck! Forcing FIGHT navigation (attempt #{self._unknown_state_count - 2})")
+                        # Force SELECT_FIGHT to try navigating to fight menu
+                        return "SELECT_FIGHT"
+                    else:
+                        # First 2 unknown states - just press A (might be dialogue)
+                        return "ADVANCE_BATTLE_DIALOGUE"
             
             else:
                 # Unknown battle type - default to fighting
