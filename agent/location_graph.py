@@ -227,8 +227,8 @@ LOCATION_GRAPH: Dict[str, Dict[str, Any]] = {
             "ROUTE_102": {
                 "type": "open_world",
                 "direction": "west",
-                "entry_coords": (25, 11),  # Where you appear in Oldale from Route 102
-                "exit_coords": (0, 11),    # West boundary leading to Route 102
+                "entry_coords": (0, 11),   # Where you appear in Oldale from Route 102 (coming back)
+                "exit_coords": (0, 10),    # West boundary leading to Route 102 (warp at y=10)
                 "description": "West to Route 102",
                 "requirements": None,
             },
@@ -327,7 +327,7 @@ LOCATION_GRAPH: Dict[str, Dict[str, Any]] = {
             "OLDALE_TOWN": {
                 "type": "open_world",
                 "direction": "east",
-                "entry_coords": (0, 11),   # Where you appear in Route 102 from Oldale
+                "entry_coords": (50, 11),  # Where you appear in Route 102 from Oldale (warp brings you to ~50, 10)
                 "exit_coords": (48, 11),   # East boundary leading to Oldale
                 "description": "East to Oldale Town",
                 "requirements": None,

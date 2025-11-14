@@ -1212,11 +1212,13 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
                 decision_explanation = ""
                 
                 if battle_decision == "ADVANCE_BATTLE_DIALOGUE":
-                    # Battle intro dialogue - press A to advance
-                    button_recommendation = "A"
-                    decision_explanation = "Advance battle intro dialogue"
-                    logger.info("💬 [BATTLE BOT] Advancing battle dialogue with A")
-                    return ["A"]
+                    # Battle intro dialogue - press B-A-B to advance safely
+                    # B before A prevents accidental move selection if VLM misdetects menu state
+                    # B after A clears any menus that might have opened
+                    button_recommendation = "B, A, B"
+                    decision_explanation = "Advance battle intro dialogue (safe sequence)"
+                    logger.info("💬 [BATTLE BOT] Advancing battle dialogue with B → A → B (safe sequence)")
+                    return ["B", "A", "B"]
                 
                 elif battle_decision == "RECOVER_FROM_RUN_FAILURE":
                     # We tried to run from a trainer battle! 

@@ -119,7 +119,7 @@ class BattleBot:
     
     def __init__(self):
         """Initialize the battle bot"""
-        self._current_battle_type = BattleType.UNKNOWN
+        self._current_battle_type = BattleType.WILD  # Default to WILD - try to run, switch to TRAINER if can't
         self._battle_type_locked = False  # Lock battle type once confidently determined
         self._battle_started = False
         self._run_attempts = 0  # Track how many times we've tried to run (escape can fail)
@@ -278,7 +278,7 @@ class BattleBot:
                 logger.info(f"🥊 [BATTLE BOT] Battle completely done - Type was: {self._current_battle_type.value}, Run attempts: {self._run_attempts}")
                 self._battle_started = False
                 self._post_battle_dialogue = False
-                self._current_battle_type = BattleType.UNKNOWN
+                self._current_battle_type = BattleType.WILD  # Reset to WILD for next battle
                 self._battle_type_locked = False  # Reset lock for next battle
                 self._run_attempts = 0
                 self._dialogue_history = []
@@ -291,7 +291,7 @@ class BattleBot:
             logger.info(f"🥊 [BATTLE BOT] Post-battle dialogue finished, releasing control")
             self._battle_started = False
             self._post_battle_dialogue = False
-            self._current_battle_type = BattleType.UNKNOWN
+            self._current_battle_type = BattleType.WILD  # Reset to WILD for next battle
             self._run_attempts = 0
             self._dialogue_history = []
             self._battle_start_tile = None
@@ -454,10 +454,11 @@ class BattleBot:
             print(f"🏃 [BATTLE TYPE] WILD BATTLE - Will run away!")
             return BattleType.WILD
         
-        # Still unknown
-        self._current_battle_type = BattleType.UNKNOWN
-        logger.warning(f"⚠️ [BATTLE TYPE] Could not determine battle type yet")
-        return BattleType.UNKNOWN
+        # No evidence found - default to WILD (try to run, will switch to TRAINER if we can't escape)
+        self._current_battle_type = BattleType.WILD
+        logger.warning(f"⚠️ [BATTLE TYPE] Could not determine battle type - defaulting to WILD (will run)")
+        print(f"🏃 [BATTLE TYPE] WILD (default) - Will try to run!")
+        return BattleType.WILD
     
     def _detect_battle_menu_state(self, state_data: Dict[str, Any]) -> str:
         """
@@ -719,16 +720,18 @@ class BattleBot:
         logger.warning(f"   Known species: {sorted(all_known_species)}")
         return species_upper
     
-    def _should_use_absorb(self, species: str) -> bool:
+    def _should_use_absorb(self, species: str, player_pokemon: Dict[str, Any] = None) -> bool:
         """
         Determine if Absorb should be used against this opponent.
         
         Strategy:
+        - Only use ABSORB if player Pokemon is level 6+ (Treecko learns Absorb at level 6)
         - Use ABSORB against Pokemon where it's effective (neutral or super effective)
         - Use POUND against Pokemon where Absorb is not very effective
         
         Args:
             species: Name of opponent Pokemon (e.g., "POOCHYENA")
+            player_pokemon: Player's Pokemon data (for level check)
             
         Returns:
             True if should use Absorb, False if should use Pound
@@ -737,6 +740,28 @@ class BattleBot:
         logger.info(f"🔍 [MOVE SELECT] _should_use_absorb() called with species='{species}'")
         print(f"=" * 50)
         print(f"🔍 [ANALYZING] Species = '{species}'")
+        
+        # Check if player Pokemon has learned Absorb (level 6+)
+        if player_pokemon:
+            player_level = player_pokemon.get('level', 0)
+            logger.info(f"🔍 [LEVEL CHECK] Player Pokemon level: {player_level}")
+            print(f"🔍 [LEVEL CHECK] Player level: {player_level}")
+            
+            if player_level < 6:
+                logger.warning(f"⚠️ [MOVE SELECT] Player level {player_level} < 6 - Absorb not learned yet!")
+                print(f"⚠️ [MOVE SELECT] Level {player_level} < 6 → No Absorb yet → POUND")
+                logger.info(f"=" * 60)
+                print(f"=" * 50)
+                return False
+            else:
+                logger.info(f"✅ [LEVEL CHECK] Level {player_level} >= 6 - Absorb available")
+                print(f"✅ [LEVEL CHECK] Level {player_level} - Absorb learned!")
+        else:
+            logger.warning("⚠️ [LEVEL CHECK] No player_pokemon data - cannot verify Absorb availability")
+            print("⚠️ [LEVEL CHECK] No player data - assuming Absorb not available")
+            logger.info(f"=" * 60)
+            print(f"=" * 50)
+            return False
         
         if not species or species == 'Unknown':
             logger.warning("⚠️ [MOVE SELECT] No opponent species - defaulting to POUND")
@@ -835,8 +860,8 @@ class BattleBot:
                     logger.debug(f"✅ [BATTLE TYPE] Confirmed as {latest_battle_type.value}")
                     self._current_battle_type = latest_battle_type
                 
-                # LOCK ONLY if TRAINER detected (never lock on WILD/UNKNOWN)
-                # This allows WILD to upgrade to TRAINER when trainer dialogue appears
+                # LOCK ONLY if TRAINER detected (never lock on WILD)
+                # This allows WILD (default) to upgrade to TRAINER when trainer dialogue appears
                 if latest_battle_type == BattleType.TRAINER:
                     self._battle_type_locked = True
                     logger.info(f"� [BATTLE TYPE] LOCKED as TRAINER - will not change for this battle")
@@ -1010,7 +1035,7 @@ class BattleBot:
                     logger.info(f"🎯 [MOVE DECISION] Determining move for opponent: '{opp_species}'")
                     print(f"🎯 [DECIDING] Should we use Absorb vs '{opp_species}'?")
                     
-                    use_absorb = self._should_use_absorb(opp_species)
+                    use_absorb = self._should_use_absorb(opp_species, player_pokemon)
                     logger.info(f"🎯 [MOVE DECISION] _should_use_absorb('{opp_species}') = {use_absorb}")
                     print(f"🎯 [DECISION] Use Absorb? {use_absorb}")
                     
@@ -1055,7 +1080,10 @@ class BattleBot:
                         logger.info(f"🔍 [BLIND DECISION] Opponent from dialogue: '{opp_species}'")
                         print(f"🔍 [BLIND] Opponent = '{opp_species}'")
                         
-                        use_absorb = self._should_use_absorb(opp_species)
+                        # Get player_pokemon for level check
+                        player_pokemon = battle_info.get('player_pokemon', {})
+                        
+                        use_absorb = self._should_use_absorb(opp_species, player_pokemon)
                         logger.info(f"🎯 [BLIND DECISION] _should_use_absorb('{opp_species}') = {use_absorb}")
                         
                         if use_absorb:
