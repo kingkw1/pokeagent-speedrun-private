@@ -426,17 +426,6 @@ class ObjectiveManager:
         logger.info(f"🔍 [RIVAL BATTLE] at (9,3)={at_rival_position}, in_battle={in_battle}, was_in_battle={was_in_battle}, complete={rival_battle_complete}")
         print(f"🔍 [RIVAL BATTLE] Check: at (9,3)={at_rival_position}, in_battle={in_battle}, was_in_battle={was_in_battle}, complete={rival_battle_complete}")
         
-        # SPECIAL: If we're at rival position, handle interaction directly (bypass planner)
-        if is_milestone_complete('ROUTE_103') and not rival_battle_complete and not is_milestone_complete('RECEIVED_POKEDEX'):
-            if current_x == 9 and current_y == 3 and 'ROUTE 103' in current_location:
-                logger.info(f"📍 [DIRECTIVE] At rival position, ready to interact")
-                return {
-                    'action': 'INTERACT',
-                    'target': (9, 3, 'ROUTE 103'),
-                    'description': 'Press A to interact with rival and start battle',
-                    'milestone': 'FIRST_RIVAL_BATTLE'
-                }
-        
         # === SPECIAL CASE: INSIDE BIRCH LAB ===
         # Wait for dialogue to auto-trigger (bypass planner)
         if 'BIRCHS LAB' in current_location or 'BIRCH LAB' in current_location:
@@ -476,6 +465,26 @@ class ObjectiveManager:
                     'target': (target_x, target_y, target_map),
                     'description': f'Navigate to {trainer_name} for battle',
                     'milestone': None  # Intermediate battles don't have milestones
+                }
+        
+        # SPECIAL CASE: On Route 103 but rival battle not complete
+        # Logic: if ROUTE_103 complete AND RECEIVED_POKEDEX not complete AND rival battle not complete
+        # Navigate to (9,3) which is adjacent to rival at (10,3), then interact facing RIGHT
+        # This needs to be checked BEFORE general milestone progression
+        if is_milestone_complete('ROUTE_103') and not is_milestone_complete('RECEIVED_POKEDEX'):
+            rival_battle_complete = self.is_goal_complete('ROUTE_103_RIVAL_BATTLE') or \
+                                   is_milestone_complete('FIRST_RIVAL_BATTLE')
+            if not rival_battle_complete:
+                logger.info(f"🎯 [RIVAL BATTLE] ROUTE_103 complete, RECEIVED_POKEDEX not complete, rival not battled - navigating to (9,3) to interact with rival at (10,3)")
+                print(f"🎯 [RIVAL BATTLE] ROUTE_103 complete, RECEIVED_POKEDEX not complete, rival not battled - navigating to (9,3) to interact with rival at (10,3)")
+                
+                # Goal is to reach (9,3) and face RIGHT toward rival at (10,3), then press A
+                # We provide the NPC's actual position so the navigation code knows which direction to face
+                return {
+                    'goal_coords': (9, 3, 'ROUTE_103'),
+                    'npc_coords': (10, 3),  # Actual rival position for determining facing direction
+                    'should_interact': True,
+                    'description': 'Navigate to (9,3) and face RIGHT to interact with rival at (10,3)'
                 }
         
         # =====================================================================
@@ -631,8 +640,28 @@ class ObjectiveManager:
             target_location = 'ROUTE_103'
             target_coords = (9, 3)  # Rival position
             journey_reason = "Head to Route 103 to battle rival May"
+    
+        # ON ROUTE_103 → Navigate to rival if battle not complete
+        elif 'ROUTE 103' in current_location:
+            logger.info(f"🔍 [ROUTE 103 CHECK] In Route 103 - checking rival battle status")
+            print(f"🔍 [ROUTE 103 CHECK] current_location={current_location}, graph_location={graph_location}")
+            
+            rival_battle_complete = self.is_goal_complete('ROUTE_103_RIVAL_BATTLE') or \
+                                   is_milestone_complete('FIRST_RIVAL_BATTLE')
+            
+            logger.info(f"🔍 [ROUTE 103 CHECK] rival_battle_complete={rival_battle_complete}")
+            print(f"🔍 [ROUTE 103 CHECK] rival_battle_complete={rival_battle_complete}")
+            
+            if not rival_battle_complete:
+                # We're on Route 103 but haven't battled rival yet
+                target_location = graph_location  # Stay on same location
+                target_coords = (10, 3)  # But navigate to rival position
+                journey_reason = "Navigate to rival trainer on Route 103"
+                
+                logger.info(f"🎯 [ROUTE 103] Setting target: location={target_location}, coords={target_coords}")
+                print(f"🎯 [ROUTE 103] Setting target: location={target_location}, coords={target_coords}")
         
-        # ROUTE_103 → Back to Birch Lab
+        # ROUTE_103 → Back to Birch Lab (after rival battle)
         elif is_milestone_complete('ROUTE_103') and not is_milestone_complete('RECEIVED_POKEDEX'):
             rival_battle_complete = self.is_goal_complete('ROUTE_103_RIVAL_BATTLE') or \
                                    is_milestone_complete('FIRST_RIVAL_BATTLE')
@@ -645,71 +674,127 @@ class ObjectiveManager:
             target_location = 'ROUTE_102'
             journey_reason = "Head to Route 102 after receiving Pokedex"
         
+        # DEBUG: Log what target was determined
+        logger.info(f"🔍 [TARGET DEBUG] target_location={target_location}, target_coords={target_coords}, graph_location={graph_location}")
+        print(f"🔍 [TARGET DEBUG] target_location={target_location}, target_coords={target_coords}, graph_location={graph_location}")
+        
         # If we have a target, plan/update journey
-        if target_location and target_location != graph_location:
-            # Check if we need to create a new plan
-            if not self.navigation_planner.has_active_plan():
-                success = self.navigation_planner.plan_journey(
-                    start_location=graph_location,
-                    end_location=target_location,
-                    final_coords=target_coords
-                )
-                if success:
-                    print(f"\n{'=' * 80}")
-                    print(f"🗺️ [NAV PLANNER] NEW JOURNEY PLANNED")
-                    print(f"{'=' * 80}")
-                    print(f"Reason: {journey_reason}")
-                    print(f"Start: {graph_location}")
-                    print(f"End: {target_location}")
-                    if target_coords:
-                        print(f"Final Target: {target_coords}")
-                    print(f"Total Stages: {len(self.navigation_planner.stages)}")
-                    print(f"{'=' * 80}\n")
-                else:
-                    return {
-                        'action': 'PLAN_FAILED',
-                        'description': f'Failed to plan journey from {graph_location} to {target_location}',
-                        'error': True
-                    }
-            elif self.navigation_planner.journey_end != target_location:
-                # Journey target changed - replan
-                print(f"\n⚠️ [NAV PLANNER] Target changed from {self.navigation_planner.journey_end} to {target_location}")
-                print(f"Replanning journey...\n")
-                self.navigation_planner.clear_plan()
-                return self._get_navigation_planner_directive(state_data)  # Recursive call to replan
+        if target_location:
+            # Check if target is same location (intra-location navigation to coords)
+            if target_location == graph_location and target_coords:
+                # Same location - just navigate to coordinates
+                # Don't use planner, return simple goal_coords directive
+                logger.info(f"🎯 [OBJECTIVE] Intra-location navigation to {target_coords} in {graph_location}")
+                print(f"🎯 [OBJECTIVE] Navigating to {target_coords} in current location")
+                
+                return {
+                    'goal_coords': (*target_coords, graph_location),
+                    'should_interact': True,  # Interact with rival/NPC
+                    'description': journey_reason or f"Navigate to {target_coords}"
+                }
+            
+            # Different location - use planner for multi-hop journey
+            elif target_location != graph_location:
+                # Check if we need to create a new plan
+                if not self.navigation_planner.has_active_plan():
+                    success = self.navigation_planner.plan_journey(
+                        start_location=graph_location,
+                        end_location=target_location,
+                        final_coords=target_coords
+                    )
+                    if success:
+                        print(f"\n{'=' * 80}")
+                        print(f"🗺️ [NAV PLANNER] NEW JOURNEY PLANNED")
+                        print(f"{'=' * 80}")
+                        print(f"Reason: {journey_reason}")
+                        print(f"Start: {graph_location}")
+                        print(f"End: {target_location}")
+                        if target_coords:
+                            print(f"Final Target: {target_coords}")
+                        print(f"Total Stages: {len(self.navigation_planner.stages)}")
+                        print(f"{'=' * 80}\n")
+                    else:
+                        return {
+                            'action': 'PLAN_FAILED',
+                            'description': f'Failed to plan journey from {graph_location} to {target_location}',
+                            'error': True
+                        }
+                elif self.navigation_planner.journey_end != target_location:
+                    # Journey target changed - replan
+                    print(f"\n⚠️ [NAV PLANNER] Target changed from {self.navigation_planner.journey_end} to {target_location}")
+                    print(f"Replanning journey...\n")
+                    self.navigation_planner.clear_plan()
+                    return self._get_navigation_planner_directive(state_data)  # Recursive call to replan
         
         # Get current directive from planner
         if self.navigation_planner.has_active_plan():
-            directive = self.navigation_planner.get_current_directive(
+            # Get the raw planner directive (with action types like NAVIGATE, CROSS_BOUNDARY, etc.)
+            planner_directive = self.navigation_planner.get_current_directive(
                 graph_location,
                 (current_x, current_y)
             )
             
-            # Add debug info
-            if directive:
-                directive['journey_progress'] = self.navigation_planner.get_progress_summary()
-                directive['stage_index'] = directive.get('stage_index', 0)
-                directive['total_stages'] = directive.get('total_stages', 0)
-                
-                # CRITICAL FIX: Convert target format from (x, y) to (x, y, 'LOCATION')
-                # action.py expects a 3-tuple with location name for NAVIGATE_AND_INTERACT
-                action_type = directive.get('action')
-                if action_type == 'NAVIGATE_AND_INTERACT' and 'target' in directive:
-                    target_coords = directive['target']
-                    target_location = directive.get('location', graph_location)
-                    directive['target'] = (*target_coords, target_location)
-                
-                # Note: NAVIGATE_DIRECTION uses portal_coords which is already a 2-tuple (x, y)
-                # and doesn't need the location suffix - it's handled differently
+            if not planner_directive:
+                return None
             
-            return directive
+            # TRANSLATION LAYER: Convert planner's stage-based directives into simple GOAL COORDINATES
+            # The planner tells us WHERE to go, action.py decides HOW to get there
+            action_type = planner_directive.get('action')
+            
+            if action_type == 'NAVIGATE_AND_INTERACT':
+                # Planner wants us to navigate to target coordinates
+                target_coords = planner_directive['target']  # (x, y) tuple
+                should_interact = planner_directive.get('should_interact', False)
+                location = planner_directive.get('location', graph_location)
+                
+                # Return simple goal - action.py will use A* to get there
+                return {
+                    'goal_coords': (*target_coords, location),  # (x, y, 'LOCATION')
+                    'should_interact': should_interact,
+                    'description': planner_directive.get('description', 'Navigate to coordinates'),
+                    'journey_progress': self.navigation_planner.get_progress_summary()
+                }
+                
+            elif action_type == 'NAVIGATE_DIRECTION':
+                # Planner wants us to move in a direction (approaching portal)
+                direction = planner_directive.get('direction')
+                portal_coords = planner_directive.get('portal_coords')  # (x, y)
+                
+                # Return directional goal - action.py will use frontier-based pathfinding
+                return {
+                    'goal_direction': direction,
+                    'portal_coords': portal_coords,  # Hint for validation
+                    'description': planner_directive.get('description', f'Move {direction}'),
+                    'journey_progress': self.navigation_planner.get_progress_summary()
+                }
+                
+            elif action_type == 'INTERACT_WARP':
+                # Planner wants us to interact with a warp tile
+                target_coords = planner_directive['target']
+                location = planner_directive.get('location', graph_location)
+                
+                return {
+                    'goal_coords': (*target_coords, location),
+                    'should_interact': True,  # Always interact with warps
+                    'description': planner_directive.get('description', 'Interact with warp'),
+                    'journey_progress': self.navigation_planner.get_progress_summary()
+                }
+                
+            elif action_type == 'COMPLETE':
+                # Journey complete
+                return {
+                    'journey_complete': True,
+                    'description': 'Navigation journey complete',
+                    'journey_progress': self.navigation_planner.get_progress_summary()
+                }
+                
+            else:
+                # Unknown action type or no action needed (CROSS_BOUNDARY, WAIT_FOR_WARP auto-advance)
+                # Return None - let VLM handle or wait for planner to advance
+                return None
         else:
-            # No active plan and no target - agent is at destination or unknown state
-            return {
-                'action': 'NO_PLAN',
-                'description': 'No active navigation plan (may be at destination)',
-                'at_destination': True
-            }
+            # No active plan - agent is at destination or unknown state
+            return None
     
     def compare_navigation_systems(self, state_data: Dict[str, Any]):
         """

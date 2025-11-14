@@ -402,6 +402,9 @@ class BattleBot:
         battle_phase = battle_info.get('battle_phase', 0)
         battle_phase_name = battle_info.get('battle_phase_name', 'unknown')
         
+        # DEBUG: Log phase reading in menu detection
+        print(f"📊 [MENU DETECT PHASE] phase={battle_phase}, name={battle_phase_name}")
+        
         # DEBUG: Log what we're checking
         logger.debug(f"🔍 [MENU DETECT] dialogue_text='{dialogue_text[:50] if dialogue_text else 'EMPTY'}...', phase={battle_phase}, phase_name={battle_phase_name}")
         print(f"🔍 [MENU DETECT] dialogue='{dialogue_text[:30] if dialogue_text else 'EMPTY'}', phase={battle_phase}, name={battle_phase_name}")
@@ -498,6 +501,14 @@ class BattleBot:
             # Detect which menu/state we're in
             menu_state = self._detect_battle_menu_state(state_data)
             
+            # Get battle phase for auto-advance detection
+            battle_phase = battle_info.get('battle_phase', 0)
+            battle_phase_name = battle_info.get('battle_phase_name', 'unknown')
+            
+            # DEBUG: ALWAYS print battle phase to verify if it's actually changing
+            print(f"📊 [BATTLE PHASE] phase={battle_phase}, name={battle_phase_name}")
+            logger.info(f"📊 [BATTLE PHASE] phase={battle_phase}, name={battle_phase_name}")
+            
             # DEBUG: Log what we detected
             logger.info(f"🔍 [BATTLE BOT DEBUG] Battle type: {self._current_battle_type.name}, Menu state: {menu_state}")
             print(f"🔍 [BATTLE BOT] Type={self._current_battle_type.name}, Menu={menu_state}")
@@ -517,11 +528,23 @@ class BattleBot:
                 # Need to dismiss this message first, then we'll fight
                 return "RECOVER_FROM_RUN_FAILURE"
             
-            # If in dialogue, advance it
+            # CRITICAL: Check if we're in a dialogue phase that auto-advances
+            # Phase 189 and similar are attack animations/dialogue that advance automatically
+            # We should WAIT for these to finish, not press A
+            # Only advance dialogue if we're blocking (e.g., pre-battle intro that needs A)
             if menu_state == "dialogue":
-                logger.info("💬 [BATTLE BOT] In battle dialogue - pressing A to advance")
-                print("💬 [BATTLE BOT] Advancing dialogue")
-                return "ADVANCE_BATTLE_DIALOGUE"
+                # Check battle phase - if it's a known auto-advancing phase, wait
+                if battle_phase == 189 or (battle_phase_name and 'phase_' in battle_phase_name):
+                    # This is likely an auto-advancing dialogue phase (attack animation, etc.)
+                    # Return None to wait for it to finish naturally
+                    logger.info(f"💬 [BATTLE BOT] In auto-advancing dialogue (phase {battle_phase}/{battle_phase_name}) - waiting for it to clear")
+                    print(f"💬 [BATTLE BOT] Waiting for dialogue to auto-advance (phase {battle_phase})")
+                    return None
+                else:
+                    # Pre-battle dialogue or other blocking dialogue - advance it
+                    logger.info("💬 [BATTLE BOT] In blocking dialogue - pressing A to advance")
+                    print("💬 [BATTLE BOT] Advancing dialogue")
+                    return "ADVANCE_BATTLE_DIALOGUE"
             
             # WILD BATTLE STRATEGY: Keep trying to run
             if self._current_battle_type == BattleType.WILD:

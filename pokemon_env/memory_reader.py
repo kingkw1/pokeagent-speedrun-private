@@ -1277,6 +1277,8 @@ class PokemonEmeraldReader:
                 comm_state = self._read_u8(self.addresses.BATTLE_COMMUNICATION)
                 battle_details["battle_phase"] = comm_state
                 battle_details["battle_phase_name"] = self._get_battle_phase_name(comm_state)
+                # DEBUG: Log every phase reading from memory
+                print(f"📊 [MEMORY READ] BATTLE_COMMUNICATION={comm_state}, phase_name={battle_details['battle_phase_name']}")
             except Exception:
                 pass  # Battle communication is supplementary
                 

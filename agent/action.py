@@ -1632,27 +1632,139 @@ Answer with just the button name:"""
             print(f"🔍 [DIRECTIVE DEBUG] Directive returned: {directive}")
             
             if directive:
-                action_type = directive.get('action')
-                target = directive.get('target')
-                description = directive.get('description', '')
+                # NEW SIMPLE DIRECTIVE FORMAT:
+                # - goal_coords: (x, y, 'LOCATION') - navigate to specific coordinates
+                # - goal_direction: 'north'/'south'/etc - navigate toward edge
+                # - should_interact: True/False - press A at destination
+                # - journey_complete: True - navigation done
                 
+                description = directive.get('description', '')
                 logger.info(f"📍 [DIRECTIVE] Active directive: {description}")
                 print(f"📍 [DIRECTIVE] {description}")
                 
-                # Debug logging to check action_type and target
-                logger.info(f"🔍 [DIRECTIVE DEBUG] action_type='{action_type}', target={target}, type(target)={type(target)}")
-                print(f"🔍 [DIRECTIVE DEBUG] action_type='{action_type}', target={target}")
+                # Handle journey complete
+                if directive.get('journey_complete'):
+                    logger.info(f"✅ [DIRECTIVE] Navigation journey complete")
+                    return []  # No action needed
                 
-                # Handle DIALOGUE action - just press A to advance dialogue
-                if action_type == 'DIALOGUE':
-                    logger.info(f"💬 [DIRECTIVE] Advancing dialogue with A button")
-                    return ['A']
+                # Handle goal_coords - navigate to specific coordinates
+                if 'goal_coords' in directive:
+                    goal_coords = directive['goal_coords']  # (x, y, 'LOCATION')
+                    should_interact = directive.get('should_interact', False)
+                    npc_coords = directive.get('npc_coords')  # Optional (npc_x, npc_y) for facing direction
+                    
+                    if len(goal_coords) == 3:
+                        target_x, target_y, target_map = goal_coords
+                    else:
+                        logger.error(f"❌ [DIRECTIVE] Invalid goal_coords format: {goal_coords}")
+                        return []
+                    
+                    logger.info(f"🎯 [DIRECTIVE] Navigating to ({target_x}, {target_y}) in {target_map}, interact={should_interact}, npc_coords={npc_coords}")
+                    
+                    # Use existing NavigationGoal system
+                    nav_goal = NavigationGoal(
+                        x=target_x, y=target_y,
+                        map_location=target_map,
+                        should_interact=should_interact,
+                        description=description
+                    )
+                    
+                    # Process NavigationGoal using the same logic as opener bot (from lines 1383-1473)
+                    current_x = state_data.get('player', {}).get('position', {}).get('x', 0)
+                    current_y = state_data.get('player', {}).get('position', {}).get('y', 0)
+                    goal_x = nav_goal.x
+                    goal_y = nav_goal.y
+                    
+                    logger.info(f"🗺️ [DIRECTIVE NAV] Current: ({current_x}, {current_y}) -> Goal: ({goal_x}, {goal_y})")
+                    
+                    # At exact goal position - handle interaction with NPC
+                    if current_x == goal_x and current_y == goal_y:
+                        if should_interact:
+                            # If npc_coords provided, we need to face the NPC before pressing A
+                            if npc_coords:
+                                npc_x, npc_y = npc_coords
+                                
+                                # Calculate direction to face NPC
+                                required_direction = None
+                                if current_x < npc_x:
+                                    required_direction = 'RIGHT'
+                                elif current_x > npc_x:
+                                    required_direction = 'LEFT'
+                                elif current_y < npc_y:
+                                    required_direction = 'DOWN'
+                                elif current_y > npc_y:
+                                    required_direction = 'UP'
+                                
+                                # Check current orientation
+                                current_orientation = None
+                                if recent_actions:
+                                    for action in reversed(recent_actions):
+                                        if isinstance(action, list):
+                                            action = action[0] if action else None
+                                        if action in ['UP', 'DOWN', 'LEFT', 'RIGHT']:
+                                            current_orientation = action
+                                            break
+                                
+                                if current_orientation == required_direction:
+                                    logger.info(f"🗺️ [DIRECTIVE NAV] At goal, facing NPC at ({npc_x},{npc_y}) {required_direction} - pressing A")
+                                    return ['A']
+                                else:
+                                    logger.info(f"🗺️ [DIRECTIVE NAV] At goal, need to turn {required_direction} to face NPC at ({npc_x},{npc_y})")
+                                    return [required_direction]
+                            else:
+                                # No NPC coords - just interact at goal position
+                                logger.info(f"🗺️ [DIRECTIVE NAV] At exact goal - pressing A to interact")
+                                return ['A']
+                        else:
+                            logger.info(f"🗺️ [DIRECTIVE NAV] At goal, no interaction needed")
+                            return []
+                    
+                    # Calculate direction to goal
+                    required_direction = None
+                    if current_x < goal_x:
+                        required_direction = 'RIGHT'
+                    elif current_x > goal_x:
+                        required_direction = 'LEFT'
+                    elif current_y < goal_y:
+                        required_direction = 'DOWN'
+                    elif current_y > goal_y:
+                        required_direction = 'UP'
+                    
+                    # Check distance to goal
+                    distance = abs(current_x - goal_x) + abs(current_y - goal_y)
+                    
+                    # NOT at goal yet - navigate toward it
+                    # When npc_coords is provided, we navigate TO the goal position first
+                    # The interaction logic at the goal handles facing the NPC
+                    if distance > 0:
+                        if required_direction:
+                            logger.info(f"🗺️ [DIRECTIVE NAV] Moving {required_direction} toward goal (distance: {distance})")
+                            return [required_direction]
+                        else:
+                            logger.warning(f"⚠️ [DIRECTIVE NAV] Distance {distance} but no direction calculated")
+                            return []
+                    
+                    # This shouldn't be reached (distance=0 handled above)
+                    logger.warning(f"⚠️ [DIRECTIVE NAV] Unexpected state: at goal but not caught by check above")
+                    return []
                 
-                # Handle NAVIGATE_DIRECTION - hybrid approach:
-                # 1. If portal_coords provided and we're far from it: navigate to portal
-                # 2. If within proximity_radius of portal: use directional A* to find any path through
-                # 3. If no portal_coords: use directional A* only
-                elif action_type == 'NAVIGATE_DIRECTION':
+                # Handle goal_direction - navigate toward map edge
+                elif 'goal_direction' in directive:
+                    goal_direction = directive['goal_direction']  # 'north', 'south', etc.
+                    
+                    logger.info(f"🎯 [DIRECTIVE] Navigating {goal_direction}")
+                    
+                    # Use existing frontier-based pathfinding
+                    suggested_action = _local_pathfind_from_tiles(state_data, goal_direction, agent_memory.get('recent_actions', []))
+                    if suggested_action:
+                        logger.info(f"🗺️ [DIRECTIVE] Directional pathfinding suggests: {suggested_action}")
+                        return [suggested_action]
+                    else:
+                        logger.warning(f"⚠️ [DIRECTIVE] Directional pathfinding failed for {goal_direction}")
+                        return []
+        
+        # === EXISTING NAVIGATION GOAL HANDLING (unchanged) ===
+        # Check for active navigation goal from directive or other sources
                     direction = directive.get('direction', 'south')  # 'north', 'south', 'east', 'west'
                     target_location = directive.get('target_location', '').upper()
                     portal_coords = directive.get('portal_coords')  # (x, y) tuple or None

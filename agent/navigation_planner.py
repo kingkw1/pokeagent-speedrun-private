@@ -365,12 +365,17 @@ class NavigationPlanner:
                     }
             else:
                 # Regular intra-location navigation - use NAVIGATE_AND_INTERACT with A*
+                # Check if this is the FINAL navigation stage (navigating to final_coords)
+                # If so, we should interact (e.g., with rival trainer, NPC, etc.)
+                is_final_navigation = (self.final_coords is not None and 
+                                      stage.target_coords == self.final_coords)
+                
                 return {
                     "action": "NAVIGATE_AND_INTERACT",
                     "target": stage.target_coords,
                     "location": stage.location,
                     "description": stage.description,
-                    "should_interact": False,  # Just navigate, don't interact
+                    "should_interact": is_final_navigation,  # Interact at final destination
                     "stage_index": self.current_stage_index,
                     "total_stages": len(self.stages)
                 }
