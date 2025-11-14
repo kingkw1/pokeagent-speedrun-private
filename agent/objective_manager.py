@@ -9,6 +9,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+from agent.navigation_planner import NavigationPlanner
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +53,14 @@ class ObjectiveManager:
             'location': None,
         }
         
+        # NEW: Initialize NavigationPlanner for comparison testing
+        self.navigation_planner = NavigationPlanner()
+        self._last_planner_location = None
+        self._last_planner_coords = None
+        
         logger.info(f"🏗️ [OBJECT LIFECYCLE] ObjectiveManager.__init__() called - created new instance with {len(self.objectives)} storyline objectives")
         print(f"🏗️ [OBJECT LIFECYCLE] ObjectiveManager.__init__() called - NEW INSTANCE CREATED")
+        print(f"🗺️ [NAV PLANNER] NavigationPlanner initialized for comparison testing")
     
     def _initialize_storyline_objectives(self):
         """Initialize the main storyline objectives for Pokémon Emerald progression"""
@@ -620,3 +627,260 @@ class ObjectiveManager:
             "total_count": len(self.objectives),
             "completion_rate": len(completed) / len(self.objectives) if self.objectives else 0
         }
+    
+    def _get_navigation_planner_directive(self, state_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Get directive from NavigationPlanner for comparison testing.
+        This runs in parallel with the existing navigation logic.
+        """
+        # Get current position
+        player_data = state_data.get('player', {})
+        position = player_data.get('position', {})
+        current_x = position.get('x', 0)
+        current_y = position.get('y', 0)
+        current_location = player_data.get('location', '').upper()
+        
+        # Convert location name to graph format
+        location_mapping = {
+            'LITTLEROOT TOWN': 'LITTLEROOT_TOWN',
+            'ROUTE 101': 'ROUTE_101',
+            'OLDALE TOWN': 'OLDALE_TOWN',
+            'ROUTE 103': 'ROUTE_103',
+            'ROUTE 102': 'ROUTE_102',
+            'PETALBURG CITY': 'PETALBURG_CITY',
+            'ROUTE 104': 'ROUTE_104_SOUTH',  # May need to distinguish north/south
+            'PETALBURG WOODS': 'PETALBURG_WOODS',
+            'RUSTBORO CITY': 'RUSTBORO_CITY',
+            'BIRCHS LAB': 'PROFESSOR_BIRCH_LAB',
+            'BIRCH LAB': 'PROFESSOR_BIRCH_LAB',
+        }
+        
+        # Find matching location
+        graph_location = None
+        for loc_key, loc_value in location_mapping.items():
+            if loc_key in current_location:
+                graph_location = loc_value
+                break
+        
+        if not graph_location:
+            # Unknown location - can't use planner
+            return {
+                'action': 'UNKNOWN_LOCATION',
+                'description': f'Location "{current_location}" not in navigation graph',
+                'error': True
+            }
+        
+        # Detect if we changed location (planner might auto-advance)
+        location_changed = (graph_location != self._last_planner_location)
+        coords_changed = ((current_x, current_y) != self._last_planner_coords)
+        
+        self._last_planner_location = graph_location
+        self._last_planner_coords = (current_x, current_y)
+        
+        # Get milestones for determining target
+        milestones = state_data.get('milestones', {})
+        
+        def is_milestone_complete(milestone_id: str) -> bool:
+            milestone_data = milestones.get(milestone_id, {})
+            return milestone_data.get('completed', False) if isinstance(milestone_data, dict) else False
+        
+        # Determine target based on current milestone state (same logic as existing directive)
+        target_location = None
+        target_coords = None
+        journey_reason = None
+        
+        # STARTER_CHOSEN → OLDALE_TOWN
+        if is_milestone_complete('STARTER_CHOSEN') and not is_milestone_complete('OLDALE_TOWN'):
+            target_location = 'OLDALE_TOWN'
+            journey_reason = "After getting starter, head to Oldale Town"
+        
+        # OLDALE_TOWN → ROUTE_103 (rival battle)
+        elif is_milestone_complete('OLDALE_TOWN') and not is_milestone_complete('ROUTE_103'):
+            target_location = 'ROUTE_103'
+            target_coords = (9, 3)  # Rival position
+            journey_reason = "Head to Route 103 to battle rival May"
+        
+        # ROUTE_103 → Back to Birch Lab
+        elif is_milestone_complete('ROUTE_103') and not is_milestone_complete('RECEIVED_POKEDEX'):
+            rival_battle_complete = self.is_goal_complete('ROUTE_103_RIVAL_BATTLE') or \
+                                   is_milestone_complete('FIRST_RIVAL_BATTLE')
+            if rival_battle_complete:
+                target_location = 'PROFESSOR_BIRCH_LAB'
+                journey_reason = "Return to Birch Lab to get Pokedex"
+        
+        # RECEIVED_POKEDEX → ROUTE_102
+        elif is_milestone_complete('RECEIVED_POKEDEX') and not is_milestone_complete('ROUTE_102'):
+            target_location = 'ROUTE_102'
+            journey_reason = "Head to Route 102 after receiving Pokedex"
+        
+        # If we have a target, plan/update journey
+        if target_location and target_location != graph_location:
+            # Check if we need to create a new plan
+            if not self.navigation_planner.has_active_plan():
+                success = self.navigation_planner.plan_journey(
+                    start_location=graph_location,
+                    end_location=target_location,
+                    final_coords=target_coords
+                )
+                if success:
+                    print(f"\n{'=' * 80}")
+                    print(f"🗺️ [NAV PLANNER] NEW JOURNEY PLANNED")
+                    print(f"{'=' * 80}")
+                    print(f"Reason: {journey_reason}")
+                    print(f"Start: {graph_location}")
+                    print(f"End: {target_location}")
+                    if target_coords:
+                        print(f"Final Target: {target_coords}")
+                    print(f"Total Stages: {len(self.navigation_planner.stages)}")
+                    print(f"{'=' * 80}\n")
+                else:
+                    return {
+                        'action': 'PLAN_FAILED',
+                        'description': f'Failed to plan journey from {graph_location} to {target_location}',
+                        'error': True
+                    }
+            elif self.navigation_planner.journey_end != target_location:
+                # Journey target changed - replan
+                print(f"\n⚠️ [NAV PLANNER] Target changed from {self.navigation_planner.journey_end} to {target_location}")
+                print(f"Replanning journey...\n")
+                self.navigation_planner.clear_plan()
+                return self._get_navigation_planner_directive(state_data)  # Recursive call to replan
+        
+        # Get current directive from planner
+        if self.navigation_planner.has_active_plan():
+            directive = self.navigation_planner.get_current_directive(
+                graph_location,
+                (current_x, current_y)
+            )
+            
+            # Add debug info
+            if directive:
+                directive['journey_progress'] = self.navigation_planner.get_progress_summary()
+                directive['stage_index'] = directive.get('stage_index', 0)
+                directive['total_stages'] = directive.get('total_stages', 0)
+            
+            return directive
+        else:
+            # No active plan and no target - agent is at destination or unknown state
+            return {
+                'action': 'NO_PLAN',
+                'description': 'No active navigation plan (may be at destination)',
+                'at_destination': True
+            }
+    
+    def compare_navigation_systems(self, state_data: Dict[str, Any]):
+        """
+        Compare old directive system with new NavigationPlanner.
+        Prints detailed comparison for analysis.
+        """
+        print(f"\n{'█' * 80}")
+        print(f"{'█' * 80}")
+        print(f"🔍 NAVIGATION COMPARISON")
+        print(f"{'█' * 80}")
+        print(f"{'█' * 80}\n")
+        
+        # Get current position
+        player_data = state_data.get('player', {})
+        position = player_data.get('position', {})
+        current_x = position.get('x', 0)
+        current_y = position.get('y', 0)
+        current_location = player_data.get('location', '').upper()
+        
+        print(f"📍 Current Position: ({current_x}, {current_y}) in {current_location}")
+        
+        # Get current milestone status
+        milestones = state_data.get('milestones', {})
+        active_milestones = [k for k, v in milestones.items() if isinstance(v, dict) and v.get('completed', False)]
+        print(f"✅ Active Milestones: {', '.join(active_milestones) if active_milestones else 'None'}")
+        
+        print(f"\n{'-' * 80}")
+        print(f"OLD SYSTEM (get_next_action_directive)")
+        print(f"{'-' * 80}\n")
+        
+        old_directive = self.get_next_action_directive(state_data)
+        if old_directive:
+            print(f"Action: {old_directive.get('action')}")
+            print(f"Target: {old_directive.get('target')}")
+            print(f"Description: {old_directive.get('description')}")
+            print(f"Milestone: {old_directive.get('milestone')}")
+            if 'direction' in old_directive:
+                print(f"Direction: {old_directive.get('direction')}")
+                print(f"Target Location: {old_directive.get('target_location')}")
+                print(f"Portal Coords: {old_directive.get('portal_coords')}")
+        else:
+            print("No directive (None)")
+        
+        print(f"\n{'-' * 80}")
+        print(f"NEW SYSTEM (NavigationPlanner)")
+        print(f"{'-' * 80}\n")
+        
+        new_directive = self._get_navigation_planner_directive(state_data)
+        if new_directive:
+            is_error = new_directive.get('error', False)
+            is_at_dest = new_directive.get('at_destination', False)
+            
+            if is_error:
+                print(f"❌ ERROR: {new_directive.get('description')}")
+            elif is_at_dest:
+                print(f"🎯 {new_directive.get('description')}")
+            else:
+                print(f"Action: {new_directive.get('action')}")
+                if 'target' in new_directive and new_directive['target']:
+                    print(f"Target: {new_directive.get('target')}")
+                print(f"Description: {new_directive.get('description')}")
+                
+                # Show stage progress
+                stage_idx = new_directive.get('stage_index', 0)
+                total_stages = new_directive.get('total_stages', 0)
+                if total_stages > 0:
+                    print(f"Progress: Stage {stage_idx + 1}/{total_stages}")
+                    
+                # Show journey progress
+                journey_progress = new_directive.get('journey_progress')
+                if journey_progress:
+                    print(f"Journey: {journey_progress}")
+        else:
+            print("No directive (None)")
+        
+        print(f"\n{'-' * 80}")
+        print(f"COMPARISON ANALYSIS")
+        print(f"{'-' * 80}\n")
+        
+        # Compare actions
+        old_action = old_directive.get('action') if old_directive else None
+        new_action = new_directive.get('action') if new_directive else None
+        
+        if old_action == new_action:
+            print(f"✅ Actions MATCH: Both systems suggest '{old_action}'")
+        else:
+            print(f"⚠️ Actions DIFFER:")
+            print(f"   Old: {old_action}")
+            print(f"   New: {new_action}")
+        
+        # Compare targets
+        old_target = old_directive.get('target') if old_directive else None
+        new_target = new_directive.get('target') if new_directive else None
+        
+        if old_target and new_target:
+            if old_target == new_target:
+                print(f"✅ Targets MATCH: Both point to {old_target}")
+            else:
+                print(f"⚠️ Targets DIFFER:")
+                print(f"   Old: {old_target}")
+                print(f"   New: {new_target}")
+        elif old_target or new_target:
+            print(f"⚠️ One system has target, other doesn't:")
+            print(f"   Old: {old_target}")
+            print(f"   New: {new_target}")
+        
+        # Compare descriptions
+        old_desc = old_directive.get('description') if old_directive else None
+        new_desc = new_directive.get('description') if new_directive else None
+        
+        if old_desc and new_desc:
+            print(f"\n📝 Description Comparison:")
+            print(f"   Old: {old_desc}")
+            print(f"   New: {new_desc}")
+        
+        print(f"\n{'█' * 80}")
+        print(f"{'█' * 80}\n")

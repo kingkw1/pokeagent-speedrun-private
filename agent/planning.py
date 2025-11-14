@@ -99,6 +99,10 @@ def planning_step(memory_context, current_plan, slow_thinking_needed, state_data
     obj_manager = planning_step.objective_manager
     strategic_plan = obj_manager.get_strategic_plan_description(state_data)
     
+    # NEW: Compare navigation systems for testing
+    # This runs in parallel and prints detailed comparison without affecting behavior
+    obj_manager.compare_navigation_systems(state_data)
+    
     # Get objectives summary for logging
     objectives_summary = obj_manager.get_objectives_summary()
     logger.info(f"[PLANNING] Objectives status: {objectives_summary['completed_count']}/{objectives_summary['total_count']} completed")
