@@ -196,7 +196,7 @@ def run_multiprocess_client(server_port=8000, args=None):
                                         try:
                                             response = requests.post(
                                                 f"{server_url}/action",
-                                                json={"buttons": buttons},
+                                                json={"buttons": buttons, "source": "local_agent"},
                                                 timeout=5
                                             )
                                             if response.status_code == 200:
@@ -312,7 +312,7 @@ def run_multiprocess_client(server_port=8000, args=None):
                                 try:
                                     response = requests.post(
                                         f"{server_url}/action",
-                                        json={"buttons": [action]},
+                                        json={"buttons": [action], "source": "manual"},
                                         timeout=2
                                     )
                                     if response.status_code == 200:

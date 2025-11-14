@@ -229,6 +229,7 @@ app.add_middleware(
 # Models for API requests and responses
 class ActionRequest(BaseModel):
     buttons: list = []  # List of button names: A, B, SELECT, START, UP, DOWN, LEFT, RIGHT
+    source: str = "local_agent"  # Source of action: "local_agent" for local AI, "manual" for keyboard
 
 class GameStateResponse(BaseModel):
     screenshot_base64: str
@@ -778,8 +779,8 @@ async def take_action(request: ActionRequest):
                 state_hash = hashlib.md5(state_str.encode()).hexdigest()[:8]
                 
                 # Determine if this is manual mode (from client) or agent mode
-                # For now, assume manual mode if coming through API
-                manual_mode = request.source == "manual" if hasattr(request, 'source') else True
+                # Local agent explicitly sets source="local_agent" (default), manual keyboard sets source="manual"
+                manual_mode = (request.source == "manual")
                 
                 # Get the latest milestone from the emulator's milestone tracker
                 # First, trigger an immediate milestone check to ensure current state is detected
