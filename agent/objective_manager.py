@@ -541,14 +541,25 @@ class ObjectiveManager:
                     'milestone': None
                 }
             elif 'LITTLEROOT TOWN' in current_location:
-                # Head to Route 101 portal - portal at (7, 2) based on gameplay script
+                # Head north to Route 101, then continue to Oldale Town
                 return {
                     'action': 'NAVIGATE_DIRECTION',
                     'direction': 'north',
                     'target_location': 'OLDALE TOWN',
-                    'portal_coords': (11, 0),
+                    'portal_coords': None,  # Use frontier exploration
                     'proximity_radius': 5,
-                    'description': 'Navigate to Oldale Town through Route 101',
+                    'description': 'Navigate north to Oldale Town',
+                    'milestone': None
+                }
+            elif 'ROUTE 101' in current_location:
+                # Continue north through Route 101 to Oldale Town
+                return {
+                    'action': 'NAVIGATE_DIRECTION',
+                    'direction': 'north',
+                    'target_location': 'OLDALE TOWN',
+                    'portal_coords': None,  # Use frontier exploration
+                    'proximity_radius': 5,
+                    'description': 'Continue north to Oldale Town',
                     'milestone': None
                 }
             elif 'OLDALE TOWN' in current_location:
