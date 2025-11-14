@@ -714,13 +714,18 @@ def _astar_pathfind_with_grid_data(
                 return None
             
             goal_tile = location_grid[goal_coords]
-            if goal_tile not in ['.', '_', '~', 'D']:
+            # Portal tiles ('?') are valid navigation targets - agent must walk onto them to trigger transition
+            # Walkable tiles: '.' (floor), '_' (path), '~' (grass), 'D' (door), '?' (portal/warp/unknown)
+            if goal_tile not in ['.', '_', '~', 'D', '?']:
                 print(f"⚠️ [A* DIRECT] Goal {goal_coords} is not walkable (tile: '{goal_tile}')")
                 return None
             
             # Use the goal coordinates as the single target
             target_positions = [goal_coords]
-            print(f"✅ [A* DIRECT] Goal is walkable, pathfinding to: {goal_coords}")
+            if goal_tile == '?':
+                print(f"✅ [A* DIRECT] Goal is portal/warp tile ('?'), pathfinding to: {goal_coords}")
+            else:
+                print(f"✅ [A* DIRECT] Goal is walkable, pathfinding to: {goal_coords}")
         else:
             # No specific goal - use frontier-based exploration (old behavior)
             print(f"🎯 [A* FRONTIER] No specific goal, finding frontier tiles in direction '{goal_direction}'")
@@ -1019,8 +1024,19 @@ def _astar_pathfind_with_grid_data(
                 # === END LEDGE PHYSICS ===
                 
                 # Now check basic walkability (after ledge rules)
-                if not is_walkable(neighbor):
+                # SPECIAL CASE: If neighbor is a goal tile (like a portal), allow it even if not normally walkable
+                is_goal_tile = neighbor in target_positions
+                if not is_goal_tile and not is_walkable(neighbor):
                     continue
+                
+                # If it IS a goal tile but not walkable (e.g., portal '?'), allow reaching it but don't explore beyond it
+                if is_goal_tile and neighbor not in location_grid:
+                    continue  # Goal tile not in grid - skip
+                
+                # Log when we allow non-walkable goal tile
+                if is_goal_tile and not is_walkable(neighbor):
+                    neighbor_tile_sym = location_grid.get(neighbor, '?')
+                    print(f"🎯 [A* GOAL] Allowing non-walkable goal tile at {neighbor} ('{neighbor_tile_sym}')")
                 
                 # Skip if should avoid (warp detection)
                 if should_avoid_position(neighbor):
