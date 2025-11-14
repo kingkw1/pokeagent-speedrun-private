@@ -239,10 +239,8 @@ class MapStitcher:
         """Update or create a map area with new data"""
         map_id = self.get_map_id(map_bank, map_number)
         
-        # Skip map 0 (startup/initialization state) as it's not a real location
-        if map_id == 0:
-            logger.debug(f"Skipping map 0 (startup state)")
-            return
+        # Note: map_id 0 is valid! It's Petalburg City (0x00)
+        # Don't skip it - only skip truly invalid map IDs
         
         # Validate map ID is reasonable
         if map_id < 0 or map_id > 0xFFFF:

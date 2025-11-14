@@ -1182,32 +1182,26 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
             if not _recent_positions or _recent_positions[-1] != current_pos_key:
                 _recent_positions.append(current_pos_key)
         
-        # 🌀 WARP DETECTION - Wait 2 frames after position jump to let position stabilize
-        # Detect warps by looking for large position changes (teleportation)
-        if not hasattr(action_step, '_last_position'):
-            action_step._last_position = (current_x, current_y)
+        # 🌀 WARP DETECTION - Wait 2 frames after location change to let position stabilize
+        # Detect warps by looking for location name changes (map transitions)
+        # This is more reliable than position jumps since batched movements can cause large position deltas
+        if not hasattr(action_step, '_last_location'):
+            action_step._last_location = location
             action_step._warp_wait_frames = 0
         
-        # Calculate distance from last position
-        if current_x is not None and current_y is not None:
-            last_x, last_y = action_step._last_position
-            if last_x is not None and last_y is not None:
-                distance = abs(current_x - last_x) + abs(current_y - last_y)
-                
-                # Detect warp: position changed by more than 1 tile (teleportation)
-                # Normal movement is 1 tile per frame max
-                if distance > 1:
-                    print(f"🌀 [WARP DETECTED] Position jump: ({last_x}, {last_y}) → ({current_x}, {current_y}) [distance={distance}]")
-                    logger.info(f"🌀 [WARP DETECTED] Position jump: ({last_x}, {last_y}) → ({current_x}, {current_y}) [distance={distance}]")
-                    action_step._warp_wait_frames = 1  # Wait 1 frame for position to stabilize
-            
-            # Update last position
-            action_step._last_position = (current_x, current_y)
+        # Detect location change (warp occurred)
+        if location and location != action_step._last_location:
+            print(f"🌀 [WARP DETECTED] Location changed: '{action_step._last_location}' → '{location}'")
+            logger.info(f"🌀 [WARP DETECTED] Location changed: '{action_step._last_location}' → '{location}'")
+            action_step._warp_wait_frames = 2  # Wait 2 frames for position to stabilize
+            action_step._last_location = location
         
         # If we're waiting after a warp, decrement counter and return empty action
         if action_step._warp_wait_frames > 0:
             print(f"⏳ [WARP WAIT] Waiting {action_step._warp_wait_frames} more frames for position to stabilize")
             logger.info(f"⏳ [WARP WAIT] Waiting {action_step._warp_wait_frames} frames")
+            action_step._warp_wait_frames -= 1
+            return []  # Return empty action to wait
             action_step._warp_wait_frames -= 1
             return []  # Return empty action to wait
         
@@ -1915,59 +1909,107 @@ Answer with just the button name:"""
                         
                         # 2. If local A* fails, try global A* with map stitcher data (handles long-range paths)
                         if not pathfound_action:
+                            print(f"🗺️ [GOAL_COORDS] Local A* failed, checking map stitcher availability...")
                             stitched_map_info = state_data.get('map', {}).get('stitched_map_info')
+                            print(f"🗺️ [GOAL_COORDS] stitched_map_info exists: {stitched_map_info is not None}")
+                            
+                            if stitched_map_info:
+                                print(f"🗺️ [GOAL_COORDS] stitched_map_info.available: {stitched_map_info.get('available')}")
+                                print(f"🗺️ [GOAL_COORDS] stitched_map_info keys: {list(stitched_map_info.keys())}")
+                            
                             if stitched_map_info and stitched_map_info.get('available'):
                                 current_area = stitched_map_info.get('current_area', {})
+                                print(f"🗺️ [GOAL_COORDS] current_area exists: {current_area is not None}")
+                                print(f"🗺️ [GOAL_COORDS] current_area keys: {list(current_area.keys()) if current_area else 'None'}")
+                                
                                 grid_serializable = current_area.get('grid')
                                 bounds = current_area.get('bounds')
                                 
-                                if grid_serializable and bounds:
-                                    print(f"🗺️ [GOAL_COORDS] Trying global A* with map stitcher data...")
+                                print(f"🗺️ [GOAL_COORDS] grid exists: {grid_serializable is not None}, bounds exists: {bounds is not None}")
+                                print(f"🗺️ [GOAL_COORDS] grid type: {type(grid_serializable)}, grid length: {len(grid_serializable) if grid_serializable else 0}")
+                                print(f"🗺️ [GOAL_COORDS] bounds value: {bounds}")
+                                print(f"🗺️ [GOAL_COORDS] Condition check: grid_serializable={bool(grid_serializable)}, not bounds={not bounds}")
+                                
+                                # Check if grid is non-empty (server might send empty dict for unknown areas)
+                                if grid_serializable and len(grid_serializable) > 0:
+                                    # If we have grid but no bounds, calculate bounds from grid
+                                    if not bounds:
+                                        print(f"🔧 [GOAL_COORDS] Calculating bounds from grid data...")
+                                        xs = []
+                                        ys = []
+                                        for key in grid_serializable.keys():
+                                            x, y = map(int, key.split(','))
+                                            xs.append(x)
+                                            ys.append(y)
+                                        
+                                        if xs and ys:
+                                            bounds = {
+                                                'min_x': min(xs),
+                                                'max_x': max(xs),
+                                                'min_y': min(ys),
+                                                'max_y': max(ys)
+                                            }
+                                            print(f"✅ [GOAL_COORDS] Calculated bounds from {len(grid_serializable)} tiles: {bounds}")
+                                        else:
+                                            print(f"❌ [GOAL_COORDS] Grid exists but is empty, cannot calculate bounds")
                                     
-                                    # Convert grid to proper format
-                                    location_grid = {}
-                                    for key, value in grid_serializable.items():
-                                        x, y = map(int, key.split(','))
-                                        location_grid[(x, y)] = value
-                                    
-                                    # Calculate goal direction for fallback
-                                    dx = goal_x - current_x
-                                    dy = goal_y - current_y
-                                    if abs(dy) > abs(dx):
-                                        goal_direction = 'south' if dy > 0 else 'north'
+                                    if bounds:
+                                        print(f"🗺️ [GOAL_COORDS] Map stitcher grid has {len(grid_serializable)} tiles")
+                                        print(f"🗺️ [GOAL_COORDS] Bounds: {bounds}")
+                                        print(f"🗺️ [GOAL_COORDS] Trying global A* with map stitcher data...")
+                                        
+                                        # Convert grid to proper format
+                                        location_grid = {}
+                                        for key, value in grid_serializable.items():
+                                            x, y = map(int, key.split(','))
+                                            location_grid[(x, y)] = value
+                                        
+                                        # Calculate goal direction for fallback
+                                        dx = goal_x - current_x
+                                        dy = goal_y - current_y
+                                        if abs(dy) > abs(dx):
+                                            goal_direction = 'south' if dy > 0 else 'north'
+                                        else:
+                                            goal_direction = 'east' if dx > 0 else 'west'
+                                        
+                                        print(f"🗺️ [GOAL_COORDS] Goal direction: {goal_direction}, checking if goal in grid...")
+                                        goal_in_grid = (goal_x, goal_y) in location_grid
+                                        print(f"🗺️ [GOAL_COORDS] Goal ({goal_x}, {goal_y}) in explored grid: {goal_in_grid}")
+                                        
+                                        if goal_in_grid:
+                                            # Goal is explored - pathfind directly to it
+                                            print(f"✅ [GOAL_COORDS] Goal is explored, using direct A* pathfinding")
+                                            pathfound_action = _astar_pathfind_with_grid_data(
+                                                location_grid=location_grid,
+                                                bounds=bounds,
+                                                current_pos=(current_x, current_y),
+                                                location=state_data.get('player', {}).get('location', ''),
+                                                goal_direction=goal_direction,
+                                                recent_positions=_recent_positions,
+                                                goal_coords=(goal_x, goal_y)
+                                            )
+                                            print(f"🗺️ [GOAL_COORDS] Direct A* returned: {pathfound_action}")
+                                        else:
+                                            # Goal is unexplored - use frontier-based exploration toward goal direction
+                                            print(f"⚠️ [GOAL_COORDS] Goal is unexplored, using frontier-based navigation toward {goal_direction}")
+                                            pathfound_action = _astar_pathfind_with_grid_data(
+                                                location_grid=location_grid,
+                                                bounds=bounds,
+                                                current_pos=(current_x, current_y),
+                                                location=state_data.get('player', {}).get('location', ''),
+                                                goal_direction=goal_direction,
+                                                recent_positions=_recent_positions,
+                                                goal_coords=None  # Don't pass goal_coords - use frontier exploration
+                                            )
+                                            print(f"🗺️ [GOAL_COORDS] Frontier-based A* returned: {pathfound_action}")
                                     else:
-                                        goal_direction = 'east' if dx > 0 else 'west'
-                                    
-                                    print(f"🗺️ [GOAL_COORDS] Goal direction: {goal_direction}, checking if goal in grid...")
-                                    goal_in_grid = (goal_x, goal_y) in location_grid
-                                    print(f"🗺️ [GOAL_COORDS] Goal ({goal_x}, {goal_y}) in explored grid: {goal_in_grid}")
-                                    
-                                    if goal_in_grid:
-                                        # Goal is explored - pathfind directly to it
-                                        print(f"✅ [GOAL_COORDS] Goal is explored, using direct A* pathfinding")
-                                        pathfound_action = _astar_pathfind_with_grid_data(
-                                            location_grid=location_grid,
-                                            bounds=bounds,
-                                            current_pos=(current_x, current_y),
-                                            location=state_data.get('player', {}).get('location', ''),
-                                            goal_direction=goal_direction,
-                                            recent_positions=_recent_positions,
-                                            goal_coords=(goal_x, goal_y)
-                                        )
-                                        print(f"🗺️ [GOAL_COORDS] Direct A* returned: {pathfound_action}")
-                                    else:
-                                        # Goal is unexplored - use frontier-based exploration toward goal direction
-                                        print(f"⚠️ [GOAL_COORDS] Goal is unexplored, using frontier-based navigation toward {goal_direction}")
-                                        pathfound_action = _astar_pathfind_with_grid_data(
-                                            location_grid=location_grid,
-                                            bounds=bounds,
-                                            current_pos=(current_x, current_y),
-                                            location=state_data.get('player', {}).get('location', ''),
-                                            goal_direction=goal_direction,
-                                            recent_positions=_recent_positions,
-                                            goal_coords=None  # Don't pass goal_coords - use frontier exploration
-                                        )
-                                        print(f"🗺️ [GOAL_COORDS] Frontier-based A* returned: {pathfound_action}")
+                                        print(f"❌ [GOAL_COORDS] Map stitcher has non-empty grid but no bounds could be calculated")
+                                else:
+                                    print(f"⚠️ [GOAL_COORDS] Map stitcher grid is empty (length=0), cannot use for pathfinding")
+                            else:
+                                print(f"❌ [GOAL_COORDS] Map stitcher not available or no current_area")
+                        else:
+                            print(f"✅ [GOAL_COORDS] Local A* succeeded, skipping global A*")
                         
                         # 3. If we found a path, use it
                         if pathfound_action:
