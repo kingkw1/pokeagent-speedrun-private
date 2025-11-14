@@ -13,6 +13,92 @@ from agent.navigation_planner import NavigationPlanner
 
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# SEQUENTIAL MILESTONE PROGRESSION SYSTEM
+# ============================================================================
+# Milestones are ordered by game progression. The agent always targets the
+# NEXT uncompleted milestone after the highest completed one.
+# This eliminates brittle if/elif chains and backward-checking logic.
+# ============================================================================
+
+MILESTONE_PROGRESSION = [
+    # Index 0-2: Game start
+    {"milestone": "GAME_RUNNING", "target_location": None, "description": "Game initialized"},
+    {"milestone": "PLAYER_NAME_SET", "target_location": None, "description": "Player named"},
+    {"milestone": "INTRO_CUTSCENE_COMPLETE", "target_location": None, "description": "Intro complete"},
+    
+    # Index 3-7: Tutorial sequence
+    {"milestone": "LITTLEROOT_TOWN", "target_location": "LITTLEROOT_TOWN", "description": "Arrive in Littleroot"},
+    {"milestone": "PLAYER_HOUSE_ENTERED", "target_location": None, "description": "Enter player house"},
+    {"milestone": "PLAYER_BEDROOM", "target_location": None, "description": "Go upstairs to bedroom"},
+    {"milestone": "RIVAL_HOUSE", "target_location": None, "description": "Visit rival's house"},
+    {"milestone": "RIVAL_BEDROOM", "target_location": None, "description": "Go to rival's bedroom"},
+    
+    # Index 8-10: Getting starter
+    {"milestone": "ROUTE_101", "target_location": "ROUTE_101", "description": "Find Prof. Birch on Route 101"},
+    {"milestone": "STARTER_CHOSEN", "target_location": None, "description": "Choose starter Pokemon"},
+    {"milestone": "BIRCH_LAB_VISITED", "target_location": None, "description": "Visit Birch's Lab"},
+    
+    # Index 11-13: Rival battle sequence
+    {"milestone": "OLDALE_TOWN", "target_location": "OLDALE_TOWN", "description": "Travel to Oldale Town"},
+    {"milestone": "ROUTE_103", "target_location": "ROUTE_103", "target_coords": (9, 3), "description": "Go to Route 103"},
+    {"milestone": "RIVAL_BATTLE_1", "target_location": "ROUTE_103", "target_coords": (9, 3), "description": "Battle rival May", "special": "rival_battle"},
+    
+    # Index 14-15: Return to lab for Pokedex
+    {"milestone": "RECEIVED_POKEDEX", "target_location": "PROFESSOR_BIRCHS_LAB", "description": "Return to Birch for Pokedex"},
+    {"milestone": "ROUTE_102", "target_location": "ROUTE_102", "description": "Travel through Route 102"},
+    
+    # Index 16-18: Petalburg City sequence
+    {"milestone": "PETALBURG_CITY", "target_location": "PETALBURG_CITY", "description": "Arrive at Petalburg City"},
+    {"milestone": "DAD_FIRST_MEETING", "target_location": "PETALBURG_CITY_GYM", "target_coords": (15, 8), "description": "Enter gym to meet Dad", "special": "gym_dialogue"},
+    {"milestone": "GYM_EXPLANATION", "target_location": None, "description": "Watch Wally tutorial", "special": "gym_dialogue"},
+    
+    # Index 19-22: Road to Rustboro
+    {"milestone": "ROUTE_104_SOUTH", "target_location": "ROUTE_104_SOUTH", "description": "Travel to Route 104 South"},
+    {"milestone": "PETALBURG_WOODS", "target_location": "PETALBURG_WOODS", "description": "Navigate Petalburg Woods"},
+    {"milestone": "TEAM_AQUA_GRUNT_DEFEATED", "target_location": None, "description": "Defeat Team Aqua grunt"},
+    {"milestone": "ROUTE_104_NORTH", "target_location": "ROUTE_104_NORTH", "description": "Exit woods to Route 104 North"},
+    
+    # Index 23-26: Rustboro Gym
+    {"milestone": "RUSTBORO_CITY", "target_location": "RUSTBORO_CITY", "description": "Arrive at Rustboro City"},
+    {"milestone": "RUSTBORO_GYM_ENTERED", "target_location": "RUSTBORO_CITY_GYM", "target_coords": (27, 19), "description": "Enter Rustboro Gym"},
+    {"milestone": "ROXANNE_DEFEATED", "target_location": None, "description": "Defeat Roxanne"},
+    {"milestone": "FIRST_GYM_COMPLETE", "target_location": None, "description": "First gym badge obtained"},
+]
+
+def get_highest_milestone_index(milestones: Dict[str, Any]) -> int:
+    """
+    Find the highest completed milestone index.
+    Returns -1 if no milestones completed.
+    """
+    highest_index = -1
+    
+    for i, entry in enumerate(MILESTONE_PROGRESSION):
+        milestone_id = entry["milestone"]
+        milestone_data = milestones.get(milestone_id, {})
+        is_complete = milestone_data.get("completed", False) if isinstance(milestone_data, dict) else False
+        
+        if is_complete:
+            highest_index = i
+    
+    return highest_index
+
+def get_next_milestone_target(milestones: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Get the next uncompleted milestone to target.
+    Returns None if all milestones complete.
+    """
+    highest_index = get_highest_milestone_index(milestones)
+    next_index = highest_index + 1
+    
+    if next_index >= len(MILESTONE_PROGRESSION):
+        return None  # All milestones complete
+    
+    return {
+        "index": next_index,
+        **MILESTONE_PROGRESSION[next_index]
+    }
+
 @dataclass
 class Objective:
     """Single objective/goal for the agent"""
@@ -536,118 +622,126 @@ class ObjectiveManager:
             #         'milestone': None  # Intermediate battles don't have milestones
             #     }
         
-        # SPECIAL CASE: On Route 103 but rival battle not complete
-        # Logic: if ROUTE_103 complete AND RECEIVED_POKEDEX not complete AND rival battle not complete
-        # Navigate to (9,3) which is adjacent to rival at (10,3), then interact facing RIGHT
-        # This needs to be checked BEFORE general milestone progression
-        if is_milestone_complete('ROUTE_103') and not is_milestone_complete('RECEIVED_POKEDEX'):
-            rival_battle_complete = self.is_goal_complete('ROUTE_103_RIVAL_BATTLE') or \
-                                   is_milestone_complete('FIRST_RIVAL_BATTLE')
-            if not rival_battle_complete:
-                logger.info(f"🎯 [RIVAL BATTLE] ROUTE_103 complete, RECEIVED_POKEDEX not complete, rival not battled - navigating to (9,3) to interact with rival at (10,3)")
-                print(f"🎯 [RIVAL BATTLE] ROUTE_103 complete, RECEIVED_POKEDEX not complete, rival not battled - navigating to (9,3) to interact with rival at (10,3)")
+        # =====================================================================
+        # SEQUENTIAL MILESTONE SYSTEM
+        # =====================================================================
+        # Find the next uncompleted milestone and target it
+        # No more brittle if/elif chains or backward-checking logic
+        # =====================================================================
+        
+        next_milestone = get_next_milestone_target(milestones)
+        
+        if not next_milestone:
+            logger.info("🎉 [MILESTONE] All milestones complete!")
+            return None
+        
+        milestone_id = next_milestone["milestone"]
+        target_location = next_milestone.get("target_location")
+        target_coords = next_milestone.get("target_coords")
+        special_handling = next_milestone.get("special")
+        description = next_milestone.get("description", "Continue progression")
+        
+        logger.info(f"📍 [MILESTONE {next_milestone['index']}] Next target: {milestone_id} - {description}")
+        print(f"📍 [MILESTONE {next_milestone['index']}] Targeting: {milestone_id}")
+        
+        # =====================================================================
+        # SPECIAL CASE HANDLING
+        # =====================================================================
+        
+        # RIVAL BATTLE: Navigate to specific coordinates and interact
+        # Logic: ROUTE_103 complete AND RECEIVED_POKEDEX not complete AND rival battle goal not complete
+        if special_handling == "rival_battle":
+            # Check using GOALS (not milestones - RIVAL_BATTLE_1 milestone doesn't exist in game)
+            rival_battle_complete = self.is_goal_complete('ROUTE_103_RIVAL_BATTLE')
+            has_pokedex = is_milestone_complete('RECEIVED_POKEDEX')
+            
+            # If we already battled rival OR already have Pokedex, skip to NEXT milestone
+            if rival_battle_complete or has_pokedex:
+                logger.info(f"✅ [RIVAL BATTLE] Already complete - goal_complete={rival_battle_complete}, pokedex={has_pokedex}")
+                logger.info(f"✅ [RIVAL BATTLE] Skipping to next milestone after RIVAL_BATTLE_1")
+                print(f"✅ [RIVAL BATTLE] Already complete, moving to next milestone")
                 
-                # Goal is to reach (9,3) and face RIGHT toward rival at (10,3), then press A
-                # We provide the NPC's actual position so the navigation code knows which direction to face
+                # Get the NEXT milestone after RIVAL_BATTLE_1 (index 13 → 14: RECEIVED_POKEDEX)
+                next_milestone_index = next_milestone['index'] + 1
+                if next_milestone_index >= len(MILESTONE_PROGRESSION):
+                    logger.info("🎉 [MILESTONE] All milestones complete!")
+                    return None
+                
+                # Get milestone at index 14 (RECEIVED_POKEDEX)
+                next_after_rival = {
+                    "index": next_milestone_index,
+                    **MILESTONE_PROGRESSION[next_milestone_index]
+                }
+                
+                milestone_id = next_after_rival["milestone"]
+                target_location = next_after_rival.get("target_location")
+                description = next_after_rival.get("description", "Continue progression")
+                
+                logger.info(f"📍 [MILESTONE {next_after_rival['index']}] Next target: {milestone_id} - {description}")
+                print(f"📍 [MILESTONE {next_after_rival['index']}] Targeting: {milestone_id}")
+                
+                # Fall through to navigation handling below with the NEW milestone
+                next_milestone = next_after_rival
+                special_handling = next_after_rival.get("special")  # Update special handling for new milestone
+            else:
+                # Navigate to rival position (9,3) to interact with rival at (10,3)
+                logger.info(f"🎯 [RIVAL BATTLE] ROUTE_103 complete, RECEIVED_POKEDEX not complete, rival not battled")
+                logger.info(f"🎯 [RIVAL BATTLE] Navigating to (9,3) to interact with rival at (10,3)")
+                print(f"🎯 [RIVAL BATTLE] Navigate to rival at Route 103")
+                
                 return {
                     'goal_coords': (9, 3, 'ROUTE_103'),
-                    'npc_coords': (10, 3),  # Actual rival position for determining facing direction
+                    'npc_coords': (10, 3),
                     'should_interact': True,
                     'description': 'Navigate to (9,3) and face RIGHT to interact with rival at (10,3)'
                 }
         
+        # GYM DIALOGUE: Check if we're in gym, if so wait for dialogue
+        if special_handling == "gym_dialogue":
+            in_gym = 'GYM' in current_location and 'PETALBURG' in current_location
+            
+            if in_gym:
+                logger.info(f"📍 [GYM DIALOGUE] In gym, waiting for dialogue/events")
+                print(f"📍 [GYM DIALOGUE] In gym - waiting")
+                return None  # Let VLM handle dialogue
+            
+            # Not in gym yet - if this is DAD_FIRST_MEETING, need to enter gym
+            if milestone_id == "DAD_FIRST_MEETING" and target_location:
+                # Fall through to navigation below
+                pass
+            elif milestone_id == "GYM_EXPLANATION":
+                # Already left gym but dialogue not complete - may be milestone tracking issue
+                # Just return None and let progression continue
+                logger.info(f"📍 [GYM EXPLANATION] Not in gym, milestone may auto-complete")
+                return None
+        
         # =====================================================================
-        # USE NAVIGATION PLANNER FOR ALL OTHER NAVIGATION
-        # =====================================================================
-        # Determine the target location based on milestone progression
-        # Then let the planner handle the multi-hop journey automatically
+        # NAVIGATION HANDLING
         # =====================================================================
         
-        target_location = None
-        target_coords = None
-        expected_milestone = None
-        journey_reason = None
+        if not target_location:
+            # No navigation needed - milestone will auto-complete (dialogue, events, etc.)
+            logger.info(f"📍 [MILESTONE] {milestone_id} - waiting for auto-complete")
+            return None
         
-        # MILESTONE PROGRESSION LOGIC (same as before, just extracted)
-        if is_milestone_complete('STARTER_CHOSEN') and not is_milestone_complete('OLDALE_TOWN'):
-            target_location = 'OLDALE_TOWN'
-            expected_milestone = 'OLDALE_TOWN'
-            journey_reason = "After getting starter, travel to Oldale Town"
+        # Get directive from navigation planner
+        planner_directive = self._get_navigation_planner_directive(state_data)
+        
+        if planner_directive and not planner_directive.get('error'):
+            # Planner successfully provided a directive
+            planner_directive['milestone'] = milestone_id
+            planner_directive['journey_reason'] = description
             
-        elif is_milestone_complete('OLDALE_TOWN') and not is_milestone_complete('ROUTE_103'):
-            target_location = 'ROUTE_103'
-            target_coords = (9, 3)  # Rival position
-            expected_milestone = 'ROUTE_103'
-            journey_reason = "Navigate to Route 103 to battle rival May"
+            logger.info(f"🗺️ [PLANNER] Using NavigationPlanner directive: {planner_directive.get('description')}")
+            print(f"🗺️ [PLANNER] Directive: {planner_directive.get('description')}")
             
-        elif rival_battle_complete and not is_milestone_complete('RECEIVED_POKEDEX'):
-            target_location = 'PROFESSOR_BIRCHS_LAB'  # Note: BIRCHS with S to match location_graph
-            expected_milestone = 'RECEIVED_POKEDEX'
-            journey_reason = "Return to Birch Lab to receive Pokedex"
-            
-        elif is_milestone_complete('RECEIVED_POKEDEX') and not is_milestone_complete('ROUTE_102'):
-            target_location = 'ROUTE_102'
-            expected_milestone = 'ROUTE_102'
-            journey_reason = "Head to Route 102 to continue adventure"
-            
-        elif is_milestone_complete('ROUTE_102') and not is_milestone_complete('PETALBURG_CITY'):
-            target_location = 'PETALBURG_CITY'
-            expected_milestone = 'PETALBURG_CITY'
-            journey_reason = "Navigate west through Route 102 to Petalburg City"
-        
-        elif is_milestone_complete('PETALBURG_CITY') and not is_milestone_complete('DAD_FIRST_MEETING'):
-            target_location = 'PETALBURG_CITY_GYM'
-            target_coords = (15, 8)  # Gym entrance
-            expected_milestone = 'DAD_FIRST_MEETING'
-            journey_reason = "Enter Petalburg Gym to meet Dad (Norman)"
-        
-        elif is_milestone_complete('GYM_EXPLANATION') and not is_milestone_complete('ROUTE_104_SOUTH'):
-            target_location = 'ROUTE_104_SOUTH'
-            expected_milestone = 'ROUTE_104_SOUTH'
-            journey_reason = "Travel north from Petalburg to Route 104 South"
-        
-        elif is_milestone_complete('ROUTE_104_SOUTH') and not is_milestone_complete('PETALBURG_WOODS'):
-            target_location = 'PETALBURG_WOODS'
-            expected_milestone = 'PETALBURG_WOODS'
-            journey_reason = "Navigate through Petalburg Woods"
-        
-        elif is_milestone_complete('PETALBURG_WOODS') and not is_milestone_complete('ROUTE_104_NORTH'):
-            target_location = 'ROUTE_104_NORTH'
-            expected_milestone = 'ROUTE_104_NORTH'
-            journey_reason = "Exit Petalburg Woods to Route 104 North"
-        
-        elif is_milestone_complete('ROUTE_104_NORTH') and not is_milestone_complete('RUSTBORO_CITY'):
-            target_location = 'RUSTBORO_CITY'
-            expected_milestone = 'RUSTBORO_CITY'
-            journey_reason = "Travel to Rustboro City for first gym challenge"
-        
-        elif is_milestone_complete('RUSTBORO_CITY') and not is_milestone_complete('RUSTBORO_GYM_ENTERED'):
-            target_location = 'RUSTBORO_CITY_GYM'
-            target_coords = (27, 19)  # Gym entrance
-            expected_milestone = 'RUSTBORO_GYM_ENTERED'
-            journey_reason = "Enter Rustboro City Gym to challenge Roxanne"
-        
-        # If we have a target, use the navigation planner
-        if target_location:
-            # Get directive from navigation planner
-            planner_directive = self._get_navigation_planner_directive(state_data)
-            
-            if planner_directive and not planner_directive.get('error'):
-                # Planner successfully provided a directive
-                # Add milestone info and return it
-                planner_directive['milestone'] = expected_milestone
-                planner_directive['journey_reason'] = journey_reason
-                
-                logger.info(f"🗺️ [PLANNER] Using NavigationPlanner directive: {planner_directive.get('description')}")
-                print(f"🗺️ [PLANNER] Directive: {planner_directive.get('description')}")
-                
-                return planner_directive
-            else:
-                # Planner failed - log error but don't crash
-                error_msg = planner_directive.get('description', 'Unknown error') if planner_directive else 'Planner returned None'
-                logger.warning(f"⚠️ [PLANNER] Failed to get directive: {error_msg}")
-                print(f"⚠️ [PLANNER] Failed: {error_msg}")
-                # Fall through to return None (VLM will handle it)
+            return planner_directive
+        else:
+            # Planner failed - log error but don't crash
+            error_msg = planner_directive.get('description', 'Unknown error') if planner_directive else 'Planner returned None'
+            logger.warning(f"⚠️ [PLANNER] Failed to get directive: {error_msg}")
+            print(f"⚠️ [PLANNER] Failed: {error_msg}")
+            # Fall through to return None (VLM will handle it)
         
         # No specific directive - return None to let VLM handle it
         logger.debug(f"📍 [DIRECTIVE] No specific directive for current state")
