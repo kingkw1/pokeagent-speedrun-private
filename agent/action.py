@@ -13,6 +13,12 @@ from utils.vlm import VLM
 # Set up module logging
 logger = logging.getLogger(__name__)
 
+# === MOVEMENT BATCHING CONFIGURATION ===
+# Maximum number of movement steps to batch together for faster navigation
+# Batching reduces VLM calls and speeds up movement by executing multiple steps at once
+# Conservative default prevents runaway if obstacles appear mid-path
+MAX_MOVEMENT_BATCH_SIZE = 10  # ~1.3 seconds of movement at 60 FPS
+
 # Track recent positions to avoid immediate backtracking through warps
 # Store tuples of (x, y, map_location) for the last 10 positions
 _recent_positions = deque(maxlen=10)
@@ -140,6 +146,40 @@ def get_menu_navigation_moves(menu_state, options, current, target):
     
     # ... other menu types ...
 
+def _truncate_path_at_warp(path: List[str], path_coords: List[Tuple[int, int]], location_grid: dict) -> List[str]:
+    """
+    Truncate a movement path at warp tiles (doors, stairs, portals) for safety.
+    
+    When a path crosses a warp tile, we only want to execute steps up to and including
+    that warp, because the game state will change after the warp (new map, different position).
+    Continuing movement after a warp would use invalid coordinates.
+    
+    Args:
+        path: List of direction strings ['UP', 'UP', 'RIGHT', ...]
+        path_coords: List of (x, y) tuples corresponding to each step in path
+        location_grid: Dictionary mapping (x, y) to tile symbols
+    
+    Returns:
+        Truncated path stopping at first warp tile (includes the warp step)
+    """
+    if not path or not path_coords or not location_grid:
+        return path
+    
+    # Check each position in the path for warp tiles
+    for i, (x, y) in enumerate(path_coords):
+        tile = location_grid.get((x, y), '.')
+        
+        # Warp tiles: D=door, S=stairs, ?=portal/unknown
+        if tile in ['D', 'S', '?']:
+            # Return path up to and including this warp step
+            truncated = path[:i+1]
+            print(f"🚪 [PATH TRUNCATE] Found warp at step {i+1}/{len(path)} ({tile}), truncating path")
+            print(f"   Original: {len(path)} steps, Truncated: {len(truncated)} steps")
+            return truncated
+    
+    # No warps found, return full path
+    return path
+
 def _pathfind_to_target(state_data: Dict[str, Any], target_x: int, target_y: int) -> Optional[str]:
     """
     Pathfinding using BFS on the 15x15 visible tile grid to reach specific target coordinates.
@@ -212,10 +252,15 @@ def _pathfind_to_target(state_data: Dict[str, Any], target_x: int, target_y: int
             # Check if we reached target
             if (y, x) == target:
                 if path:
-                    first_step = path[0]
-                    print(f"✅ [TARGET A*] Found path to ({target_x}, {target_y}): {' → '.join(path)}")
-                    print(f"   First step: {first_step}")
-                    return first_step
+                    # Batch multiple steps for faster navigation
+                    batched_path = path[:MAX_MOVEMENT_BATCH_SIZE]
+                    full_path_str = ' → '.join(path)
+                    batched_path_str = ' → '.join(batched_path)
+                    
+                    print(f"✅ [TARGET A*] Found path to ({target_x}, {target_y}): {full_path_str}")
+                    print(f"   📦 Batching {len(batched_path)}/{len(path)} steps: {batched_path_str}")
+                    
+                    return batched_path
                 else:
                     # Already at target
                     print(f"✅ [TARGET A*] Already at target ({target_x}, {target_y})")
@@ -370,11 +415,15 @@ def _local_pathfind_from_tiles(state_data: Dict[str, Any], goal_direction: str, 
             # Check if we reached a target
             if (y, x) in target_positions:
                 if path:
-                    first_step = path[0]
-                    # Valid path found!
-                    print(f"✅ [LOCAL A*] Found path to {goal_direction} edge: {' -> '.join(path)}")
-                    print(f"   First step: {first_step}")
-                    return first_step
+                    # Batch multiple steps for faster navigation
+                    batched_path = path[:MAX_MOVEMENT_BATCH_SIZE]
+                    full_path_str = ' → '.join(path)
+                    batched_path_str = ' → '.join(batched_path)
+                    
+                    print(f"✅ [LOCAL A*] Found path to {goal_direction} edge: {full_path_str}")
+                    print(f"   📦 Batching {len(batched_path)}/{len(path)} steps: {batched_path_str}")
+                    
+                    return batched_path
                 else:
                     # Already at target? shouldn't happen
                     print(f"⚠️ [LOCAL A*] Already at target position")
@@ -592,7 +641,7 @@ def _astar_pathfind_to_coords_with_grid(
         # A* pathfinding using world coordinates
         start = world_current_pos
         goal = world_target_pos
-        pq = [(manhattan_distance(start, goal), 0, start, [])]
+        pq = [(manhattan_distance(start, goal), 0, start, [], [start])]  # Added path_coords tracking
         visited = {start}
         
         directions_map = {
@@ -603,17 +652,27 @@ def _astar_pathfind_to_coords_with_grid(
         }
         
         while pq:
-            f_score, g_score, current, path = heapq.heappop(pq)
+            f_score, g_score, current, path, path_coords = heapq.heappop(pq)
             
             # Check if we reached the goal
             if current == goal:
                 if path:
+                    # Truncate at warps for safety
+                    path = _truncate_path_at_warp(path, path_coords[1:], location_grid)  # Skip start position
+                    
+                    # Batch multiple steps for faster navigation
+                    batched_path = path[:MAX_MOVEMENT_BATCH_SIZE]
+                    
                     path_preview = ' → '.join(path[:5])
                     if len(path) > 5:
                         path_preview += f" ... ({len(path)} steps)"
+                    
+                    batched_str = ' → '.join(batched_path)
                     print(f"✅ [COORD A*] Found path to {target_pos}: {path_preview}")
-                    print(f"   First step: {path[0]}, Total cost: {g_score:.1f}")
-                    return path[0]
+                    print(f"   📦 Batching {len(batched_path)}/{len(path)} steps: {batched_str}")
+                    print(f"   Total cost: {g_score:.1f}")
+                    
+                    return batched_path
                 else:
                     print(f"✅ [COORD A*] Already at target {target_pos}")
                     return None
@@ -632,8 +691,9 @@ def _astar_pathfind_to_coords_with_grid(
                 new_g_score = g_score + move_cost
                 new_f_score = new_g_score + manhattan_distance(next_pos, goal)
                 new_path = path + [direction]
+                new_path_coords = path_coords + [next_pos]
                 
-                heapq.heappush(pq, (new_f_score, new_g_score, next_pos, new_path))
+                heapq.heappush(pq, (new_f_score, new_g_score, next_pos, new_path, new_path_coords))
                 visited.add(next_pos)
         
         print(f"⚠️ [COORD A*] No path found from {current_pos} to {target_pos}")
@@ -925,14 +985,14 @@ def _astar_pathfind_with_grid_data(
         # Find closest target to minimize search space
         closest_target = min(target_positions, key=lambda t: manhattan_distance(current_pos, t))
         
-        # Priority queue: (f_score, g_score, position, path)
+        # Priority queue: (f_score, g_score, position, path, path_coords)
         # f_score = g_score + heuristic
         # NOTE: Currently using avoid_grass=True for speedrun mode
         # TODO: Add training mode parameter that sets avoid_grass=False
         #       This will make the agent SEEK grass tiles to level up Pokemon
         #       Example: astar_pathfind(..., training_mode=True)
         start = current_pos
-        pq = [(manhattan_distance(start, closest_target), 0, start, [])]
+        pq = [(manhattan_distance(start, closest_target), 0, start, [], [start])]  # Added path_coords
         visited = {start}
         
         directions_map = {
@@ -943,15 +1003,22 @@ def _astar_pathfind_with_grid_data(
         }
         
         while pq:
-            f_score, g_score, current, path = heapq.heappop(pq)
+            f_score, g_score, current, path, path_coords = heapq.heappop(pq)  # Added path_coords
             
             # Check if we reached any target
             if current in target_positions:
                 if path:
-                    first_step = path[0]
+                    # Truncate at warps for safety
+                    path = _truncate_path_at_warp(path, path_coords[1:], location_grid)  # Skip start position
+                    
+                    # Batch multiple steps for faster navigation
+                    batched_path = path[:MAX_MOVEMENT_BATCH_SIZE]
+                    
                     path_preview = ' → '.join(path[:5])
                     if len(path) > 5:
                         path_preview += f" ... ({len(path)} steps)"
+                    
+                    batched_str = ' → '.join(batched_path)
                     
                     # Count special tiles in path for debugging
                     grass_count = sum(1 for pos in visited if location_grid.get(pos) == '~')
@@ -959,7 +1026,7 @@ def _astar_pathfind_with_grid_data(
                     total_cost = g_score
                     
                     print(f"✅ [A* MAP] Found path: {path_preview}")
-                    print(f"   First step: {first_step}")
+                    print(f"   📦 Batching {len(batched_path)}/{len(path)} steps: {batched_str}")
                     
                     # Build informative cost message
                     cost_parts = [f"Path cost: {total_cost:.1f}"]
@@ -969,7 +1036,7 @@ def _astar_pathfind_with_grid_data(
                         cost_parts.append(f"used {ledge_count} ledge(s)")
                     print(f"   {', '.join(cost_parts)}")
                     
-                    return first_step
+                    return batched_path
                 else:
                     print(f"⚠️ [A* MAP] Already at target")
                     return None
@@ -1044,6 +1111,7 @@ def _astar_pathfind_with_grid_data(
                 
                 visited.add(neighbor)
                 new_path = path + [direction]
+                new_path_coords = path_coords + [neighbor]  # Track coordinates for warp detection
                 
                 # Use tile cost instead of fixed cost of 1
                 # This makes A* prefer paths that avoid tall grass and unnecessary ledges
@@ -1051,7 +1119,7 @@ def _astar_pathfind_with_grid_data(
                 new_g_score = g_score + tile_cost
                 new_f_score = new_g_score + manhattan_distance(neighbor, closest_target)
                 
-                heapq.heappush(pq, (new_f_score, new_g_score, neighbor, new_path))
+                heapq.heappush(pq, (new_f_score, new_g_score, neighbor, new_path, new_path_coords))
         
         # No path found
         print(f"⚠️ [A* MAP] No path found to {goal_direction}")
@@ -1864,7 +1932,8 @@ Answer with just the button name:"""
                         if pathfound_action:
                             logger.info(f"🗺️ [DIRECTIVE NAV] A* pathfinding to ({goal_x}, {goal_y}): {pathfound_action} (distance: {distance})")
                             print(f"🗺️ [DIRECTIVE NAV] A* pathfinding returning: {pathfound_action}")
-                            return [pathfound_action]
+                            # pathfound_action is now a list of moves, return it directly
+                            return pathfound_action if isinstance(pathfound_action, list) else [pathfound_action]
                         
                         # 4. Fallback to simple direction if all A* approaches fail
                         if required_direction:
@@ -1891,7 +1960,8 @@ Answer with just the button name:"""
                     if suggested_action:
                         logger.info(f"🗺️ [DIRECTIVE] Directional pathfinding suggests: {suggested_action}")
                         print(f"🗺️ [DIRECTIVE] Directional pathfinding returning: {suggested_action}")
-                        return [suggested_action]
+                        # suggested_action is now a list of moves, return it directly
+                        return suggested_action if isinstance(suggested_action, list) else [suggested_action]
                     else:
                         logger.warning(f"⚠️ [DIRECTIVE] Directional pathfinding failed for {goal_direction}")
                         print(f"⚠️ [DIRECTIVE] Directional pathfinding failed - returning empty")
@@ -1997,7 +2067,8 @@ Answer with just the button name:"""
                             
                             if pathfind_action:
                                 logger.info(f"🗺️ [NAVIGATE_DIRECTION] A* recommends: {pathfind_action}")
-                                return [pathfind_action]
+                                # pathfind_action is now a list of moves, return it directly
+                                return pathfind_action if isinstance(pathfind_action, list) else [pathfind_action]
                             else:
                                 logger.warning(f"⚠️ [NAVIGATE_DIRECTION] A* found no path, trying direct movement")
                                 # Fallback: just move in the specified direction
@@ -2250,7 +2321,8 @@ Answer with just the button name:"""
                                     
                                     if pathfind_action:
                                         logger.info(f"📍 [DIRECTIVE NAV] A* recommends: {pathfind_action}")
-                                        nav_action = [pathfind_action]
+                                        # pathfind_action is now a list of moves, use it directly
+                                        nav_action = pathfind_action if isinstance(pathfind_action, list) else [pathfind_action]
                                         logger.info(f"📍 [DIRECTIVE NAV] Set nav_action to: {nav_action}")
                         
                         # Fallback: Simple directional movement
@@ -2476,7 +2548,8 @@ Answer with just the button name:"""
                         
                         # LAST RESORT: Simple directional movement
                         if pathfind_action:
-                            nav_action = [pathfind_action]
+                            # pathfind_action is now a list of moves, use it directly
+                            nav_action = pathfind_action if isinstance(pathfind_action, list) else [pathfind_action]
                         else:
                             if abs(dx) > abs(dy):
                                 nav_action = ['RIGHT'] if dx > 0 else ['LEFT']

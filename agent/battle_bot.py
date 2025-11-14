@@ -109,14 +109,30 @@ class BattleBot:
         'GEODUDE',      # Rock/Ground (SUPER EFFECTIVE)
         'NOSEPASS',     # Rock (SUPER EFFECTIVE)
         'RALTS',        # Psychic
-        'MAKUHITA',     # Fighting
         'MEDITE',       # Fighting (Meditite)
         'MEDITITE',     # Fighting (alternate spelling)
-        'BARBOACH',     # Water/Ground (SUPER EFFECTIVE)
-        'WHISMUR',      # Normal
-        'NUMEL',        # Fire/Ground (Ground makes it effective despite Fire)
     }
     
+
+    """
+    need to address following additions:
+    cascoon
+
+    magikarp
+
+    marill
+
+    mudkip
+
+    seedot
+
+    silcoon
+
+    slakoth
+
+    treecko
+    """
+
     def __init__(self):
         """Initialize the battle bot"""
         self._current_battle_type = BattleType.WILD  # Default to WILD - try to run, switch to TRAINER if can't
