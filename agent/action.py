@@ -1642,16 +1642,25 @@ Answer with just the button name:"""
                 logger.info(f"📍 [DIRECTIVE] Active directive: {description}")
                 print(f"📍 [DIRECTIVE] {description}")
                 
+                print(f"🔍 [DIRECTIVE CHECK] Keys in directive: {list(directive.keys())}")
+                print(f"🔍 [DIRECTIVE CHECK] 'goal_coords' in directive: {'goal_coords' in directive}")
+                print(f"🔍 [DIRECTIVE CHECK] 'journey_complete' in directive: {'journey_complete' in directive}")
+                
                 # Handle journey complete
                 if directive.get('journey_complete'):
                     logger.info(f"✅ [DIRECTIVE] Navigation journey complete")
                     return []  # No action needed
                 
+                print(f"🔍 [DIRECTIVE CHECK] After journey_complete check, continuing...")
+                
                 # Handle goal_coords - navigate to specific coordinates
                 if 'goal_coords' in directive:
+                    print(f"🔍 [GOAL_COORDS] Entered goal_coords handler!")
+                    logger.info(f"🔍 [GOAL_COORDS] Entered goal_coords handler!")
                     goal_coords = directive['goal_coords']  # (x, y, 'LOCATION')
                     should_interact = directive.get('should_interact', False)
                     npc_coords = directive.get('npc_coords')  # Optional (npc_x, npc_y) for facing direction
+                    print(f"🔍 [GOAL_COORDS] goal_coords={goal_coords}, should_interact={should_interact}, npc_coords={npc_coords}")
                     
                     if len(goal_coords) == 3:
                         target_x, target_y, target_map = goal_coords
@@ -1734,11 +1743,90 @@ Answer with just the button name:"""
                     distance = abs(current_x - goal_x) + abs(current_y - goal_y)
                     
                     # NOT at goal yet - navigate toward it
-                    # When npc_coords is provided, we navigate TO the goal position first
-                    # The interaction logic at the goal handles facing the NPC
+                    # Use A* pathfinding to find the next step (handles obstacles)
+                    #
+                    # PATHFINDING STRATEGY (3 tiers):
+                    # 1. Local A* (fast): Works if goal within visible 15x15 grid
+                    # 2. Global A* (smart): Uses complete explored map
+                    #    - If goal explored: Direct pathfinding to goal coordinates
+                    #    - If goal unexplored: Frontier-based exploration toward goal direction
+                    # 3. Simple direction (fallback): Walk straight toward goal (may hit obstacles)
                     if distance > 0:
+                        print(f"🔍 [GOAL_COORDS] Distance={distance}, about to call _pathfind_to_target({goal_x}, {goal_y})")
+                        
+                        # Strategy: Try multiple pathfinding approaches in order of sophistication
+                        pathfound_action = None
+                        
+                        # 1. Try local A* first (fast, works if goal is within 15x15 visible grid)
+                        pathfound_action = _pathfind_to_target(state_data, goal_x, goal_y)
+                        print(f"🔍 [GOAL_COORDS] Local A* (_pathfind_to_target) returned: {pathfound_action}")
+                        
+                        # 2. If local A* fails, try global A* with map stitcher data (handles long-range paths)
+                        if not pathfound_action:
+                            stitched_map_info = state_data.get('map', {}).get('stitched_map_info')
+                            if stitched_map_info and stitched_map_info.get('available'):
+                                current_area = stitched_map_info.get('current_area', {})
+                                grid_serializable = current_area.get('grid')
+                                bounds = current_area.get('bounds')
+                                
+                                if grid_serializable and bounds:
+                                    print(f"🗺️ [GOAL_COORDS] Trying global A* with map stitcher data...")
+                                    
+                                    # Convert grid to proper format
+                                    location_grid = {}
+                                    for key, value in grid_serializable.items():
+                                        x, y = map(int, key.split(','))
+                                        location_grid[(x, y)] = value
+                                    
+                                    # Calculate goal direction for fallback
+                                    dx = goal_x - current_x
+                                    dy = goal_y - current_y
+                                    if abs(dy) > abs(dx):
+                                        goal_direction = 'south' if dy > 0 else 'north'
+                                    else:
+                                        goal_direction = 'east' if dx > 0 else 'west'
+                                    
+                                    print(f"🗺️ [GOAL_COORDS] Goal direction: {goal_direction}, checking if goal in grid...")
+                                    goal_in_grid = (goal_x, goal_y) in location_grid
+                                    print(f"🗺️ [GOAL_COORDS] Goal ({goal_x}, {goal_y}) in explored grid: {goal_in_grid}")
+                                    
+                                    if goal_in_grid:
+                                        # Goal is explored - pathfind directly to it
+                                        print(f"✅ [GOAL_COORDS] Goal is explored, using direct A* pathfinding")
+                                        pathfound_action = _astar_pathfind_with_grid_data(
+                                            location_grid=location_grid,
+                                            bounds=bounds,
+                                            current_pos=(current_x, current_y),
+                                            location=state_data.get('player', {}).get('location', ''),
+                                            goal_direction=goal_direction,
+                                            recent_positions=_recent_positions,
+                                            goal_coords=(goal_x, goal_y)
+                                        )
+                                        print(f"🗺️ [GOAL_COORDS] Direct A* returned: {pathfound_action}")
+                                    else:
+                                        # Goal is unexplored - use frontier-based exploration toward goal direction
+                                        print(f"⚠️ [GOAL_COORDS] Goal is unexplored, using frontier-based navigation toward {goal_direction}")
+                                        pathfound_action = _astar_pathfind_with_grid_data(
+                                            location_grid=location_grid,
+                                            bounds=bounds,
+                                            current_pos=(current_x, current_y),
+                                            location=state_data.get('player', {}).get('location', ''),
+                                            goal_direction=goal_direction,
+                                            recent_positions=_recent_positions,
+                                            goal_coords=None  # Don't pass goal_coords - use frontier exploration
+                                        )
+                                        print(f"🗺️ [GOAL_COORDS] Frontier-based A* returned: {pathfound_action}")
+                        
+                        # 3. If we found a path, use it
+                        if pathfound_action:
+                            logger.info(f"🗺️ [DIRECTIVE NAV] A* pathfinding to ({goal_x}, {goal_y}): {pathfound_action} (distance: {distance})")
+                            print(f"🗺️ [DIRECTIVE NAV] A* pathfinding returning: {pathfound_action}")
+                            return [pathfound_action]
+                        
+                        # 4. Fallback to simple direction if all A* approaches fail
                         if required_direction:
-                            logger.info(f"🗺️ [DIRECTIVE NAV] Moving {required_direction} toward goal (distance: {distance})")
+                            logger.info(f"🗺️ [DIRECTIVE NAV] All A* failed, using simple direction: {required_direction} (distance: {distance})")
+                            print(f"🗺️ [DIRECTIVE NAV] A* failed, using simple direction fallback: {required_direction}")
                             return [required_direction]
                         else:
                             logger.warning(f"⚠️ [DIRECTIVE NAV] Distance {distance} but no direction calculated")
@@ -1755,7 +1843,7 @@ Answer with just the button name:"""
                     logger.info(f"🎯 [DIRECTIVE] Navigating {goal_direction}")
                     
                     # Use existing frontier-based pathfinding
-                    suggested_action = _local_pathfind_from_tiles(state_data, goal_direction, agent_memory.get('recent_actions', []))
+                    suggested_action = _local_pathfind_from_tiles(state_data, goal_direction, recent_actions)
                     if suggested_action:
                         logger.info(f"🗺️ [DIRECTIVE] Directional pathfinding suggests: {suggested_action}")
                         return [suggested_action]
@@ -2411,8 +2499,12 @@ What button should we press? Respond with ONLY the button name (A, B, UP, DOWN, 
             
     except ImportError as e:
         logger.debug(f"📍 [DIRECTIVE] Planning module not available: {e}")
+        print(f"⚠️ [DIRECTIVE] ImportError: {e}")
     except Exception as e:
         logger.error(f"📍 [DIRECTIVE] Error processing directive: {e}", exc_info=True)
+        print(f"❌ [DIRECTIVE] Exception caught! {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         # Fall through to other priorities
     
     # 🎯 PRIORITY 1: VLM VISUAL DIALOGUE DETECTION (HIGHEST PRIORITY - BUT ONLY IF OPENER BOT NOT ACTIVE)
