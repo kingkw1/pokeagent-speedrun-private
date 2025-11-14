@@ -461,8 +461,8 @@ class ObjectiveManager:
                 # For now, just navigate to first trainer position
                 target_x, target_y, target_map, trainer_name = trainer_positions[0]
                 return {
-                    'action': 'NAVIGATE_TO_BATTLE',
-                    'target': (target_x, target_y, target_map),
+                    'goal_coords': (target_x, target_y, target_map),
+                    'should_interact': True,  # Will trigger battle when we reach trainer
                     'description': f'Navigate to {trainer_name} for battle',
                     'milestone': None  # Intermediate battles don't have milestones
                 }
