@@ -320,14 +320,60 @@ class NavigationPlanner:
         """Convert a navigation stage to an executable directive"""
         
         if stage.stage_type == StageType.NAVIGATE:
-            return {
-                "action": "NAVIGATE",
-                "target": stage.target_coords,
-                "location": stage.location,
-                "description": stage.description,
-                "stage_index": self.current_stage_index,
-                "total_stages": len(self.stages)
-            }
+            # Check if this is navigating to a portal exit (next stage is CROSS_BOUNDARY)
+            next_stage = None
+            if self.current_stage_index + 1 < len(self.stages):
+                next_stage = self.stages[self.current_stage_index + 1]
+            
+            is_portal_navigation = (next_stage and next_stage.stage_type == StageType.CROSS_BOUNDARY)
+            
+            if is_portal_navigation and current_coords:
+                # Calculate distance to portal
+                portal_x, portal_y = stage.target_coords
+                current_x, current_y = current_coords
+                distance = abs(portal_x - current_x) + abs(portal_y - current_y)
+                
+                # HYBRID APPROACH:
+                # Far from portal (>5 tiles): Use NAVIGATE_AND_INTERACT with A* to get TO the portal
+                # Close to portal (≤5 tiles): Use NAVIGATE_DIRECTION to cross the boundary
+                if distance > 5:
+                    # Far from portal - use A* to navigate TO portal coordinates
+                    return {
+                        "action": "NAVIGATE_AND_INTERACT",
+                        "target": stage.target_coords,
+                        "location": stage.location,
+                        "description": f"{stage.description} (A* to portal, {distance} tiles away)",
+                        "should_interact": False,  # Just navigate, don't interact
+                        "stage_index": self.current_stage_index,
+                        "total_stages": len(self.stages)
+                    }
+                else:
+                    # Close to portal - use directional navigation to cross
+                    portal_info = next_stage.portal_info
+                    direction = portal_info.get("direction", "north")
+                    next_location = next_stage.expected_next_location
+                    
+                    return {
+                        "action": "NAVIGATE_DIRECTION",
+                        "direction": direction,
+                        "target_location": next_location,
+                        "portal_coords": stage.target_coords,
+                        "proximity_radius": 5,
+                        "description": f"{stage.description} (directional, {distance} tiles away)",
+                        "stage_index": self.current_stage_index,
+                        "total_stages": len(self.stages)
+                    }
+            else:
+                # Regular intra-location navigation - use NAVIGATE_AND_INTERACT with A*
+                return {
+                    "action": "NAVIGATE_AND_INTERACT",
+                    "target": stage.target_coords,
+                    "location": stage.location,
+                    "description": stage.description,
+                    "should_interact": False,  # Just navigate, don't interact
+                    "stage_index": self.current_stage_index,
+                    "total_stages": len(self.stages)
+                }
         
         elif stage.stage_type == StageType.CROSS_BOUNDARY:
             return {

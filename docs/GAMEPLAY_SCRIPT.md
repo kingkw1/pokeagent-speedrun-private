@@ -48,7 +48,6 @@
     * NAVIGATE: to north of town (11, 1, LITTLEROOT_TOWN)
     * DIALOG: with NPC (11, 1, LITTLEROOT_TOWN)
 
-### II. SPLIT 02 - Get Starter Pokémon
 6.  **Birch Rescue (Route 101)**
     * NAVIGATE: to Route 101 (triggers Birch cutscene)
     * MILESTONE: ROUTE_101

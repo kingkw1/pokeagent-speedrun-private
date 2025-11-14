@@ -343,17 +343,16 @@ class ObjectiveManager:
     def get_next_action_directive(self, state_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Get specific action directive based on current milestone state.
-        Returns a dict with action type and target details, or None if no specific directive.
         
-        This is the "Quick Win" implementation that provides detailed sub-goals
-        without requiring a full script refactor.
+        NOW USES NAVIGATIONPLANNER for multi-hop journeys while preserving
+        all milestone tracking logic and special cases.
         
         Returns:
             {
-                'action': 'NAVIGATE_AND_INTERACT',  # or 'NAVIGATE', 'BATTLE', etc.
-                'target': (x, y, 'MAP_NAME'),       # Coordinate target
-                'description': 'Walk to rival and press A',  # Human-readable
-                'milestone': 'FIRST_RIVAL_BATTLE'   # Expected milestone after completion
+                'action': 'NAVIGATE',  # or 'INTERACT', 'DIALOGUE', etc.
+                'target': (x, y),      # Coordinate target (from planner)
+                'description': 'Navigate to north exit in LITTLEROOT_TOWN',
+                'milestone': 'OLDALE_TOWN'  # Expected milestone after completion
             }
         """
         logger.info(f"🔍 [OBJECTIVE_MANAGER DEBUG] get_next_action_directive() CALLED")
@@ -403,43 +402,16 @@ class ObjectiveManager:
                 'milestone': None
             }
         
-        # === INITIAL JOURNEY: ROUTE 101 TO OLDALE TOWN ===
-        # After getting starter, travel north through Route 101 to Oldale Town
-        if is_milestone_complete('STARTER_CHOSEN') and not is_milestone_complete('OLDALE_TOWN'):
-            # Check if we're on Route 101, heading to Oldale
-            if 'ROUTE 101' in current_location:
-                # Navigate to northern portal at (11, 0) which leads to Oldale Town
-                # Portal at Y=0 is the north exit, X=11 based on portal connection data
-                # NOTE: Map stitcher coordinate translation is currently broken, causing A* to fail
-                # This may result in suboptimal navigation until coordinate system is fixed
-                return {
-                    'action': 'NAVIGATE',
-                    'target': (11, 0, 'ROUTE 101'),
-                    'description': 'Walk north to Oldale Town portal at top of Route 101',
-                    'milestone': 'OLDALE_TOWN'
-                }
+        # =====================================================================
+        # NEW: USE NAVIGATION PLANNER FOR MULTI-HOP JOURNEYS
+        # =====================================================================
+        # The planner handles complex navigation automatically while we still
+        # control milestone-based objectives and special interactions
+        # =====================================================================
         
-        # === OLDALE TO ROUTE 103 FOR RIVAL BATTLE ===
-        # After reaching Oldale, navigate from Littleroot to Route 103 for rival battle
-        if is_milestone_complete('OLDALE_TOWN') and not is_milestone_complete('ROUTE_103'):
-            if 'LITTLEROOT TOWN' in current_location:
-                # From Littleroot, navigate north to Route 103
-                # Use NAVIGATE_DIRECTION to portal at (9, 3)
-                return {
-                    'action': 'NAVIGATE_DIRECTION',
-                    'direction': 'north',
-                    'target_location': 'ROUTE 103',
-                    'portal_coords': (9, 3),
-                    'proximity_radius': 5,
-                    'description': 'Navigate north to Route 103 from Littleroot',
-                    'milestone': 'ROUTE_103'
-                }
-        
-        # === ROUTE 103: RIVAL BATTLE SEQUENCE ===
+        # === ROUTE 103: RIVAL BATTLE SEQUENCE (SPECIAL CASE) ===
         # The ROUTE_103 milestone completes when entering Route 103, not after battle
         # We use FIRST_RIVAL_BATTLE milestone to track actual battle completion
-        # State transition tracking (was_in_battle → not in_battle) now happens in
-        # check_storyline_milestones() which is called every step via planning
         
         # Get current battle state
         at_rival_position = (current_x == 9 and current_y == 3 and 'ROUTE 103' in current_location)
@@ -454,92 +426,28 @@ class ObjectiveManager:
         logger.info(f"🔍 [RIVAL BATTLE] at (9,3)={at_rival_position}, in_battle={in_battle}, was_in_battle={was_in_battle}, complete={rival_battle_complete}")
         print(f"🔍 [RIVAL BATTLE] Check: at (9,3)={at_rival_position}, in_battle={in_battle}, was_in_battle={was_in_battle}, complete={rival_battle_complete}")
         
+        # SPECIAL: If we're at rival position, handle interaction directly (bypass planner)
         if is_milestone_complete('ROUTE_103') and not rival_battle_complete and not is_milestone_complete('RECEIVED_POKEDEX'):
-            # We're on Route 103, need to interact with rival at (9, 3)
-            target_x, target_y, target_map = 9, 3, 'ROUTE 103'
-            
-            # Check if we're at the target
-            if current_x == target_x and current_y == target_y and target_map in current_location:
+            if current_x == 9 and current_y == 3 and 'ROUTE 103' in current_location:
                 logger.info(f"📍 [DIRECTIVE] At rival position, ready to interact")
                 return {
                     'action': 'INTERACT',
-                    'target': (target_x, target_y, target_map),
+                    'target': (9, 3, 'ROUTE 103'),
                     'description': 'Press A to interact with rival and start battle',
                     'milestone': 'FIRST_RIVAL_BATTLE'
                 }
-            else:
-                logger.info(f"📍 [DIRECTIVE] Navigate to rival at ({target_x}, {target_y})")
-                return {
-                    'action': 'NAVIGATE_AND_INTERACT',
-                    'target': (target_x, target_y, target_map),
-                    'description': 'Walk to rival at Route 103 and press A to battle',
-                    'milestone': 'FIRST_RIVAL_BATTLE'
-                }
         
-        # === RETURN TO BIRCH LAB ===
-        # After rival battle, skip Pokemon Center (door detection broken) and go straight to Birch Lab
-        # Navigate from Route 103 → Oldale → Route 101 → Littleroot → Birch Lab
-        if rival_battle_complete and not is_milestone_complete('RECEIVED_POKEDEX'):
-            # Navigate from Route 103 → Oldale → Route 101 → Littleroot → Birch Lab
-            
-            if 'ROUTE 103' in current_location:
-                # From Route 103, head south to Oldale Town
-                # Portal at (10, 22) based on previous attempts - navigate to it, then directional when close
-                return {
-                    'action': 'NAVIGATE_DIRECTION',
-                    'direction': 'south',
-                    'target_location': 'OLDALE TOWN',
-                    'portal_coords': (10, 22),  # Known portal location
-                    'proximity_radius': 5,  # Switch to directional within 5 tiles
-                    'description': 'Navigate to Oldale Town portal (10, 22)',
-                    'milestone': None
-                }
-            elif 'OLDALE TOWN' in current_location:
-                # From Oldale, head south to Route 101
-                # Portal at (10, 19) - navigate to it, then use directional movement when close
-                return {
-                    'action': 'NAVIGATE_DIRECTION',
-                    'direction': 'south',
-                    'target_location': 'ROUTE 101',
-                    'portal_coords': (10, 19),  # Known portal location
-                    'proximity_radius': 5,  # Switch to directional within 5 tiles
-                    'description': 'Navigate to Route 101 portal (10, 19)',
-                    'milestone': None
-                }
-            elif 'ROUTE 101' in current_location:
-                # From Route 101, head south to Littleroot
-                # Portal at (10, 22) - navigate to it, then directional when close
-                return {
-                    'action': 'NAVIGATE_DIRECTION',
-                    'direction': 'south',
-                    'target_location': 'LITTLEROOT TOWN',
-                    'portal_coords': (10, 22),  # Known portal location
-                    'proximity_radius': 5,  # Switch to directional within 5 tiles
-                    'description': 'Navigate to Littleroot Town portal (10, 22)',
-                    'milestone': None
-                }
-            elif 'LITTLEROOT TOWN' in current_location and 'LAB' not in current_location:
-                # Walk to Birch's Lab entrance at (7, 16) - door will auto-warp
-                return {
-                    'action': 'NAVIGATE',
-                    'target': (7, 16, 'LITTLEROOT TOWN'),
-                    'description': 'Walk to Birch Lab door (auto-warp)',
-                    'milestone': None
-                }
-            elif 'BIRCHS LAB' in current_location or 'BIRCH LAB' in current_location:
-                # Inside lab - dialogue will auto-trigger, just need to be present
-                # This milestone completes via dialogue
+        # === SPECIAL CASE: INSIDE BIRCH LAB ===
+        # Wait for dialogue to auto-trigger (bypass planner)
+        if 'BIRCHS LAB' in current_location or 'BIRCH LAB' in current_location:
+            if rival_battle_complete and not is_milestone_complete('RECEIVED_POKEDEX'):
                 return {
                     'action': 'WAIT_FOR_DIALOGUE',
                     'target': None,
                     'description': 'Wait for Birch to give Pokedex (auto-dialogue)',
                     'milestone': 'RECEIVED_POKEDEX'
                 }
-        
-        # === EXIT BIRCH LAB AND TRAVEL TO ROUTE 102 ===
-        # After receiving Pokedex, go to (10,9) to trigger Mom dialogue, then to Route 102
-        if is_milestone_complete('RECEIVED_POKEDEX') and not is_milestone_complete('ROUTE_102'):
-            if 'BIRCHS LAB' in current_location or 'BIRCH LAB' in current_location:
+            elif is_milestone_complete('RECEIVED_POKEDEX') and not is_milestone_complete('ROUTE_102'):
                 # Exit lab - door is at (6, 13) inside lab coordinates
                 return {
                     'action': 'NAVIGATE',
@@ -547,41 +455,9 @@ class ObjectiveManager:
                     'description': 'Exit Birch Lab',
                     'milestone': None
                 }
-            elif 'LITTLEROOT TOWN' in current_location:
-                # Head north to Route 101, then continue to Oldale Town
-                return {
-                    'action': 'NAVIGATE_DIRECTION',
-                    'direction': 'north',
-                    'target_location': 'OLDALE TOWN',
-                    'portal_coords': None,  # Use frontier exploration
-                    'proximity_radius': 5,
-                    'description': 'Navigate north to Oldale Town',
-                    'milestone': None
-                }
-            elif 'ROUTE 101' in current_location:
-                # Continue north through Route 101 to Oldale Town
-                return {
-                    'action': 'NAVIGATE_DIRECTION',
-                    'direction': 'north',
-                    'target_location': 'OLDALE TOWN',
-                    'portal_coords': None,  # Use frontier exploration
-                    'proximity_radius': 5,
-                    'description': 'Continue north to Oldale Town',
-                    'milestone': None
-                }
-            elif 'OLDALE TOWN' in current_location:
-                # Navigate west from Oldale to Route 102
-                return {
-                    'action': 'NAVIGATE_DIRECTION',
-                    'direction': 'west',
-                    'target_location': 'ROUTE 102',
-                    'portal_coords': (0, 9),  # West exit from Oldale
-                    'proximity_radius': 5,
-                    'description': 'Navigate to Route 102 from Oldale',
-                    'milestone': 'ROUTE_102'
-                }
         
-        # === ROUTE 102 TRAINERS ===
+        # === ROUTE 102 TRAINERS (SPECIAL CASE) ===
+        # Navigate to specific trainer positions
         if is_milestone_complete('ROUTE_102') and not is_milestone_complete('ROUTE_102_CLEARED'):
             # Battle trainers on Route 102
             # Trainer positions from gameplay script: (33,15), (25,14), (19,7)
@@ -601,6 +477,62 @@ class ObjectiveManager:
                     'description': f'Navigate to {trainer_name} for battle',
                     'milestone': None  # Intermediate battles don't have milestones
                 }
+        
+        # =====================================================================
+        # USE NAVIGATION PLANNER FOR ALL OTHER NAVIGATION
+        # =====================================================================
+        # Determine the target location based on milestone progression
+        # Then let the planner handle the multi-hop journey automatically
+        # =====================================================================
+        
+        target_location = None
+        target_coords = None
+        expected_milestone = None
+        journey_reason = None
+        
+        # MILESTONE PROGRESSION LOGIC (same as before, just extracted)
+        if is_milestone_complete('STARTER_CHOSEN') and not is_milestone_complete('OLDALE_TOWN'):
+            target_location = 'OLDALE_TOWN'
+            expected_milestone = 'OLDALE_TOWN'
+            journey_reason = "After getting starter, travel to Oldale Town"
+            
+        elif is_milestone_complete('OLDALE_TOWN') and not is_milestone_complete('ROUTE_103'):
+            target_location = 'ROUTE_103'
+            target_coords = (9, 3)  # Rival position
+            expected_milestone = 'ROUTE_103'
+            journey_reason = "Navigate to Route 103 to battle rival May"
+            
+        elif rival_battle_complete and not is_milestone_complete('RECEIVED_POKEDEX'):
+            target_location = 'PROFESSOR_BIRCH_LAB'
+            expected_milestone = 'RECEIVED_POKEDEX'
+            journey_reason = "Return to Birch Lab to receive Pokedex"
+            
+        elif is_milestone_complete('RECEIVED_POKEDEX') and not is_milestone_complete('ROUTE_102'):
+            target_location = 'ROUTE_102'
+            expected_milestone = 'ROUTE_102'
+            journey_reason = "Head to Route 102 to continue adventure"
+        
+        # If we have a target, use the navigation planner
+        if target_location:
+            # Get directive from navigation planner
+            planner_directive = self._get_navigation_planner_directive(state_data)
+            
+            if planner_directive and not planner_directive.get('error'):
+                # Planner successfully provided a directive
+                # Add milestone info and return it
+                planner_directive['milestone'] = expected_milestone
+                planner_directive['journey_reason'] = journey_reason
+                
+                logger.info(f"🗺️ [PLANNER] Using NavigationPlanner directive: {planner_directive.get('description')}")
+                print(f"🗺️ [PLANNER] Directive: {planner_directive.get('description')}")
+                
+                return planner_directive
+            else:
+                # Planner failed - log error but don't crash
+                error_msg = planner_directive.get('description', 'Unknown error') if planner_directive else 'Planner returned None'
+                logger.warning(f"⚠️ [PLANNER] Failed to get directive: {error_msg}")
+                print(f"⚠️ [PLANNER] Failed: {error_msg}")
+                # Fall through to return None (VLM will handle it)
         
         # No specific directive - return None to let VLM handle it
         logger.debug(f"📍 [DIRECTIVE] No specific directive for current state")
@@ -758,6 +690,17 @@ class ObjectiveManager:
                 directive['journey_progress'] = self.navigation_planner.get_progress_summary()
                 directive['stage_index'] = directive.get('stage_index', 0)
                 directive['total_stages'] = directive.get('total_stages', 0)
+                
+                # CRITICAL FIX: Convert target format from (x, y) to (x, y, 'LOCATION')
+                # action.py expects a 3-tuple with location name for NAVIGATE_AND_INTERACT
+                action_type = directive.get('action')
+                if action_type == 'NAVIGATE_AND_INTERACT' and 'target' in directive:
+                    target_coords = directive['target']
+                    target_location = directive.get('location', graph_location)
+                    directive['target'] = (*target_coords, target_location)
+                
+                # Note: NAVIGATE_DIRECTION uses portal_coords which is already a 2-tuple (x, y)
+                # and doesn't need the location suffix - it's handled differently
             
             return directive
         else:

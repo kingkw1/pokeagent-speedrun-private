@@ -1686,10 +1686,16 @@ Answer with just the button name:"""
                     # Use A* pathfinding
                     stitched_map_info = state_data.get('map', {}).get('stitched_map_info')
                     
+                    logger.info(f"🗺️ [NAVIGATE_DIRECTION DEBUG] stitched_map_info exists: {stitched_map_info is not None}")
+                    if stitched_map_info:
+                        logger.info(f"🗺️ [NAVIGATE_DIRECTION DEBUG] available: {stitched_map_info.get('available')}")
+                    
                     if stitched_map_info and stitched_map_info.get('available'):
                         current_area = stitched_map_info.get('current_area', {})
                         grid_serializable = current_area.get('grid')
                         bounds = current_area.get('bounds')
+                        
+                        logger.info(f"🗺️ [NAVIGATE_DIRECTION DEBUG] grid exists: {grid_serializable is not None}, bounds exists: {bounds is not None}")
                         
                         if grid_serializable and bounds:
                             # Convert grid to proper format
