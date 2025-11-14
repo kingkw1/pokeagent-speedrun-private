@@ -227,8 +227,8 @@ LOCATION_GRAPH: Dict[str, Dict[str, Any]] = {
             "ROUTE_102": {
                 "type": "open_world",
                 "direction": "west",
-                "entry_coords": (25, 9),   # Where you appear in Oldale from Route 102
-                "exit_coords": (0, 9),     # West boundary leading to Route 102
+                "entry_coords": (25, 11),  # Where you appear in Oldale from Route 102
+                "exit_coords": (0, 11),    # West boundary leading to Route 102
                 "description": "West to Route 102",
                 "requirements": None,
             },
@@ -327,16 +327,16 @@ LOCATION_GRAPH: Dict[str, Dict[str, Any]] = {
             "OLDALE_TOWN": {
                 "type": "open_world",
                 "direction": "east",
-                "entry_coords": (0, 9),    # Where you appear in Route 102 from Oldale
-                "exit_coords": (48, 9),    # East boundary leading to Oldale
+                "entry_coords": (0, 11),   # Where you appear in Route 102 from Oldale
+                "exit_coords": (48, 11),   # East boundary leading to Oldale
                 "description": "East to Oldale Town",
                 "requirements": None,
             },
             "PETALBURG_CITY": {
                 "type": "open_world",
                 "direction": "west",
-                "entry_coords": (48, 12),  # Where you appear in Route 102 from Petalburg
-                "exit_coords": (0, 12),    # West boundary leading to Petalburg
+                "entry_coords": (29, 17),  # Where you appear in Route 102 from Petalburg
+                "exit_coords": (0, 8),     # West boundary leading to Petalburg
                 "description": "West to Petalburg City",
                 "requirements": None,
             },
@@ -359,17 +359,17 @@ LOCATION_GRAPH: Dict[str, Dict[str, Any]] = {
             "ROUTE_102": {
                 "type": "open_world",
                 "direction": "east",
-                "entry_coords": (0, 12),
-                "exit_coords": (24, 12),
+                "entry_coords": (0, 8),    # Where you appear in Petalburg from Route 102
+                "exit_coords": (29, 17),   # East boundary leading to Route 102
                 "description": "East to Route 102",
                 "requirements": None,
             },
             "ROUTE_104_SOUTH": {
                 "type": "open_world",
-                "direction": "north",
-                "entry_coords": (17, 27),
-                "exit_coords": (17, 0),
-                "description": "North to Route 104 (South)",
+                "direction": "west",
+                "entry_coords": (17, 27),  # Where you appear in Petalburg from Route 104 South
+                "exit_coords": (0, 12),    # West boundary leading to Route 104 South
+                "description": "West to Route 104 (South)",
                 "requirements": None,
             },
             "PETALBURG_CITY_GYM": {
@@ -447,10 +447,10 @@ LOCATION_GRAPH: Dict[str, Dict[str, Any]] = {
         "portals": {
             "PETALBURG_CITY": {
                 "type": "open_world",
-                "direction": "south",
-                "entry_coords": (17, 0),
-                "exit_coords": (17, 27),
-                "description": "South to Petalburg City",
+                "direction": "east",
+                "entry_coords": (0, 12),   # Where you appear in Route 104 South from Petalburg
+                "exit_coords": (17, 27),   # East boundary leading to Petalburg
+                "description": "East to Petalburg City",
                 "requirements": None,
             },
             "PETALBURG_WOODS": {

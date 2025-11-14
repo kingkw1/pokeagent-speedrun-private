@@ -65,7 +65,7 @@ This document tracks coordinates that need to be verified or filled in from actu
 - ✅ Trainer 3 (Youngster Allen): `(19, 7)` - confirmed from gameplay script
 
 ## PETALBURG CITY
-- ⚠️ East exit to Route 102: `(24, 12)` - estimated, needs verification
+- ⚠️ East exit to Route 102: `(29, 17)` - estimated, needs verification
 - ⚠️ Entry from Route 102: `(0, 12)` - estimated, needs verification
 - ⚠️ North exit to Route 104 South: `(17, 0)` - estimated, needs verification
 - ⚠️ Entry from Route 104 South: `(17, 27)` - estimated, needs verification
