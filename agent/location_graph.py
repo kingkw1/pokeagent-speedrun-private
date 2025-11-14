@@ -352,7 +352,7 @@ LOCATION_GRAPH: Dict[str, Dict[str, Any]] = {
     # PETALBURG CITY
     # ========================================
     "PETALBURG_CITY": {
-        "map_id": None,
+        "map_id": "0000",  # Petalburg City map ID
         "display_name": "Petalburg City",
         "description": "City with Norman's gym (5th badge location)",
         "portals": {
@@ -441,15 +441,15 @@ LOCATION_GRAPH: Dict[str, Dict[str, Any]] = {
     # ROUTE 104 (SOUTH)
     # ========================================
     "ROUTE_104_SOUTH": {
-        "map_id": None,
+        "map_id": "0013",  # Route 104 map ID
         "display_name": "Route 104 (South)",
         "description": "Southern section of Route 104, before Petalburg Woods",
         "portals": {
             "PETALBURG_CITY": {
                 "type": "open_world",
                 "direction": "east",
-                "entry_coords": (0, 12),   # Where you appear in Route 104 South from Petalburg
-                "exit_coords": (17, 27),   # East boundary leading to Petalburg
+                "entry_coords": (40, 62),  # Where you appear in Route 104 South from Petalburg
+                "exit_coords": (40, 62),   # West boundary tile leading back to Petalburg
                 "description": "East to Petalburg City",
                 "requirements": None,
             },
