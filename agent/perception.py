@@ -244,9 +244,9 @@ JSON response:"""
                         for hallucination in KNOWN_HALLUCINATIONS:
                             if dialogue_cleaned.lower() == hallucination.lower() or \
                                dialogue_cleaned.lower().startswith(hallucination.lower()):
-                                print(f"🚫 [HALLUCINATION FILTER] Caught VLM hallucination: '{dialogue_cleaned[:60]}'")
-                                print(f"     This is a known false positive - clearing dialogue")
-                                logger.warning(f"[PERCEPTION] Filtered known VLM hallucination: {dialogue_cleaned}")
+                                # print(f"🚫 [HALLUCINATION FILTER] Caught VLM hallucination: '{dialogue_cleaned[:60]}'")
+                                # print(f"     This is a known false positive - clearing dialogue")
+                                # logger.warning(f"[PERCEPTION] Filtered known VLM hallucination: {dialogue_cleaned}")
                                 visual_data['on_screen_text']['dialogue'] = None
                                 visual_data['on_screen_text']['speaker'] = None
                                 # Don't mark as dialogue context if we filtered it out

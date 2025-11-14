@@ -788,9 +788,42 @@ class ObjectiveManager:
                     'journey_progress': self.navigation_planner.get_progress_summary()
                 }
                 
+            elif action_type == 'CROSS_BOUNDARY':
+                # Agent is crossing a portal/boundary between locations
+                # Continue moving in the portal direction until location changes
+                direction = planner_directive.get('direction', 'north')
+                to_location = planner_directive.get('to_location', '')
+                
+                print(f"🚪 [CROSS_BOUNDARY] Crossing from {planner_directive.get('from_location')} to {to_location}")
+                
+                return {
+                    'goal_direction': direction,
+                    'description': planner_directive.get('description', f'Cross boundary {direction} to {to_location}'),
+                    'journey_progress': self.navigation_planner.get_progress_summary()
+                }
+                
+            elif action_type == 'WAIT':
+                # Wait for warp/transition to complete (e.g., after stepping on warp tile)
+                expected_location = planner_directive.get('expected_location', '')
+                
+                print(f"⏳ [WAIT] Waiting for warp to {expected_location}")
+                
+                return {
+                    'wait_for_transition': True,
+                    'expected_location': expected_location,
+                    'description': planner_directive.get('description', f'Wait for transition to {expected_location}'),
+                    'journey_progress': self.navigation_planner.get_progress_summary()
+                }
+                
+            elif action_type == 'UNKNOWN':
+                # Planner doesn't know what to do - let VLM handle
+                print(f"❓ [UNKNOWN ACTION] NavigationPlanner returned UNKNOWN action")
+                return None
+                
             else:
-                # Unknown action type or no action needed (CROSS_BOUNDARY, WAIT_FOR_WARP auto-advance)
-                # Return None - let VLM handle or wait for planner to advance
+                # Unhandled action type - log warning and return None
+                print(f"⚠️ [UNHANDLED ACTION] NavigationPlanner returned unhandled action: {action_type}")
+                logger.warning(f"Unhandled NavigationPlanner action type: {action_type}")
                 return None
         else:
             # No active plan - agent is at destination or unknown state

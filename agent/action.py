@@ -1122,15 +1122,17 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
             last_action_was_direction = last_action in ['UP', 'DOWN', 'LEFT', 'RIGHT']
         
         # VERBOSE LOGGING
-        print(f"🔄 [STUCK DEBUG] visual_dialogue={visual_dialogue_detected}, in_battle={in_battle}, current_pos={current_pos}")
-        print(f"🔄 [STUCK DEBUG] _last_position={_last_position}, last_action_was_direction={last_action_was_direction}")
-        print(f"🔄 [STUCK DEBUG] recent_actions[-1]={recent_actions[-1] if recent_actions else 'None'}")
-        print(f"🔄 [STUCK DEBUG] _stuck_counter={_stuck_counter}")
+        if _stuck_counter > 0:
+            print(f"🔄 [STUCK DEBUG] visual_dialogue={visual_dialogue_detected}, in_battle={in_battle}, current_pos={current_pos}")
+            print(f"🔄 [STUCK DEBUG] _last_position={_last_position}, last_action_was_direction={last_action_was_direction}")
+            print(f"🔄 [STUCK DEBUG] recent_actions[-1]={recent_actions[-1] if recent_actions else 'None'}")
+            print(f"🔄 [STUCK DEBUG] _stuck_counter={_stuck_counter}")
         
         # Check if we're NOT in dialogue (according to VLM) and NOT in battle
         # This is when we should be able to move freely
         if not visual_dialogue_detected and not in_battle and current_pos is not None:
-            print(f"🔄 [STUCK DEBUG] Conditions met: not in dialogue, not in battle, has position")
+            if _stuck_counter > 0:
+                print(f"🔄 [STUCK DEBUG] Conditions met: not in dialogue, not in battle, has position")
             
             # Check if position didn't change since last step AND last action was a direction
             if _last_position == current_pos and last_action_was_direction:
@@ -1857,14 +1859,36 @@ Answer with just the button name:"""
                     goal_direction = directive['goal_direction']  # 'north', 'south', etc.
                     
                     logger.info(f"🎯 [DIRECTIVE] Navigating {goal_direction}")
+                    print(f"🎯 [DIRECTIVE] Processing goal_direction: {goal_direction}")
                     
                     # Use existing frontier-based pathfinding
                     suggested_action = _local_pathfind_from_tiles(state_data, goal_direction, recent_actions)
                     if suggested_action:
                         logger.info(f"🗺️ [DIRECTIVE] Directional pathfinding suggests: {suggested_action}")
+                        print(f"🗺️ [DIRECTIVE] Directional pathfinding returning: {suggested_action}")
                         return [suggested_action]
                     else:
                         logger.warning(f"⚠️ [DIRECTIVE] Directional pathfinding failed for {goal_direction}")
+                        print(f"⚠️ [DIRECTIVE] Directional pathfinding failed - returning empty")
+                        return []
+                
+                # Handle wait_for_transition - wait for warp/map transition to complete
+                elif 'wait_for_transition' in directive:
+                    expected_location = directive.get('expected_location', '')
+                    current_location = state_data.get('player', {}).get('location', '').upper()
+                    
+                    logger.info(f"⏳ [WAIT] Waiting for transition to {expected_location} (current: {current_location})")
+                    print(f"⏳ [WAIT] Waiting for transition to {expected_location} (current: {current_location})")
+                    
+                    # Check if transition completed
+                    if expected_location and expected_location.upper() in current_location:
+                        logger.info(f"✅ [WAIT] Transition complete - now in {current_location}")
+                        print(f"✅ [WAIT] Transition complete - now in {current_location}")
+                        return []  # Transition complete, let planner advance
+                    else:
+                        # Still waiting - return empty action to avoid interrupting transition
+                        logger.info(f"⏳ [WAIT] Still waiting for transition...")
+                        print(f"⏳ [WAIT] Still waiting...")
                         return []
         
         # === EXISTING NAVIGATION GOAL HANDLING (unchanged) ===
