@@ -600,27 +600,40 @@ class ObjectiveManager:
                     'milestone': None
                 }
         
-        # === ROUTE 102 TRAINERS (SPECIAL CASE) ===
-        # Navigate to specific trainer positions
-        # if is_milestone_complete('ROUTE_102') and not is_milestone_complete('PETALBURG_CITY'):
-            # # Battle trainers on Route 102
-            # # Trainer positions from gameplay script: (33,15), (25,14), (19,7)
-            # trainer_positions = [
-            #     (33, 15, 'ROUTE 102', 'Trainer 1'),
-            #     (25, 14, 'ROUTE 102', 'Trainer 2'),
-            #     (19, 7, 'ROUTE 102', 'Trainer 3')
-            # ]
+        # === PETALBURG CITY → Talk to Dad in gym (SPECIAL CASE - like rival battle) ===
+        # Check internal goal state, not milestones
+        # This must come BEFORE the sequential milestone system because the emulator milestones
+        # complete instantly upon entering the gym, which would skip to ROUTE_104_SOUTH
+        if is_milestone_complete('PETALBURG_CITY') and not is_milestone_complete('PETALBURG_WOODS'):
+            dad_dialogue_complete = self.is_goal_complete('PETALBURG_GYM_DAD_DIALOGUE')
+            in_gym = 'PETALBURG CITY GYM' in current_location or 'PETALBURG_CITY_GYM' in current_location
             
-            # if 'ROUTE 102' in current_location or 'ROUTE102' in current_location:
-            #     # Check which trainers we've already battled (would need battle tracking)
-            #     # For now, just navigate to first trainer position
-            #     target_x, target_y, target_map, trainer_name = trainer_positions[0]
-            #     return {
-            #         'goal_coords': (target_x, target_y, target_map),
-            #         'should_interact': True,  # Will trigger battle when we reach trainer
-            #         'description': f'Navigate to {trainer_name} for battle',
-            #         'milestone': None  # Intermediate battles don't have milestones
-            #     }
+            logger.info(f"🎯 [DAD SPECIAL CASE] PETALBURG_CITY complete, PETALBURG_WOODS not complete")
+            logger.info(f"🎯 [DAD SPECIAL CASE] in_gym={in_gym}, dad_dialogue_complete={dad_dialogue_complete}")
+            print(f"🎯 [DAD SPECIAL CASE] in_gym={in_gym}, dad_dialogue_complete={dad_dialogue_complete}")
+            
+            if dad_dialogue_complete:
+                # Already talked to Dad, leave gym and go to Route 104
+                logger.info(f"✅ [DAD DIALOGUE] Already complete - heading to Route 104 South")
+                print(f"✅ [DAD DIALOGUE] Already complete - heading to Route 104 South")
+                # Fall through to sequential system which will target ROUTE_104_SOUTH
+            elif in_gym:
+                # In gym - navigate to Dad
+                # Dad is at (4, 107), we need to stand at (4, 108) and face UP
+                logger.info(f"🎯 [DAD DIALOGUE] In gym, navigating to (4, 108) to interact with Dad at (4, 107)")
+                print(f"🎯 [DAD DIALOGUE] In gym, navigating to (4, 108) to interact with Dad at (4, 107)")
+                
+                return {
+                    'goal_coords': (4, 108, 'PETALBURG_CITY_GYM'),
+                    'npc_coords': (4, 107),  # Dad's actual position for determining facing direction
+                    'should_interact': True,
+                    'description': 'Navigate to (4, 108) and face UP to interact with Norman at (4, 107)'
+                }
+            else:
+                # Not in gym yet, need to enter - fall through to sequential system
+                logger.info(f"🎯 [DAD DIALOGUE] Not in gym yet, need to enter")
+                print(f"🎯 [DAD DIALOGUE] Not in gym yet, need to enter")
+                # Fall through to sequential system which will target PETALBURG_CITY_GYM
         
         # =====================================================================
         # SEQUENTIAL MILESTONE SYSTEM
@@ -673,8 +686,12 @@ class ObjectiveManager:
                     **MILESTONE_PROGRESSION[next_milestone_index]
                 }
                 
+                # Update ALL milestone variables for the new milestone
+                next_milestone = next_after_rival  # Update the main milestone object
                 milestone_id = next_after_rival["milestone"]
                 target_location = next_after_rival.get("target_location")
+                target_coords = next_after_rival.get("target_coords")  # ADD THIS
+                special_handling = next_after_rival.get("special")  # Already done below, but be explicit
                 description = next_after_rival.get("description", "Continue progression")
                 
                 logger.info(f"📍 [MILESTONE {next_after_rival['index']}] Next target: {milestone_id} - {description}")
@@ -696,25 +713,6 @@ class ObjectiveManager:
                     'description': 'Navigate to (9,3) and face RIGHT to interact with rival at (10,3)'
                 }
         
-        # GYM DIALOGUE: Check if we're in gym, if so wait for dialogue
-        if special_handling == "gym_dialogue":
-            in_gym = 'GYM' in current_location and 'PETALBURG' in current_location
-            
-            if in_gym:
-                logger.info(f"📍 [GYM DIALOGUE] In gym, waiting for dialogue/events")
-                print(f"📍 [GYM DIALOGUE] In gym - waiting")
-                return None  # Let VLM handle dialogue
-            
-            # Not in gym yet - if this is DAD_FIRST_MEETING, need to enter gym
-            if milestone_id == "DAD_FIRST_MEETING" and target_location:
-                # Fall through to navigation below
-                pass
-            elif milestone_id == "GYM_EXPLANATION":
-                # Already left gym but dialogue not complete - may be milestone tracking issue
-                # Just return None and let progression continue
-                logger.info(f"📍 [GYM EXPLANATION] Not in gym, milestone may auto-complete")
-                return None
-        
         # =====================================================================
         # NAVIGATION HANDLING
         # =====================================================================
@@ -725,7 +723,7 @@ class ObjectiveManager:
             return None
         
         # Get directive from navigation planner
-        planner_directive = self._get_navigation_planner_directive(state_data)
+        planner_directive = self._get_navigation_planner_directive(state_data, target_location, target_coords, description)
         
         if planner_directive and not planner_directive.get('error'):
             # Planner successfully provided a directive
@@ -769,10 +767,16 @@ class ObjectiveManager:
             "completion_rate": len(completed) / len(self.objectives) if self.objectives else 0
         }
     
-    def _get_navigation_planner_directive(self, state_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _get_navigation_planner_directive(self, state_data: Dict[str, Any], target_location: Optional[str] = None, target_coords: Optional[tuple] = None, journey_reason: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Get directive from NavigationPlanner for comparison testing.
         This runs in parallel with the existing navigation logic.
+        
+        Args:
+            state_data: Current game state
+            target_location: Target location from sequential milestone system (if provided)
+            target_coords: Target coordinates from sequential milestone system (if provided)
+            journey_reason: Description of the journey from sequential milestone system
         """
         # Get current position
         player_data = state_data.get('player', {})
@@ -831,118 +835,19 @@ class ObjectiveManager:
             milestone_data = milestones.get(milestone_id, {})
             return milestone_data.get('completed', False) if isinstance(milestone_data, dict) else False
         
-        # Determine target based on current milestone state (same logic as existing directive)
-        target_location = None
-        target_coords = None
-        journey_reason = None
+        # =====================================================================
+        # SIMPLIFIED PLANNER LOGIC
+        # =====================================================================
+        # The sequential MILESTONE_PROGRESSION system provides target_location
+        # and target_coords. We just use them directly - no fallback needed!
+        # =====================================================================
         
-        # STARTER_CHOSEN → OLDALE_TOWN
-        if is_milestone_complete('STARTER_CHOSEN') and not is_milestone_complete('OLDALE_TOWN'):
-            target_location = 'OLDALE_TOWN'
-            journey_reason = "After getting starter, head to Oldale Town"
+        if target_location is None:
+            # No target means milestone will auto-complete (dialogue, events, etc.)
+            logger.info(f"📍 [PLANNER] No target_location - milestone will auto-complete")
+            return None
         
-        # OLDALE_TOWN → ROUTE_103 (rival battle)
-        elif is_milestone_complete('OLDALE_TOWN') and not is_milestone_complete('ROUTE_103'):
-            target_location = 'ROUTE_103'
-            target_coords = (9, 3)  # Rival position
-            journey_reason = "Head to Route 103 to battle rival May"
-    
-        # ON ROUTE_103 → Navigate to rival if battle not complete, else return to lab
-        elif 'ROUTE 103' in current_location:
-            logger.info(f"🔍 [ROUTE 103 CHECK] In Route 103 - checking rival battle status")
-            print(f"🔍 [ROUTE 103 CHECK] current_location={current_location}, graph_location={graph_location}")
-            
-            rival_battle_complete = self.is_goal_complete('ROUTE_103_RIVAL_BATTLE') or \
-                                   is_milestone_complete('FIRST_RIVAL_BATTLE')
-            
-            logger.info(f"🔍 [ROUTE 103 CHECK] rival_battle_complete={rival_battle_complete}")
-            print(f"🔍 [ROUTE 103 CHECK] rival_battle_complete={rival_battle_complete}")
-            
-            if not rival_battle_complete:
-                # We're on Route 103 but haven't battled rival yet
-                target_location = graph_location  # Stay on same location
-                target_coords = (10, 3)  # But navigate to rival position
-                journey_reason = "Navigate to rival trainer on Route 103"
-                
-                logger.info(f"🎯 [ROUTE 103] Setting target: location={target_location}, coords={target_coords}")
-                print(f"🎯 [ROUTE 103] Setting target: location={target_location}, coords={target_coords}")
-            else:
-                # Rival battle complete - return to Birch's Lab to get Pokedex
-                target_location = 'PROFESSOR_BIRCHS_LAB'  # Note: BIRCHS with S to match location_graph
-                journey_reason = "Return to Birch Lab to get Pokedex after defeating rival"
-                
-                logger.info(f"🎯 [ROUTE 103] Rival defeated - returning to lab")
-                print(f"🎯 [ROUTE 103] Rival battle complete - heading back to Birch's Lab")
-        
-        # ROUTE_103 → Back to Birch Lab (after rival battle)
-        elif is_milestone_complete('ROUTE_103') and not is_milestone_complete('RECEIVED_POKEDEX'):
-            rival_battle_complete = self.is_goal_complete('ROUTE_103_RIVAL_BATTLE') or \
-                                   is_milestone_complete('FIRST_RIVAL_BATTLE')
-            if rival_battle_complete:
-                target_location = 'PROFESSOR_BIRCHS_LAB'  # Note: BIRCHS with S to match location_graph
-                journey_reason = "Return to Birch Lab to get Pokedex"
-        
-        # RECEIVED_POKEDEX → ROUTE_102
-        elif is_milestone_complete('RECEIVED_POKEDEX') and not is_milestone_complete('ROUTE_102'):
-            target_location = 'ROUTE_102'
-            journey_reason = "Head to Route 102 after receiving Pokedex"
-        
-        # ROUTE_102 → PETALBURG_CITY
-        elif is_milestone_complete('ROUTE_102') and not is_milestone_complete('PETALBURG_CITY'):
-            target_location = 'PETALBURG_CITY'
-            journey_reason = "Navigate west through Route 102 to Petalburg City"
-        
-        # PETALBURG_CITY → Talk to Dad in gym (SPECIAL CASE - like rival battle)
-        # Check internal goal state, not milestones
-        elif is_milestone_complete('PETALBURG_CITY') and not is_milestone_complete('PETALBURG_WOODS'):
-            dad_dialogue_complete = self.is_goal_complete('PETALBURG_GYM_DAD_DIALOGUE')
-            in_gym = 'PETALBURG CITY GYM' in current_location or 'PETALBURG_CITY_GYM' in current_location
-            
-            if dad_dialogue_complete:
-                # Already talked to Dad, leave gym and go to Route 104
-                target_location = 'ROUTE_104_SOUTH'
-                journey_reason = "Travel north from Petalburg to Route 104 South"
-            elif in_gym:
-                # In gym - navigate to Dad
-                # Dad is at (4, 107), we need to stand at (4, 108) and face UP
-                # Warp wait handled in action.py (2-frame delay after any map change)
-                logger.info(f"🎯 [DAD DIALOGUE] In gym, navigating to (4, 108) to interact with Dad at (4, 107)")
-                print(f"🎯 [DAD DIALOGUE] In gym, navigating to (4, 108) to interact with Dad at (4, 107)")
-                
-                return {
-                    'goal_coords': (4, 108, 'PETALBURG_CITY_GYM'),
-                    'npc_coords': (4, 107),  # Dad's actual position for determining facing direction
-                    'should_interact': True,
-                    'description': 'Navigate to (4, 108) and face UP to interact with Norman at (4, 107)'
-                }
-            else:
-                # Not in gym yet, need to enter
-                target_location = 'PETALBURG_CITY_GYM'
-                target_coords = (15, 8)  # Gym entrance
-                journey_reason = "Enter Petalburg Gym to talk to Dad"
-        
-        # PETALBURG_WOODS onwards (after Dad dialogue)
-        elif is_milestone_complete('ROUTE_104_SOUTH') and not is_milestone_complete('PETALBURG_WOODS'):
-            target_location = 'PETALBURG_WOODS'
-            journey_reason = "Navigate through Petalburg Woods"
-        
-        # PETALBURG_WOODS → ROUTE_104_NORTH
-        elif is_milestone_complete('PETALBURG_WOODS') and not is_milestone_complete('ROUTE_104_NORTH'):
-            target_location = 'ROUTE_104_NORTH'
-            journey_reason = "Exit Petalburg Woods to Route 104 North"
-        
-        # ROUTE_104_NORTH → RUSTBORO_CITY
-        elif is_milestone_complete('ROUTE_104_NORTH') and not is_milestone_complete('RUSTBORO_CITY'):
-            target_location = 'RUSTBORO_CITY'
-            journey_reason = "Travel to Rustboro City for first gym challenge"
-        
-        # RUSTBORO_CITY → RUSTBORO_CITY_GYM
-        elif is_milestone_complete('RUSTBORO_CITY') and not is_milestone_complete('RUSTBORO_GYM_ENTERED'):
-            target_location = 'RUSTBORO_CITY_GYM'
-            target_coords = (27, 19)  # Gym entrance
-            journey_reason = "Enter Rustboro City Gym to challenge Roxanne"
-        
-        # DEBUG: Log what target was determined
+        # DEBUG: Log what target was provided by sequential system
         logger.info(f"🔍 [TARGET DEBUG] target_location={target_location}, target_coords={target_coords}, graph_location={graph_location}")
         print(f"🔍 [TARGET DEBUG] target_location={target_location}, target_coords={target_coords}, graph_location={graph_location}")
         
@@ -992,7 +897,8 @@ class ObjectiveManager:
                     print(f"\n⚠️ [NAV PLANNER] Target changed from {self.navigation_planner.journey_end} to {target_location}")
                     print(f"Replanning journey...\n")
                     self.navigation_planner.clear_plan()
-                    return self._get_navigation_planner_directive(state_data)  # Recursive call to replan
+                    # Recursive call with same parameters
+                    return self._get_navigation_planner_directive(state_data, target_location, target_coords, journey_reason)
         
         # Get current directive from planner
         if self.navigation_planner.has_active_plan():
