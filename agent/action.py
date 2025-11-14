@@ -1193,15 +1193,15 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         if location and location != action_step._last_location:
             print(f"🌀 [WARP DETECTED] Location changed: '{action_step._last_location}' → '{location}'")
             logger.info(f"🌀 [WARP DETECTED] Location changed: '{action_step._last_location}' → '{location}'")
-            action_step._warp_wait_frames = 2  # Wait 2 frames for position to stabilize
+            action_step._warp_wait_frames = 1  # Wait 1 frame for position to stabilize
             action_step._last_location = location
         
-        # If we're waiting after a warp, decrement counter and return empty action
+        # If we're waiting after a warp, decrement counter and return 'B' to avoid triggering interactions
         if action_step._warp_wait_frames > 0:
             print(f"⏳ [WARP WAIT] Waiting {action_step._warp_wait_frames} more frames for position to stabilize")
             logger.info(f"⏳ [WARP WAIT] Waiting {action_step._warp_wait_frames} frames")
             action_step._warp_wait_frames -= 1
-            return []  # Return empty action to wait
+            return ['B']  # Return 'B' to avoid accidentally triggering interactions with 'A'
             action_step._warp_wait_frames -= 1
             return []  # Return empty action to wait
         
