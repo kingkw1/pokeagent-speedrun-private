@@ -1265,6 +1265,12 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
                     logger.info("🔙 [BATTLE BOT] Exiting submenu with B")
                     return ["B"]
                 
+                elif battle_decision == "PRESS_A_ONLY":
+                    # Press A only (no B-A-B sequence) - for battle animations or unknown states
+                    # Used when VLM can't detect menu but we need to advance
+                    logger.info("⏩ [BATTLE BOT] Pressing A only (animation/unknown state)")
+                    return ["A"]
+                
                 elif battle_decision == "BATTLE_FIGHT" or battle_decision == "USE_MOVE_1":
                     button_recommendation = "A"
                     decision_explanation = "Select FIGHT to use first available move"

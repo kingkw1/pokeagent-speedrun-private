@@ -974,14 +974,13 @@ class BattleBot:
                 print(f"⚔️ [BATTLE BOT] Trainer battle - menu_state={menu_state}")
                 
                 # Navigate based on current menu state
-                if menu_state == "base_menu":
-                    # At "What will [POKEMON] do?" - select FIGHT
-                    logger.info("⚔️ [BATTLE BOT] At base menu - selecting FIGHT")
-                    print("⚔️ [BATTLE BOT] Selecting FIGHT")
+                if menu_state == "base_menu" or menu_state == "fight_menu":
+                    # At "What will [POKEMON] do?" (base_menu) OR in the fight menu
+                    # In both cases, we want to select a move based on type effectiveness
+                    # The move selection commands (USE_MOVE_ABSORB/POUND) include full navigation from any state
+                    logger.info("⚔️ [BATTLE BOT] At base/fight menu - selecting move based on type effectiveness")
+                    print("⚔️ [BATTLE BOT] Selecting move")
                     self._unknown_state_count = 0  # Reset counter
-                    return "SELECT_FIGHT"  # Just press A (FIGHT is default selection)
-                
-                elif menu_state == "fight_menu":
                     # In fight menu - select move based on type effectiveness
                     # 
                     # ⚠️⚠️⚠️ CRITICAL WARNING - DO NOT USE MEMORY READER FOR OPPONENT DATA ⚠️⚠️⚠️
@@ -1096,13 +1095,28 @@ class BattleBot:
                             return "USE_MOVE_POUND"
                     elif self._unknown_state_count >= 3:
                         logger.warning(f"⚠️ [BATTLE BOT] Stuck in unknown state for {self._unknown_state_count} turns!")
-                        logger.warning("   VLM may be hallucinating - forcing FIGHT menu navigation")
-                        print(f"⚠️ [BATTLE BOT] VLM stuck! Forcing FIGHT navigation (attempt #{self._unknown_state_count - 2})")
-                        # Force SELECT_FIGHT to try navigating to fight menu
-                        return "SELECT_FIGHT"
+                        logger.warning("   VLM may be hallucinating - forcing move selection")
+                        print(f"⚠️ [BATTLE BOT] VLM stuck! Forcing move selection (attempt #{self._unknown_state_count - 2})")
+                        
+                        # Get player_pokemon for level check
+                        player_pokemon = battle_info.get('player_pokemon', {})
+                        opp_species = self._extract_opponent_species_from_dialogue()
+                        use_absorb = self._should_use_absorb(opp_species, player_pokemon)
+                        
+                        if use_absorb:
+                            logger.info(f"🌿 [RECOVERY] Using ABSORB vs {opp_species}")
+                            print(f"🌿 [RECOVERY] ABSORB → {opp_species}")
+                            return "USE_MOVE_ABSORB"
+                        else:
+                            logger.info(f"🥊 [RECOVERY] Using POUND vs {opp_species}")
+                            print(f"🥊 [RECOVERY] POUND → {opp_species}")
+                            return "USE_MOVE_POUND"
                     else:
-                        # First 2 unknown states - just press A (might be dialogue)
-                        return "ADVANCE_BATTLE_DIALOGUE"
+                        # First 2 unknown states - just press A only (might be battle animation)
+                        # DO NOT use B-A-B here - it backs out of menus!
+                        logger.info("❓ [BATTLE BOT] Unknown state - pressing A only (animation?)")
+                        print(f"❓ [BATTLE BOT] Unknown #{self._unknown_state_count} - pressing A")
+                        return "PRESS_A_ONLY"
             
             else:
                 # Unknown battle type - default to fighting
