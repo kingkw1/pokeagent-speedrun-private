@@ -25,7 +25,32 @@ Tests for Pokemon battle mechanics, including wild encounters, trainer battles, 
 
 ---
 
-## ✅ Active Tests
+## 🧪 Test Categories
+
+### Unit Tests → `unit/`
+**Lightweight, fast tests for battle bot logic**  
+No emulator required - pure Python testing
+
+See **[unit/README.md](unit/README.md)** for details on:
+- Species extraction from VLM dialogue
+- Fuzzy matching for Pokemon name corrections
+- Dialogue pattern recognition
+- Full flow integration (VLM → species → type → move)
+
+**Quick run**:
+```bash
+python tests/battle/unit/test_species_extraction.py
+```
+
+---
+
+### Integration Tests → `tests/battle/`
+**Full emulator tests for battle completion**  
+Requires emulator environment and save states
+
+---
+
+## ✅ Active Integration Tests
 
 ### `test_wild_battle_completion.py` ⭐ **Primary Test**
 **Purpose**: Verify agent can complete a wild battle through any means  
