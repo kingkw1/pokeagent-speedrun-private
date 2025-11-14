@@ -809,8 +809,9 @@ class ObjectiveManager:
                 target_location = 'ROUTE_104_SOUTH'
                 journey_reason = "Travel north from Petalburg to Route 104 South"
             elif in_gym:
-                # In gym but haven't talked to Dad yet - interact with him
+                # In gym - navigate to Dad
                 # Dad is at (4, 107), we need to stand at (4, 108) and face UP
+                # Warp wait handled in action.py (2-frame delay after any map change)
                 logger.info(f"🎯 [DAD DIALOGUE] In gym, navigating to (4, 108) to interact with Dad at (4, 107)")
                 print(f"🎯 [DAD DIALOGUE] In gym, navigating to (4, 108) to interact with Dad at (4, 107)")
                 

@@ -231,7 +231,18 @@ def _pathfind_to_target(state_data: Dict[str, Any], target_x: int, target_y: int
                 return False
             tile = raw_tiles[y][x]
             symbol = format_tile_to_symbol(tile) if tile else '?'
-            return symbol in ['.', '_', '~']  # Grass (~) is walkable!
+            
+            # Check if this is a warp tile (stairs/doors)
+            is_warp_tile = symbol in ['S', 'D']
+            
+            # Only allow walking on warp tiles if they are the TARGET destination
+            # This prevents accidentally warping when trying to navigate past them
+            if is_warp_tile:
+                is_target = (y == target_grid_y and x == target_grid_x)
+                return is_target
+            
+            # Normal walkable tiles: . (normal), _ (bridge), ~ (grass)
+            return symbol in ['.', '_', '~']
         
         # BFS from player position to target
         directions = [
@@ -1170,6 +1181,36 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
             # Only add if it's a new position (not the same as the last one)
             if not _recent_positions or _recent_positions[-1] != current_pos_key:
                 _recent_positions.append(current_pos_key)
+        
+        # 🌀 WARP DETECTION - Wait 2 frames after position jump to let position stabilize
+        # Detect warps by looking for large position changes (teleportation)
+        if not hasattr(action_step, '_last_position'):
+            action_step._last_position = (current_x, current_y)
+            action_step._warp_wait_frames = 0
+        
+        # Calculate distance from last position
+        if current_x is not None and current_y is not None:
+            last_x, last_y = action_step._last_position
+            if last_x is not None and last_y is not None:
+                distance = abs(current_x - last_x) + abs(current_y - last_y)
+                
+                # Detect warp: position changed by more than 1 tile (teleportation)
+                # Normal movement is 1 tile per frame max
+                if distance > 1:
+                    print(f"🌀 [WARP DETECTED] Position jump: ({last_x}, {last_y}) → ({current_x}, {current_y}) [distance={distance}]")
+                    logger.info(f"🌀 [WARP DETECTED] Position jump: ({last_x}, {last_y}) → ({current_x}, {current_y}) [distance={distance}]")
+                    action_step._warp_wait_frames = 1  # Wait 1 frame for position to stabilize
+            
+            # Update last position
+            action_step._last_position = (current_x, current_y)
+        
+        # If we're waiting after a warp, decrement counter and return empty action
+        if action_step._warp_wait_frames > 0:
+            print(f"⏳ [WARP WAIT] Waiting {action_step._warp_wait_frames} more frames for position to stabilize")
+            logger.info(f"⏳ [WARP WAIT] Waiting {action_step._warp_wait_frames} frames")
+            action_step._warp_wait_frames -= 1
+            return []  # Return empty action to wait
+        
     except Exception as e:
         print(f"⚠️ [POSITION TRACKING] Error tracking position: {e}")
     
