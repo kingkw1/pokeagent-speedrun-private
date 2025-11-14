@@ -128,23 +128,33 @@ class ObjectiveManager:
                 "target_value": "Route 102",
                 "milestone_id": "ROUTE_102"
             },
+            # === SPLIT 04: Petalburg City & Meeting Dad ===
             {
                 "id": "story_petalburg_city",
-                "description": "Arrive at Petalburg City and meet Norman",
+                "description": "Arrive at Petalburg City",
                 "objective_type": "location",
                 "target_value": "Petalburg City",
                 "milestone_id": "PETALBURG_CITY"
             },
             {
-                "id": "story_petalburg_gym_visit",
-                "description": "Visit Petalburg Gym and meet Norman (Dad)",
+                "id": "story_dad_first_meeting",
+                "description": "Enter Petalburg Gym and meet Dad (Norman)",
                 "objective_type": "dialogue",
                 "target_value": "Norman Meeting",
-                "milestone_id": "MET_NORMAN"
+                "milestone_id": "DAD_FIRST_MEETING"
             },
             {
+                "id": "story_gym_explanation",
+                "description": "Receive gym explanation and watch Wally tutorial",
+                "objective_type": "dialogue",
+                "target_value": "Gym Tutorial",
+                "milestone_id": "GYM_EXPLANATION"
+            },
+            
+            # === SPLIT 05: Route 104 & Petalburg Woods ===
+            {
                 "id": "story_route_104_south",
-                "description": "Travel north to Route 104 (southern section)",
+                "description": "Travel north from Petalburg to Route 104 (southern section)",
                 "objective_type": "location",
                 "target_value": "Route 104 South",
                 "milestone_id": "ROUTE_104_SOUTH"
@@ -155,6 +165,13 @@ class ObjectiveManager:
                 "objective_type": "location",
                 "target_value": "Petalburg Woods",
                 "milestone_id": "PETALBURG_WOODS"
+            },
+            {
+                "id": "story_team_aqua_grunt",
+                "description": "Defeat Team Aqua Grunt in Petalburg Woods",
+                "objective_type": "battle",
+                "target_value": "Team Aqua Grunt",
+                "milestone_id": "TEAM_AQUA_GRUNT_DEFEATED"
             },
             {
                 "id": "story_route_104_north",
@@ -170,12 +187,35 @@ class ObjectiveManager:
                 "target_value": "Rustboro City",
                 "milestone_id": "RUSTBORO_CITY"
             },
+            
+            # === SPLIT 06: Rustboro Gym & First Badge ===
             {
-                "id": "story_gym_1_roxanne",
-                "description": "Challenge and defeat Roxanne at Rustboro Gym",
+                "id": "story_rustboro_gym_entered",
+                "description": "Enter Rustboro City Gym",
+                "objective_type": "location",
+                "target_value": "Rustboro Gym",
+                "milestone_id": "RUSTBORO_GYM_ENTERED"
+            },
+            {
+                "id": "story_roxanne_defeated",
+                "description": "Challenge and defeat Gym Leader Roxanne",
                 "objective_type": "battle",
                 "target_value": "Gym Leader Roxanne",
-                "milestone_id": "DEFEATED_ROXANNE"
+                "milestone_id": "ROXANNE_DEFEATED"
+            },
+            {
+                "id": "story_first_gym_complete",
+                "description": "Complete first gym challenge",
+                "objective_type": "system",
+                "target_value": "First Gym Badge",
+                "milestone_id": "FIRST_GYM_COMPLETE"
+            },
+            {
+                "id": "story_stone_badge",
+                "description": "Receive Stone Badge from Roxanne",
+                "objective_type": "item",
+                "target_value": "Stone Badge",
+                "milestone_id": "STONE_BADGE"
             }
         ]
         
@@ -279,6 +319,35 @@ class ObjectiveManager:
                 self.mark_goal_complete('ROUTE_103_RIVAL_BATTLE', 'Defeated rival May on Route 103')
                 logger.info(f"✅ [BATTLE COMPLETION] Detected rival battle completion via state transition")
                 print(f"✅ [GOAL COMPLETE] ROUTE_103_RIVAL_BATTLE")
+        
+        # Detect Dad dialogue completion: Track 'A' button press when adjacent to Dad at (4, 107) in Petalburg Gym
+        player_data = state_data.get('player', {})
+        position = player_data.get('position', {})
+        current_x = position.get('x', 0)
+        current_y = position.get('y', 0)
+        current_location = player_data.get('location', '').upper()
+        
+        # Check if in Petalburg Gym
+        in_petalburg_gym = 'PETALBURG CITY GYM' in current_location or 'PETALBURG_CITY_GYM' in current_location
+        
+        # Check if adjacent to Dad's position (4, 107)
+        # Adjacent means within 1 tile in any direction
+        adjacent_to_dad = (
+            in_petalburg_gym and
+            abs(current_x - 4) <= 1 and 
+            abs(current_y - 107) <= 1 and
+            not (current_x == 4 and current_y == 107)  # Not on same tile (Norman is there)
+        )
+        
+        # Check if 'A' was pressed in recent actions
+        recent_actions = state_data.get('recent_actions', [])
+        pressed_a = 'A' in recent_actions or 'a' in recent_actions
+        
+        # Mark complete if we pressed A while adjacent to Dad
+        if adjacent_to_dad and pressed_a and not self.is_goal_complete('PETALBURG_GYM_DAD_DIALOGUE'):
+            self.mark_goal_complete('PETALBURG_GYM_DAD_DIALOGUE', 'Initiated dialogue with Norman at Petalburg Gym')
+            logger.info(f"✅ [DAD DIALOGUE] Detected 'A' press at position ({current_x}, {current_y}) adjacent to Dad (4, 107)")
+            print(f"✅ [GOAL COMPLETE] PETALBURG_GYM_DAD_DIALOGUE - Pressed A at ({current_x}, {current_y})")
         
         # Update previous state for next iteration
         old_in_battle = self._previous_state.get('in_battle', False)
@@ -526,6 +595,38 @@ class ObjectiveManager:
             expected_milestone = 'PETALBURG_CITY'
             journey_reason = "Navigate west through Route 102 to Petalburg City"
         
+        elif is_milestone_complete('PETALBURG_CITY') and not is_milestone_complete('DAD_FIRST_MEETING'):
+            target_location = 'PETALBURG_CITY_GYM'
+            target_coords = (15, 8)  # Gym entrance
+            expected_milestone = 'DAD_FIRST_MEETING'
+            journey_reason = "Enter Petalburg Gym to meet Dad (Norman)"
+        
+        elif is_milestone_complete('GYM_EXPLANATION') and not is_milestone_complete('ROUTE_104_SOUTH'):
+            target_location = 'ROUTE_104_SOUTH'
+            expected_milestone = 'ROUTE_104_SOUTH'
+            journey_reason = "Travel north from Petalburg to Route 104 South"
+        
+        elif is_milestone_complete('ROUTE_104_SOUTH') and not is_milestone_complete('PETALBURG_WOODS'):
+            target_location = 'PETALBURG_WOODS'
+            expected_milestone = 'PETALBURG_WOODS'
+            journey_reason = "Navigate through Petalburg Woods"
+        
+        elif is_milestone_complete('PETALBURG_WOODS') and not is_milestone_complete('ROUTE_104_NORTH'):
+            target_location = 'ROUTE_104_NORTH'
+            expected_milestone = 'ROUTE_104_NORTH'
+            journey_reason = "Exit Petalburg Woods to Route 104 North"
+        
+        elif is_milestone_complete('ROUTE_104_NORTH') and not is_milestone_complete('RUSTBORO_CITY'):
+            target_location = 'RUSTBORO_CITY'
+            expected_milestone = 'RUSTBORO_CITY'
+            journey_reason = "Travel to Rustboro City for first gym challenge"
+        
+        elif is_milestone_complete('RUSTBORO_CITY') and not is_milestone_complete('RUSTBORO_GYM_ENTERED'):
+            target_location = 'RUSTBORO_CITY_GYM'
+            target_coords = (27, 19)  # Gym entrance
+            expected_milestone = 'RUSTBORO_GYM_ENTERED'
+            journey_reason = "Enter Rustboro City Gym to challenge Roxanne"
+        
         # If we have a target, use the navigation planner
         if target_location:
             # Get directive from navigation planner
@@ -587,18 +688,24 @@ class ObjectiveManager:
         current_location = player_data.get('location', '').upper()
         
         # Convert location name to graph format
+        # CRITICAL: Check longer/more specific names FIRST to avoid substring matches
+        # e.g., "PETALBURG CITY GYM" must be checked before "PETALBURG CITY"
         location_mapping = {
-            'LITTLEROOT TOWN': 'LITTLEROOT_TOWN',
-            'ROUTE 101': 'ROUTE_101',
-            'OLDALE TOWN': 'OLDALE_TOWN',
-            'ROUTE 103': 'ROUTE_103',
-            'ROUTE 102': 'ROUTE_102',
-            'PETALBURG CITY': 'PETALBURG_CITY',
-            'ROUTE 104': 'ROUTE_104_SOUTH',  # May need to distinguish north/south
-            'PETALBURG WOODS': 'PETALBURG_WOODS',
-            'RUSTBORO CITY': 'RUSTBORO_CITY',
+            'PETALBURG CITY GYM': 'PETALBURG_CITY_GYM',  # Specific first
+            'PETALBURG GYM': 'PETALBURG_CITY_GYM',
+            'RUSTBORO CITY GYM': 'RUSTBORO_CITY_GYM',
+            'RUSTBORO GYM': 'RUSTBORO_CITY_GYM',
             'BIRCHS LAB': 'PROFESSOR_BIRCHS_LAB',  # Note: BIRCHS with S to match location_graph
             'BIRCH LAB': 'PROFESSOR_BIRCHS_LAB',
+            'LITTLEROOT TOWN': 'LITTLEROOT_TOWN',
+            'OLDALE TOWN': 'OLDALE_TOWN',
+            'RUSTBORO CITY': 'RUSTBORO_CITY',
+            'PETALBURG CITY': 'PETALBURG_CITY',  # General after specific
+            'ROUTE 101': 'ROUTE_101',
+            'ROUTE 103': 'ROUTE_103',
+            'ROUTE 102': 'ROUTE_102',
+            'ROUTE 104': 'ROUTE_104_SOUTH',  # May need to distinguish north/south
+            'PETALBURG WOODS': 'PETALBURG_WOODS',
         }
         
         # Find matching location
@@ -690,6 +797,55 @@ class ObjectiveManager:
         elif is_milestone_complete('ROUTE_102') and not is_milestone_complete('PETALBURG_CITY'):
             target_location = 'PETALBURG_CITY'
             journey_reason = "Navigate west through Route 102 to Petalburg City"
+        
+        # PETALBURG_CITY → Talk to Dad in gym (SPECIAL CASE - like rival battle)
+        # Check internal goal state, not milestones
+        elif is_milestone_complete('PETALBURG_CITY') and not is_milestone_complete('PETALBURG_WOODS'):
+            dad_dialogue_complete = self.is_goal_complete('PETALBURG_GYM_DAD_DIALOGUE')
+            in_gym = 'PETALBURG CITY GYM' in current_location or 'PETALBURG_CITY_GYM' in current_location
+            
+            if dad_dialogue_complete:
+                # Already talked to Dad, leave gym and go to Route 104
+                target_location = 'ROUTE_104_SOUTH'
+                journey_reason = "Travel north from Petalburg to Route 104 South"
+            elif in_gym:
+                # In gym but haven't talked to Dad yet - interact with him
+                # Dad is at (4, 107), we need to stand at (4, 108) and face UP
+                logger.info(f"🎯 [DAD DIALOGUE] In gym, navigating to (4, 108) to interact with Dad at (4, 107)")
+                print(f"🎯 [DAD DIALOGUE] In gym, navigating to (4, 108) to interact with Dad at (4, 107)")
+                
+                return {
+                    'goal_coords': (4, 108, 'PETALBURG_CITY_GYM'),
+                    'npc_coords': (4, 107),  # Dad's actual position for determining facing direction
+                    'should_interact': True,
+                    'description': 'Navigate to (4, 108) and face UP to interact with Norman at (4, 107)'
+                }
+            else:
+                # Not in gym yet, need to enter
+                target_location = 'PETALBURG_CITY_GYM'
+                target_coords = (15, 8)  # Gym entrance
+                journey_reason = "Enter Petalburg Gym to talk to Dad"
+        
+        # PETALBURG_WOODS onwards (after Dad dialogue)
+        elif is_milestone_complete('ROUTE_104_SOUTH') and not is_milestone_complete('PETALBURG_WOODS'):
+            target_location = 'PETALBURG_WOODS'
+            journey_reason = "Navigate through Petalburg Woods"
+        
+        # PETALBURG_WOODS → ROUTE_104_NORTH
+        elif is_milestone_complete('PETALBURG_WOODS') and not is_milestone_complete('ROUTE_104_NORTH'):
+            target_location = 'ROUTE_104_NORTH'
+            journey_reason = "Exit Petalburg Woods to Route 104 North"
+        
+        # ROUTE_104_NORTH → RUSTBORO_CITY
+        elif is_milestone_complete('ROUTE_104_NORTH') and not is_milestone_complete('RUSTBORO_CITY'):
+            target_location = 'RUSTBORO_CITY'
+            journey_reason = "Travel to Rustboro City for first gym challenge"
+        
+        # RUSTBORO_CITY → RUSTBORO_CITY_GYM
+        elif is_milestone_complete('RUSTBORO_CITY') and not is_milestone_complete('RUSTBORO_GYM_ENTERED'):
+            target_location = 'RUSTBORO_CITY_GYM'
+            target_coords = (27, 19)  # Gym entrance
+            journey_reason = "Enter Rustboro City Gym to challenge Roxanne"
         
         # DEBUG: Log what target was determined
         logger.info(f"🔍 [TARGET DEBUG] target_location={target_location}, target_coords={target_coords}, graph_location={graph_location}")

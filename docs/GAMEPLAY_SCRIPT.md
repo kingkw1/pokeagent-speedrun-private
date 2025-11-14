@@ -102,10 +102,10 @@
     
 11. Assist Wally in catching a Pokémon
     * NAVIGATE: TO Petalburg Gym (15, 8 PETALBURG CITY)
-    * INTERACT: with dad (15, 9, PETALBURG CITY GYM) <-- SHOULD THIS BE (4,107)?>
     * MILESTONE: DAD_FIRST_MEETING
-    * DIALOG: Wally tutorial cinematic 
     * MILESTONE: GYM_EXPLANATION
+    * INTERACT: with dad (15, 9, PETALBURG CITY GYM) <-- SHOULD THIS BE (4,107)?>
+    * DIALOG: Wally tutorial cinematic 
     * NAVIGATE: out of gym (4, 112)
 
 ### V. SPLIT 05 - Proceed to Rustboro City via Route 104 (WEST) and Petalburg Woods

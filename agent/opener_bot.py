@@ -163,7 +163,7 @@ class OpenerBot:
         # Check if we should transition to COMPLETED (outside lab after getting starter)
         if starter_chosen:
             if 'PROFESSOR BIRCHS LAB' not in player_loc:
-                print(f"[OPENER BOT] Starter chosen and outside lab (PROFESSOR BIRCHS LAB not in '{player_loc}'). Handing off to VLM.")
+                # print(f"[OPENER BOT] Starter chosen and outside lab (PROFESSOR BIRCHS LAB not in '{player_loc}'). Handing off to VLM.")
                 self._transition_to_state('COMPLETED')
                 return False
             else:

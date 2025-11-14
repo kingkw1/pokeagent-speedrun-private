@@ -122,7 +122,8 @@ class Agent:
                     'visual': game_state.get('visual', {}),
                     'step_number': game_state.get('step_number', 0),
                     'status': game_state.get('status', ''),
-                    'action_queue_length': game_state.get('action_queue_length', 0)
+                    'action_queue_length': game_state.get('action_queue_length', 0),
+                    'recent_actions': game_state.get('recent_actions', [])  # Add recent_actions to state_data
                 }
                 
                 # Extract recent_actions from game_state

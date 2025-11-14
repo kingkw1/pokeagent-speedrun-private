@@ -429,7 +429,7 @@ LOCATION_GRAPH: Dict[str, Dict[str, Any]] = {
         },
         "poi": {
             "norman": {
-                "coords": (15, 9),  # Or (4, 107) - needs verification
+                "coords": (4, 107),  
                 "description": "Dad (Norman) first meeting",
                 "interaction_type": "dialogue",
                 "milestone": "DAD_FIRST_MEETING",
