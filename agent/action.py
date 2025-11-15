@@ -1584,7 +1584,7 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
                     button_recommendation = "B, A, B"
                     decision_explanation = "Advance battle intro dialogue (safe sequence)"
                     logger.info("💬 [BATTLE BOT] Advancing battle dialogue with B → A → B (safe sequence)")
-                    return ["B", "A", "B"]
+                    return ["B", "B", "A", "B"]
                 
                 elif battle_decision == "RECOVER_FROM_RUN_FAILURE":
                     # We tried to run from a trainer battle! 

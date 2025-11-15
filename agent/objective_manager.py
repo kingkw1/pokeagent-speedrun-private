@@ -1079,102 +1079,75 @@ class ObjectiveManager:
                 logger.info(f"🎯 [ROXANNE] Current position: ({current_x}, {current_y})")
                 print(f"🎯 [ROXANNE] Current position: ({current_x}, {current_y})")
                 
-                # Simple positional checks: If at position X, go to position Y
-                # Pattern: (5,19) entrance -> (8,15) -> (5,14) -> (2,10) -> (2,9) -> (1,7) -> Roxanne at (5,3)
+                # Waypoint sequence: entrance -> trainers -> Roxanne
+                # Just list the positions in order - we'll navigate from [i] to [i+1]
+                WAYPOINT_SEQUENCE = [
+                    (5, 19),   # 0: Gym entrance
+                    (8, 15),   
+                    (5, 14),   # Trainer 1
+                    (4, 14),   
+                    (2, 10),   
+                    (2, 9),    # Trainer 2
+                    (2, 7),
+                    (1, 7), 
+                    (2, 8),    # Trainer 3
+                    (5, 3),    # Roxanne position
+                ]
                 
-                # Check if at entrance (5, 19) - go to first waypoint (8, 15)
-                if current_x == 5 and current_y == 19:
-                    logger.info(f"🎯 [ROXANNE] At entrance (5,19), navigating to first waypoint (8,15)")
-                    print(f"🎯 [ROXANNE] At entrance, navigating to waypoint 1: (8,15)")
-                    return {
-                        'goal_coords': (8, 15, 'RUSTBORO_CITY_GYM'),
-                        'description': 'Navigate to (8, 15) - first trainer waypoint'
-                    }
+                # Roxanne is at (5, 2), so when at (5, 3) we need to interact
+                ROXANNE_POSITION = (5, 3)
+                ROXANNE_NPC_COORDS = (5, 2)
                 
-                # Check if at (8, 15) - go to (5, 14)
-                if current_x == 8 and current_y == 15:
-                    logger.info(f"🎯 [ROXANNE] At (8,15), navigating to (5,14)")
-                    print(f"🎯 [ROXANNE] Waypoint 1 reached, moving to waypoint 2: (5,14)")
-                    return {
-                        'goal_coords': (5, 14, 'RUSTBORO_CITY_GYM'),
-                        'description': 'Navigate to (5, 14) - second trainer waypoint'
-                    }
+                current_pos = (current_x, current_y)
                 
-                # Check if at (5, 14) - go to (4, 14)
-                if current_x == 5 and current_y == 14:
-                    logger.info(f"🎯 [ROXANNE] At (5,14), navigating to (4,14)")
-                    print(f"🎯 [ROXANNE] Waypoint 2 reached, moving to waypoint 3: (4,14)")
-                    return {
-                        'goal_coords': (4, 14, 'RUSTBORO_CITY_GYM'),
-                        'description': 'Navigate to (4, 14) - third trainer waypoint'
-                    }
-                # 
-                # Check if at (4, 14) - go to (2, 10)
-                elif current_x == 4 and current_y == 14:
-                    logger.info(f"🎯 [ROXANNE] At (4,14), navigating to (2,10)")
-                    print(f"🎯 [ROXANNE] Waypoint 3 reached, moving to waypoint 4: (2,10)")
-                    return {
-                        'goal_coords': (2, 10, 'RUSTBORO_CITY_GYM'),
-                        'description': 'Navigate to (2, 10) - fourth trainer waypoint'
-                    }
+                # Find current position in sequence and navigate to next
+                for i, waypoint_pos in enumerate(WAYPOINT_SEQUENCE):
+                    if current_pos == waypoint_pos:
+                        # At this waypoint - determine next target
+                        if i < len(WAYPOINT_SEQUENCE) - 1:
+                            next_pos = WAYPOINT_SEQUENCE[i + 1]
+                        else:
+                            # At last waypoint (Roxanne position) - stay here and interact
+                            next_pos = waypoint_pos
+                        
+                        next_x, next_y = next_pos
+                        
+                        # Check if we're at Roxanne position
+                        should_interact = (current_pos == ROXANNE_POSITION)
+                        
+                        logger.info(f"🎯 [ROXANNE] At waypoint {i}/{len(WAYPOINT_SEQUENCE)-1}: {current_pos} -> {next_pos}")
+                        print(f"🎯 [ROXANNE] Waypoint {i+1}/{len(WAYPOINT_SEQUENCE)}: {current_pos} -> {next_pos}")
+                        
+                        result = {
+                            'goal_coords': (next_x, next_y, 'RUSTBORO_CITY_GYM'),
+                            'description': f'Navigate to {next_pos}' + (' and interact with Roxanne' if should_interact else '')
+                        }
+                        
+                        if should_interact:
+                            result['should_interact'] = True
+                            result['npc_coords'] = ROXANNE_NPC_COORDS
+                        
+                        return result
                 
-                # Check if at (2, 10) - go to (2, 9)
-                elif current_x == 2 and current_y == 10:
-                    logger.info(f"🎯 [ROXANNE] At (2,10), navigating to (2,9)")
-                    print(f"🎯 [ROXANNE] Waypoint 4 reached, moving to waypoint 5: (2,9)")
-                    return {
-                        'goal_coords': (2, 9, 'RUSTBORO_CITY_GYM'),
-                        'description': 'Navigate to (2, 9) - fifth trainer waypoint'
-                    }
+                # Default: Not at any recognized waypoint, go to first waypoint
+                first_waypoint = WAYPOINT_SEQUENCE[0]
+                logger.info(f"🎯 [ROXANNE] At ({current_x},{current_y}), navigating to first waypoint {first_waypoint}")
+                print(f"🎯 [ROXANNE] Starting gym, navigating to waypoint 1: {first_waypoint}")
+                return {
+                    'goal_coords': (first_waypoint[0], first_waypoint[1], 'RUSTBORO_CITY_GYM'),
+                    'description': f'Navigate to {first_waypoint} - first trainer waypoint'
+                }
+            
+            elif roxanne_defeated and in_gym:
+                # VICTORY! Exit the gym after defeating Roxanne
+                logger.info(f"� [ROXANNE DEFEATED] Victory! Exiting gym")
+                print(f"� [ROXANNE DEFEATED] Stone Badge obtained! Leaving gym")
                 
-                # Check if at (2, 9) - go to (1, 7)
-                elif current_x == 2 and current_y == 9:
-                    logger.info(f"🎯 [ROXANNE] At (2,9), navigating to (1,7)")
-                    print(f"🎯 [ROXANNE] Waypoint 4 reached, moving to waypoint 5: (1,7)")
-                    return {
-                        'goal_coords': (1, 7, 'RUSTBORO_CITY_GYM'),
-                        'description': 'Navigate to (1, 7) - fifth trainer waypoint'
-                    }
-                
-                # Check if at (1, 7) - go to (2, 7)
-                elif current_x == 1 and current_y == 7:
-                    logger.info(f"🎯 [ROXANNE] At (1,7), navigating to (2,7)")
-                    print(f"🎯 [ROXANNE] Waypoint 5 reached, moving to waypoint 6: (2,7)")
-                    return {
-                        'goal_coords': (2, 7, 'RUSTBORO_CITY_GYM'),
-                        'description': 'Navigate to (2, 7) - sixth trainer waypoint'
-                    }
-                
-                # Check if at (2, 7) - go to Roxanne at (5, 3)
-                elif current_x == 2 and current_y == 7:
-                    logger.info(f"🎯 [ROXANNE] At (2,7), all trainers complete, navigating to Roxanne at (5,3)")
-                    print(f"🎯 [ROXANNE] All waypoints reached, approaching gym leader at (5,3)")
-                    return {
-                        'goal_coords': (5, 3, 'RUSTBORO_CITY_GYM'),
-                        'npc_coords': (5, 2),
-                        'should_interact': True,
-                        'description': 'Navigate to (5, 3) and face UP to interact with Roxanne at (5, 2)'
-                    }
-                
-                # Check if at (5, 3) - already at Roxanne, should be interacting
-                elif current_x == 5 and current_y == 3:
-                    logger.info(f"🎯 [ROXANNE] At Roxanne position (5,3), preparing to interact")
-                    print(f"🎯 [ROXANNE] At Roxanne position, interacting with gym leader")
-                    return {
-                        'goal_coords': (5, 3, 'RUSTBORO_CITY_GYM'),
-                        'npc_coords': (5, 2),
-                        'should_interact': True,
-                        'description': 'At Roxanne position (5, 3), face UP and interact with Roxanne at (5, 2)'
-                    }
-                
-                # Default: Not at any waypoint yet, go to first waypoint (8, 15)
-                else:
-                    logger.info(f"🎯 [ROXANNE] At ({current_x},{current_y}), navigating to first waypoint (8,15)")
-                    print(f"🎯 [ROXANNE] Starting gym, navigating to waypoint 1: (8,15)")
-                    return {
-                        'goal_coords': (8, 15, 'RUSTBORO_CITY_GYM'),
-                        'description': 'Navigate to (8, 15) - first trainer waypoint'
-                    }
+                return {
+                    'goal_direction': 'south',
+                    'description': 'Exit Rustboro Gym after defeating Roxanne',
+                    'journey_reason': 'Victory! First gym badge obtained - exiting gym'
+                }
             
             elif not in_gym and not roxanne_defeated:
                 # Not in gym yet, need to enter - fall through to sequential system
