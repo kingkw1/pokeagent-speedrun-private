@@ -1,8 +1,8 @@
-﻿# An Architectural Blueprint for a Competitive Agent in the PokéAgent RPG Speedrunning Challenge: A Hierarchical, Memory-Augmented Approach
+﻿# An Architectural Blueprint for a Competitive Agent in the PokéAgent RPG Speedrunning Challenge: A Hybrid Approach
 
-## ⚡ Implementation Status (November 2025)
+## ⚡ Implementation Status (November 15, 2025)
 
-**This document describes the original architectural vision and research plan. For the actual implemented system, see the summary below:**
+**This document describes both the original research vision and the actual implemented system.**
 
 ### ✅ What We've Built (Hybrid Hierarchical Controller)
 
@@ -11,29 +11,57 @@ Our production system uses a **pragmatic hybrid approach** that combines program
 **Master Controller** (`action.py`):
 - Priority-based delegation system
 - Orchestrates handoff between specialized controllers
+- VLM executor ensures all actions route through neural network (competition compliant)
 
 **Specialized Controllers**:
+
 1. **Opener Bot** (✅ Operational): Programmatic state machine for title → starter selection
    - 20+ states with dialogue detection and safety mechanisms
    - 95%+ success rate, ~60-90 second completion
    - Permanent VLM handoff after STARTER_CHOSEN milestone
    - See `docs/OPENER_BOT.md` for details
 
-2. **Navigation System** (✅ Operational): Local BFS pathfinding
-   - Breadth-first search on 15x15 visible tile grid
-   - Map validation to detect stale data
-   - Goal parser extracts targets from plans
-   - Full A* implementation available for future use
+2. **Battle Bot** (✅ Operational): Rule-based combat with behavioral detection
+   - Type effectiveness matrix for move selection
+   - Trainer vs wild classification via dialogue and run failure patterns
+   - Behavioral detection: Switches to fight mode after 9 stuck turns + 2 run attempts
+   - Memory-based HP/PP tracking with VLM fallback
+
+3. **Navigation System** (✅ Operational): Global A* pathfinding with map stitcher
+   - Server-side world graph construction from explored tiles
+   - Global A* with grass avoidance, ledge handling, portal detection
+   - Batched movement execution (up to 15 steps) for efficiency
+   - Local BFS fallback for 15x15 visible grid
+   - VLM executor validates all movements for compliance
    - See `docs/PATHFINDING_SUMMARY.md` for details
 
-3. **Battle System** (🔮 Planned): Rule-based combat
-   - Type effectiveness checking
-   - Simple move selection
+4. **Objective Manager** (✅ Operational): Milestone-driven progression
+   - 40+ predefined milestones from official speedrun splits
+   - Location graph with portal types (open_world, warp_tile, ledge)
+   - Journey planning with multi-stage navigation
+   - Tactical directives provide goal_coords + should_interact flags
+   - Persistent state tracking (battle completion, dialogue status)
+   - See `docs/DIRECTIVE_SYSTEM.md` for details
+
+5. **Perception Module** (✅ Operational): Hybrid VLM + OCR + Programmatic
+   - **Primary**: VLM structured JSON extraction (Qwen2-VL-2B-Instruct, ~2.3s)
+   - **Secondary**: OCR fallback with Pokemon-specific color matching
+   - **Smart Gating**: Secondary VLM check only runs when last_action='A'
+   - **VLM-Guided OCR**: Skips validation when VLM confirms dialogue (fixes 100% failure rate)
+   - **Tertiary**: Programmatic detection (red triangle, dialogue borders)
 
 **VLM Integration** (Qwen2-VL-2B-Instruct):
+- Local inference, no external API dependencies
 - Handles adaptive navigation when programmatic control uncertain
 - General-purpose decision making for non-deterministic scenarios
-- Satisfies "final action from neural network" rule
+- All actions route through VLM executor (satisfies "final action from neural network" rule)
+
+**Key Optimizations** (November 15, 2025):
+- ✅ VLM-Guided OCR Bypass: Fixed 100% OCR failure rate
+- ✅ Behavioral Battle Detection: Solves infinite run loops via stuck pattern recognition
+- ✅ Smart Secondary Check Gating: Reduces VLM calls by gating on last_action='A'
+- ✅ Post-Dialogue Movement Limiting: 3-step cap prevents infinite dialogue triggers
+- ✅ Global Declaration Fix: Resolved Python scoping for dialogue tracking variables
 
 ### 🔮 Original Vision (Research Roadmap)
 
