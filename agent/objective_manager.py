@@ -1512,41 +1512,51 @@ class ObjectiveManager:
         print(f"🔍 [TARGET DEBUG] target_location={target_location}, target_coords={target_coords}, graph_location={graph_location}")
         
         # =====================================================================
-        # SUB-GOAL: ROUTE 104 NORTH WAYPOINT
+        # SUB-GOAL: ROUTE 104 NORTH BRIDGE WAYPOINT (Avoid NPCs at 27,15 and 28,15)
         # =====================================================================
-        # SUB-GOAL: ROUTE 104 NORTH WAYPOINTS
-        # =====================================================================
-        # Route 104 North has a tricky layout with multiple navigation challenges:
-        # 1. Left/up from entry leads to dead-end - need to go right first
-        # 2. Bridge crossing at Y ~12 requires careful navigation
+        # ROUTE 104 NORTH: Navigate around NPCs on bridge using waypoint system
+        # NPCs at (27,15) and (28,15) block the direct path north
+        # Similar to Route 104 South NPC avoidance, use waypoint to route around them
         # 
-        # Waypoint 1: (19, 22) - eastern path before going north (avoid dead-end)
-        # Waypoint 2: (19, 12) - approach bridge from explored area
+        # Trigger zone: x=27-33, y=15-26 (bridge area with NPCs)
+        # Waypoint: (26,16) - west of bridge to avoid NPC dialogue zones
         # =====================================================================
-        if graph_location == 'ROUTE_104_NORTH':
-            rustboro_complete = is_milestone_complete('RUSTBORO_CITY')
+        in_route_104_north = graph_location == 'ROUTE_104_NORTH'
+        
+        if in_route_104_north:
+            # Get current position
+            position = player_data.get('position', {})
+            current_x, current_y = position.get('x', 0), position.get('y', 0)
             
-            if not rustboro_complete:
-                # Waypoint 1: Lower-left area - guide east to avoid dead-end
-                in_waypoint1_zone = (2 <= current_x <= 18) and (19 <= current_y <= 29)
-                if in_waypoint1_zone:
-                    logger.info(f"🗺️ [ROUTE 104 WP1] Player at ({current_x}, {current_y}) in lower-left zone")
-                    logger.info(f"🗺️ [ROUTE 104 WP1] Adding waypoint (19, 22) to avoid dead-end")
-                    print(f"🗺️ [ROUTE 104 WP1] Waypoint: Navigate to (19, 22) before going north")
-                    
-                    return {
-                        'goal_coords': (19, 22, 'ROUTE_104_NORTH'),
-                        'should_interact': False,
-                        'description': 'Navigate to waypoint (19, 22) on Route 104 North to avoid dead-end',
-                        'journey_reason': 'Route 104 North waypoint 1 navigation'
-                    }
+            # Trigger zone: X between 27-33 AND Y between 15-26 (bridge area)
+            in_bridge_zone = (27 <= current_x <= 33) and (15 <= current_y <= 26)
+            
+            if in_bridge_zone:
+                BRIDGE_WAYPOINT = (26, 16)
                 
-                # Waypoint 2: Bridge approach - guide west then north
-                # The agent needs to go left (west) from the eastern side to reach the bridge
-                # at around X=19. From (25,12) the path is: go LEFT to ~19, then can go UP
-                # Disable this waypoint - just go directly north, let A* handle it
-                # The real issue is the final destination should be the Rustboro portal
-                pass
+                logger.info(f"🌉 [ROUTE 104 BRIDGE] Player at ({current_x}, {current_y}) in bridge zone")
+                logger.info(f"🌉 [ROUTE 104 BRIDGE] NPCs at (27,15) and (28,15) - routing to waypoint {BRIDGE_WAYPOINT}")
+                print(f"🌉 [ROUTE 104 BRIDGE] Avoiding NPCs - navigating to waypoint {BRIDGE_WAYPOINT}")
+                
+                current_pos = (current_x, current_y)
+                
+                # If not at waypoint, navigate to it
+                if current_pos != BRIDGE_WAYPOINT:
+                    return {
+                        'goal_coords': (26, 16, 'ROUTE_104_NORTH'),
+                        'description': 'Navigate to (26,16) to avoid bridge NPCs at (27,15) and (28,15)',
+                        'avoid_grass': True  # Standard pathfinding to waypoint
+                    }
+                else:
+                    # At waypoint - continue to Rustboro entrance
+                    logger.info(f"✅ [ROUTE 104 BRIDGE] Reached waypoint {BRIDGE_WAYPOINT} - continuing to Rustboro")
+                    print(f"✅ [ROUTE 104 BRIDGE] Waypoint reached - continuing north to Rustboro City")
+            
+            # OLD WAYPOINT SYSTEM (kept for reference, disabled)
+            # Waypoint 1: Lower-left area - guide east to avoid dead-end
+            # in_waypoint1_zone = (2 <= current_x <= 18) and (19 <= current_y <= 29)
+            # if in_waypoint1_zone:
+            #     return {'goal_coords': (19, 22, 'ROUTE_104_NORTH'), ...}
         
         # If we have a target, plan/update journey
         if target_location:
