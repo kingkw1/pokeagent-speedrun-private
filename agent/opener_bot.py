@@ -1658,7 +1658,7 @@ class OpenerBot:
                 name='S10_MAYS_MOTHER_DIALOG',
                 description="May's mother dialogue (1F) - multi-page with '...' continuation",
                 action_fn=action_clear_dialogue_persistent,  # Use persistent to handle multi-page dialogue
-                next_state_fn=trans_no_dialogue('S11_NAV_TO_STAIRS_MAYS_HOUSE', min_wait_steps=3)  # Wait 3 steps for multi-page dialogue
+                next_state_fn=trans_no_dialogue('S11_NAV_TO_STAIRS_MAYS_HOUSE', min_wait_steps=1)  # Wait 3 steps for multi-page dialogue
             ),
             'S11_NAV_TO_STAIRS_MAYS_HOUSE': BotState(
                 name='S11_NAV_TO_STAIRS_MAYS_HOUSE',
