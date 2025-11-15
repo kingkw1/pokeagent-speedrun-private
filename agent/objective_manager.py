@@ -634,11 +634,17 @@ class ObjectiveManager:
             logger.info(f"🎯 [DAD SPECIAL CASE] in_gym={in_gym}, dad_dialogue_complete={dad_dialogue_complete}")
             print(f"🎯 [DAD SPECIAL CASE] in_gym={in_gym}, dad_dialogue_complete={dad_dialogue_complete}")
             
-            if dad_dialogue_complete:
-                # Already talked to Dad, leave gym and go to Route 104
-                logger.info(f"✅ [DAD DIALOGUE] Already complete - heading to Route 104 South")
-                print(f"✅ [DAD DIALOGUE] Already complete - heading to Route 104 South")
-                # Fall through to sequential system which will target ROUTE_104_SOUTH
+            if dad_dialogue_complete and in_gym:
+                # Already talked to Dad, need to leave gym
+                # Exit is at (4, 112) but it's a warp tile - use directional movement
+                logger.info(f"✅ [DAD DIALOGUE] Complete - leaving gym (move south)")
+                print(f"✅ [DAD DIALOGUE] Complete - leaving gym (move south)")
+                
+                return {
+                    'goal_direction': 'south',
+                    'description': 'Leave Petalburg Gym after talking to Dad',
+                    'journey_reason': 'Exit gym to continue to Route 104 South'
+                }
             elif in_gym:
                 # In gym - navigate to Dad
                 # Dad is at (4, 107), we need to stand at (4, 108) and face UP
