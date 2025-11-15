@@ -1106,24 +1106,23 @@ class OpenerBot:
             Handles nickname screen - either decline before entering OR exit if already inside.
             
             Strategy: Due to VLM timing, we often enter the naming window before detecting it.
-            If inside the naming window, use shortcut: B → B → START → A sequence to exit
-            (double B ensures any text is cleared)
+            If inside the naming window, use shortcut: B → START → A sequence to exit
             """
             dialogue = (v.get('on_screen_text', {}).get('dialogue', '') or '').upper()
             screen_context = v.get('screen_context', '').lower()
+            menu_title = (v.get('on_screen_text', {}).get('menu_title', '') or '').upper()
             
             # Check if we're INSIDE the naming window (keyboard visible)
-            # Indicators: "nickname?" in dialogue, letter grid visible, "SELECT" menu visible
-            menu_title = (v.get('on_screen_text', {}).get('menu_title', '') or '').upper()
+            # Indicators: screen_context='menu', "NICKNAME" in dialogue/menu_title
             inside_naming_window = (
-                ("NICKNAME?" in dialogue or menu_title == "SELECT") and
-                screen_context == 'dialogue'
+                screen_context == 'menu' and 
+                ("NICKNAME" in dialogue or "NICKNAME" in menu_title)
             )
             
             if inside_naming_window:
-                # We're already inside - use B→B→START→A shortcut to exit quickly
-                print(f"🎮 [NICKNAME WINDOW] Inside naming screen - using B→B→START→A shortcut")
-                return ['B', 'B', 'START', 'A']
+                # We're already inside - use B→START→A shortcut to exit quickly
+                print(f"🎮 [NICKNAME WINDOW] Inside naming screen - using B→START→A shortcut")
+                return ['B', 'START', 'A']
             
             # If asking about nickname BEFORE entering naming window (ideal case)
             if "NICKNAME" in dialogue and not inside_naming_window:
@@ -1155,11 +1154,12 @@ class OpenerBot:
             return check_fn
 
         def trans_dialogue_contains(text: str, next_state: str) -> Callable:
-            """Transition when dialogue contains specific text."""
+            """Transition when dialogue OR menu_title contains specific text."""
             def check_fn(s, v):
                 dialogue = v.get('on_screen_text', {}).get('dialogue', '') or ''
-                contains_text = text.upper() in dialogue.upper()
-                print(f"🔍 [TRANS_DIALOGUE] Checking if '{text}' in '{dialogue[:50]}...': {contains_text}")
+                menu_title = v.get('on_screen_text', {}).get('menu_title', '') or ''
+                contains_text = text.upper() in dialogue.upper() or text.upper() in menu_title.upper()
+                print(f"🔍 [TRANS_DIALOGUE] Checking if '{text}' in '{dialogue[:50]}...' or menu_title: {contains_text}")
                 if contains_text:
                     print(f"🔍 [TRANS_DIALOGUE] Transitioning to {next_state}")
                     return next_state
@@ -1658,7 +1658,7 @@ class OpenerBot:
                 name='S10_MAYS_MOTHER_DIALOG',
                 description="May's mother dialogue (1F) - multi-page with '...' continuation",
                 action_fn=action_clear_dialogue_persistent,  # Use persistent to handle multi-page dialogue
-                next_state_fn=trans_no_dialogue('S11_NAV_TO_STAIRS_MAYS_HOUSE', min_wait_steps=1)  # Wait 3 steps for multi-page dialogue
+                next_state_fn=trans_no_dialogue('S11_NAV_TO_STAIRS_MAYS_HOUSE')  # Wait 3 steps for multi-page dialogue
             ),
             'S11_NAV_TO_STAIRS_MAYS_HOUSE': BotState(
                 name='S11_NAV_TO_STAIRS_MAYS_HOUSE',
