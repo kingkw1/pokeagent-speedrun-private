@@ -1696,8 +1696,20 @@ class OpenerBot:
                 action_fn=action_nav(NavigationGoal(x=2, y=9, map_location='LITTLEROOT TOWN MAYS HOUSE 1F', description="Exit May's House")),
                 next_state_fn=trans_location_exact('LITTLEROOT TOWN', 'S15_NAV_TO_NPC_NORTH')
             ),
+            # SPLIT S15 into THREE states to avoid walking back into May's house
+            # Problem: Door at (14,9) warps back into house when pressing UP
+            # Solution: Move AWAY from x=14 first, then navigate north
             'S15_NAV_TO_NPC_NORTH': BotState(
                 name='S15_NAV_TO_NPC_NORTH',
+                description='Step LEFT away from door to avoid re-entering',
+                action_fn=action_nav(NavigationGoal(x=11, y=11, map_location='LITTLEROOT TOWN', description='Move west away from door', should_interact=False)),
+                next_state_fn=lambda s, v: (
+                    'S15B_NAV_NORTH_CONTINUED' if s.get('player', {}).get('position', {}).get('x', 0) <= 12
+                    else None
+                )
+            ),
+            'S15B_NAV_NORTH_CONTINUED': BotState(
+                name='S15B_NAV_NORTH_CONTINUED',
                 description='Navigate north to NPC area - dialogue auto-triggers',
                 action_fn=action_nav(NavigationGoal(x=11, y=1, map_location='LITTLEROOT TOWN', description='Walk north (no interaction)', should_interact=False)),
                 next_state_fn=trans_position_area(x_range=[10, 11, 12], y_range=[1, 2, 3], next_state='S16_NPC_DIALOG')  # Transition when reaching area, not when dialogue appears
