@@ -9,6 +9,7 @@ This project is built upon the official starter kit but features a custom, learn
 ## SUBMISSIONS
 - split 01 at 094244
 - split 02 at 102815
+- split 03 at 105806
 
 ## Current Status & Recent Achievements
 
