@@ -247,21 +247,17 @@ class OpenerBot:
         # STATE-BASED EXCEPTION: Check if current state is designed to handle dialogue
         # States like S4_MOM_DIALOG_1F, S1_PROF_DIALOG, etc. should NOT yield even when dialogue is present
         # They use action_clear_dialogue or action_clear_dialogue_persistent to handle it
-        dialogue_handling_states = [
-            'S1_PROF_DIALOG',           # Prof Birch intro
-            'S4_MOM_DIALOG_1F',         # Mom dialogue after truck
-            'S7_SET_CLOCK',             # Clock setting
-            'S10_MAYS_MOTHER_DIALOG',   # May's mom
-            'S14_PROF_BIRCH_DIALOG',    # Prof Birch in lab
-            'S23_BIRCH_DIALOG_2',       # After getting starter
-            'S24_NICKNAME',             # Nickname screen
-            # Add more dialogue-handling states as needed
-        ]
-        is_dialogue_handling_state = self.current_state_name in dialogue_handling_states
+        # 
+        # CRITICAL DECISION: The opener bot is designed to handle the ENTIRE intro sequence
+        # deterministically. It should NEVER yield to the dialogue system during the opening.
+        # All dialogue in the intro (Mom, TV cutscene, etc.) is part of the scripted sequence.
+        # Therefore, we treat ALL states as dialogue-handling states during the opener.
+        is_dialogue_handling_state = True  # Opener bot ALWAYS handles its own dialogue
         
         # DIALOGUE DETECTION: Yield to dialogue system if we see dialogue (and it's NOT player monologue)
         # EXCEPTION 1: Special screens (clock, nickname, naming) - state machine handles them
         # EXCEPTION 2: Current state is designed to handle dialogue - don't yield
+        # EXCEPTION 3: OPENER BOT NEVER YIELDS - it handles the entire intro deterministically
         # SPECIAL CASE: Dot dialogue is always treated as real dialogue
         is_real_dialogue = (continue_prompt_visible or text_box_visible) and (is_dot_dialogue or (not is_player_monologue and not is_clock_dialogue and not is_nickname_dialogue and not is_naming_screen and not is_dialogue_handling_state))
         
@@ -500,8 +496,14 @@ class OpenerBot:
                 # On 2nd floor - setting clock or leaving
                 return 'S6_NAV_TO_CLOCK'
             else:
-                # On 1st floor - Mom dialogue or navigating to stairs
-                return 'S4_MOM_DIALOG_1F'
+                # On 1st floor - check if we've already been here (save state loaded after Mom dialogue)
+                player_house_entered = milestones.get('PLAYER_HOUSE_ENTERED', {}).get('completed', False)
+                if player_house_entered:
+                    print(f"🔍 [STATE DETECTION] PLAYER_HOUSE_ENTERED already done - skipping S4, going to S5")
+                    return 'S5_NAV_TO_STAIRS_1F'
+                else:
+                    # First time entering - Mom dialogue
+                    return 'S4_MOM_DIALOG_1F'
         
         # Littleroot Town (OVERWORLD) - only matches if NOT in a specific building
         # This check must come AFTER house checks since location names include "LITTLEROOT TOWN"
@@ -806,11 +808,12 @@ class OpenerBot:
             Factory for navigation actions with stuck detection and movement batching.
             
             Strategy:
-            1. Calculate sequence of movements toward goal
-            2. Batch up to MAX_MOVEMENT_BATCH_SIZE movements to reduce VLM calls
-            3. Track position history to detect being stuck
-            4. Only clear dialogue when stuck AND dialogue is detected in game state
-            5. This prevents reacting to VLM hallucinations while handling real dialogue blocks
+            1. Check for active dialogue and clear it FIRST (prevents navigation attempts while dialogue is blocking)
+            2. Calculate sequence of movements toward goal
+            3. Batch up to MAX_MOVEMENT_BATCH_SIZE movements to reduce VLM calls
+            4. Track position history to detect being stuck
+            5. Only clear dialogue when stuck AND dialogue is detected in game state
+            6. This prevents reacting to VLM hallucinations while handling real dialogue blocks
             """
             def nav_fn(s, v):
                 # CRITICAL SAFETY CHECK: Don't navigate if we're still on naming screen!
@@ -828,6 +831,20 @@ class OpenerBot:
                     print(f"   dialogue='{dialogue[:40]}...', menu='{menu_title[:40]}...', context='{screen_context}'")
                     print(f"   Pressing A to advance instead")
                     return ['A']  # Press A to try to advance past naming screen
+                
+                # DIALOGUE BLOCKING CHECK: Before attempting navigation, check if dialogue is active
+                # This prevents the bot from trying to navigate while dialogue is blocking movement
+                # CRITICAL: Only check VISUAL indicators, not game_state='dialog' which can be misleading
+                # (game may be in dialog state without actual visible text boxes)
+                visual_elements = v.get('visual_elements', {})
+                text_box_visible = visual_elements.get('text_box_visible', False)
+                continue_prompt_visible = visual_elements.get('continue_prompt_visible', False)
+                
+                # If VISIBLE dialogue is active, clear it first before navigating
+                if text_box_visible or continue_prompt_visible:
+                    print(f"💬 [NAV DIALOGUE] Visible dialogue detected before navigation - clearing it first")
+                    print(f"   text_box_visible={text_box_visible}, continue_prompt={continue_prompt_visible}")
+                    return ['A']  # Press A to clear dialogue
                 
                 # Initialize position tracking
                 if not hasattr(nav_fn, '_position_history'):
@@ -1579,9 +1596,19 @@ class OpenerBot:
             ),
             'S4_MOM_DIALOG_1F': BotState(
                 name='S4_MOM_DIALOG_1F',
-                description='Mom dialogue after truck ride (1F) - multi-page dialogue',
+                description='Mom dialogue after truck ride (1F) - multi-page dialogue, then TV cutscene starts',
                 action_fn=action_clear_dialogue_persistent,  # Use persistent for multi-page dialogue
-                next_state_fn=trans_no_dialogue('S5_NAV_TO_STAIRS_1F')
+                # CRITICAL: After Mom's dialogue, TV cutscene starts immediately (Prof Birch intro)
+                # We can't wait for "no dialogue" because the TV keeps playing
+                # Instead, check if we're at position (8,7) or (8,8) - means Mom dialogue finished and we auto-walked in
+                # The TV cutscene dialogue will be handled by S5's navigation (it clears dialogue before moving)
+                next_state_fn=lambda s, v: (
+                    'S5_NAV_TO_STAIRS_1F' if (
+                        s.get('player', {}).get('position', {}).get('y') in [7, 8] and
+                        s.get('player', {}).get('position', {}).get('x') == 8 and
+                        'HOUSE 1F' in s.get('player', {}).get('location', '')
+                    ) else None
+                )
             ),
             'S5_NAV_TO_STAIRS_1F': BotState(
                 name='S5_NAV_TO_STAIRS_1F',
@@ -1603,12 +1630,20 @@ class OpenerBot:
                 name='S7_SET_CLOCK',
                 description='Setting the clock and subsequent Mom dialogue',
                 action_fn=action_special_clock,
-                next_state_fn=trans_no_dialogue('S8_NAV_OUT_OF_HOUSE')
+                next_state_fn=trans_no_dialogue('S8_NAV_TO_STAIRS_2F')
             ),
-            'S8_NAV_OUT_OF_HOUSE': BotState(
-                name='S8_NAV_OUT_OF_HOUSE',
-                description='Navigate to stairs on 2F, then exit house',
-                action_fn=lambda s, v: self._action_exit_house(s, v),
+            # === Phase 3 (Post-Clock): Exit House and Visit Rival ===
+            # SPLIT INTO TWO STATES for batched navigation
+            'S8_NAV_TO_STAIRS_2F': BotState(
+                name='S8_NAV_TO_STAIRS_2F',
+                description='Navigate to stairs on 2F after setting clock',
+                action_fn=action_nav(NavigationGoal(x=7, y=1, map_location='PLAYERS_HOUSE_2F', description="2F Stairs")),
+                next_state_fn=trans_location_contains('1F', 'S8B_NAV_TO_DOOR_1F')
+            ),
+            'S8B_NAV_TO_DOOR_1F': BotState(
+                name='S8B_NAV_TO_DOOR_1F',
+                description='Navigate to exit door on 1F',
+                action_fn=action_nav(NavigationGoal(x=8, y=9, map_location='PLAYERS_HOUSE_1F', description="Exit House")),
                 next_state_fn=trans_location_exact('LITTLEROOT TOWN', 'S9_NAV_TO_MAYS_HOUSE')
             ),
             
@@ -1779,6 +1814,34 @@ class OpenerBot:
         
         else:
             logger.warning(f"[EXIT HOUSE] Unknown location: {player_location}")
+            return None
+
+    def _action_exit_house_batched(self, state_data: Dict[str, Any], visual_data: Dict[str, Any]) -> Union[List[str], None]:
+        """
+        Multi-phase house exit with BATCHED navigation: 2F -> stairs -> 1F -> door
+        Uses action_nav helper to batch movements and clear dialogue.
+        
+        This replaces _action_exit_house to enable movement batching.
+        """
+        player_location = state_data.get('player', {}).get('location', '')
+        
+        # Get the navigation function factory
+        action_nav_fn = None
+        
+        if '2F' in player_location:
+            # Phase 1: Navigate to stairs on 2F (walk-on tile at 7, 1)
+            nav_goal = NavigationGoal(x=7, y=1, map_location='PLAYERS_HOUSE_2F', description="2F Stairs")
+            # Build the action_nav function - need to access it from _build_state_machine scope
+            # Since we're in the class, we need to rebuild the nav function here
+            # For now, just use the NavigationGoal and let action.py handle it
+            # TODO: This still uses single moves - need to refactor
+            return NavigationGoal(x=7, y=1, map_location='PLAYERS_HOUSE_2F', description="2F Stairs")
+        
+        elif '1F' in player_location:
+            # Phase 2: Navigate to door on 1F
+            return NavigationGoal(x=8, y=9, map_location='PLAYERS_HOUSE_1F', description="Exit House")
+        
+        else:
             return None
 
     def get_state_summary(self) -> Dict[str, Any]:
