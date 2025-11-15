@@ -184,6 +184,46 @@ JSON response:"""
                     # Fallback to finding any JSON-like structure
                     json_match = re.search(r'\{.*\}', vlm_response, re.DOTALL)
                 
+                if not json_match:
+                    # RETRY: VLM didn't return JSON at all - try again with stricter prompt
+                    print(f"⚠️ [PERCEPTION] No JSON in response, retrying with strict JSON-only prompt...")
+                    logger.warning(f"[PERCEPTION] VLM failed to return JSON, retrying")
+                    
+                    retry_prompt = f"""Return ONLY a JSON object analyzing this Pokemon Emerald screenshot. No explanations.
+
+Current state: {state_summary}
+
+JSON format (fill in with observations from the image):
+{{
+    "screen_context": "overworld",
+    "on_screen_text": {{
+        "dialogue": null,
+        "speaker": null,
+        "menu_title": null
+    }},
+    "visible_entities": [],
+    "navigation_info": {{
+        "open_paths": []
+    }},
+    "visual_elements": {{
+        "text_box_visible": false,
+        "continue_prompt_visible": false
+    }}
+}}
+
+Return ONLY the JSON, nothing else:"""
+                    
+                    vlm_response = vlm.get_query(frame, retry_prompt, "PERCEPTION-RETRY")
+                    
+                    # Try to extract JSON again
+                    json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', vlm_response, re.DOTALL)
+                    if not json_match:
+                        json_match = re.search(r'\{.*\}', vlm_response, re.DOTALL)
+                    
+                    if not json_match:
+                        print(f"❌ [PERCEPTION] Still no JSON after retry!")
+                        logger.error(f"[PERCEPTION] VLM retry also failed to return JSON")
+                
                 if json_match:
                     # Get the JSON text (use group 1 if we matched markdown, otherwise group 0)
                     json_text = json_match.group(1) if json_match.lastindex else json_match.group(0)
@@ -565,6 +605,43 @@ Answer in format: "1: YES/NO, 2: YES/NO" """
         logger.info("[PERCEPTION] Using programmatic fallback analysis")
         visual_data = create_programmatic_visual_data(game_state, in_battle, current_location, game_data)
         print(f"🔧 [PERCEPTION] Fallback result: {visual_data.get('screen_context', 'unknown')}")
+        
+        # CRITICAL FIX: During title sequence, use OCR to detect dialogue
+        # VLM often fails during intro cutscene, but OCR is reliable for text detection
+        # BYPASS dialogue box detection since title sequence may have different borders
+        if current_location == 'TITLE_SEQUENCE' and frame is not None:
+            print(f"🔍 [TITLE SEQUENCE] Using OCR fallback for dialogue detection")
+            logger.info("[PERCEPTION] Title sequence - using OCR for dialogue detection")
+            try:
+                from utils.ocr_dialogue import create_ocr_detector
+                detector = create_ocr_detector()
+                
+                # CRITICAL: Temporarily bypass dialogue box detection for title sequence
+                # Title sequence dialogue may have different border colors than normal gameplay
+                # Also enable full frame scan to catch all text
+                original_skip_setting = detector.skip_dialogue_box_detection
+                original_full_frame = detector.use_full_frame_scan
+                detector.skip_dialogue_box_detection = True
+                detector.use_full_frame_scan = True  # Enable full-frame scanning for title sequence
+                
+                ocr_dialogue = detector.detect_dialogue_from_screenshot(frame)
+                
+                # Restore original settings
+                detector.skip_dialogue_box_detection = original_skip_setting
+                detector.use_full_frame_scan = original_full_frame
+                
+                if ocr_dialogue and ocr_dialogue.strip():
+                    print(f"✅ [OCR TITLE] Detected dialogue: '{ocr_dialogue[:100]}...'")
+                    visual_data['on_screen_text']['dialogue'] = ocr_dialogue
+                    visual_data['screen_context'] = 'dialogue'
+                    visual_data['visual_elements']['text_box_visible'] = True
+                    logger.info(f"[PERCEPTION] OCR detected dialogue during title sequence: {ocr_dialogue[:50]}...")
+                else:
+                    print(f"ℹ️  [OCR TITLE] No dialogue detected")
+                    logger.info("[PERCEPTION] OCR found no dialogue during title sequence")
+            except Exception as ocr_error:
+                print(f"❌ [OCR TITLE] Failed: {ocr_error}")
+                logger.warning(f"[PERCEPTION] OCR failed during title sequence: {ocr_error}")
     else:
         print(f"✅ [PERCEPTION] VLM success - got screen context: {visual_data.get('screen_context', 'unknown')}")
     

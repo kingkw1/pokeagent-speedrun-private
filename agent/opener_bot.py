@@ -63,6 +63,9 @@ from collections import deque
 
 logger = logging.getLogger(__name__)
 
+# Maximum number of movement commands to batch together (reduces VLM calls)
+MAX_MOVEMENT_BATCH_SIZE = 10  # ~1.3 seconds of movement at 60 FPS
+
 # Global tracker for dismissed player monologues (shared across all functions)
 # This prevents VLM hallucinations from causing infinite loops
 _dismissed_monologues = set()
@@ -232,13 +235,22 @@ class OpenerBot:
             "NICKNAME" in menu_title
         )
         
+        # NAMING SCREEN DETECTION: Special case - don't yield on naming screen
+        # The naming screen needs special handling (B → START → A sequence)
+        # Indicators: "YOUR NAME?" in dialogue or menu_title, screen_context='menu'
+        screen_context = visual_data.get('screen_context', '').lower()
+        is_naming_screen = (
+            ("YOUR NAME" in dialogue_upper or "YOUR NAME" in menu_title) and
+            (screen_context == 'menu' or 'NAME' in menu_title)
+        )
+        
         # DIALOGUE DETECTION: Yield to dialogue system if we see dialogue (and it's NOT player monologue)
-        # EXCEPTION: Don't yield on clock dialogue or nickname dialogue - let state machine handle them
+        # EXCEPTION: Don't yield on clock dialogue, nickname dialogue, or naming screen - let state machine handle them
         # SPECIAL CASE: Dot dialogue is always treated as real dialogue
-        is_real_dialogue = (continue_prompt_visible or text_box_visible) and (is_dot_dialogue or (not is_player_monologue and not is_clock_dialogue and not is_nickname_dialogue))
+        is_real_dialogue = (continue_prompt_visible or text_box_visible) and (is_dot_dialogue or (not is_player_monologue and not is_clock_dialogue and not is_nickname_dialogue and not is_naming_screen))
         
         # DEBUG: Always log dialogue detection
-        print(f"🤖 [OPENER BOT DIALOGUE CHECK] text_box={text_box_visible}, continue_prompt={continue_prompt_visible}, player_mono={is_player_monologue}, clock={is_clock_dialogue}, nickname={is_nickname_dialogue}, dots={is_dot_dialogue}, is_real={is_real_dialogue}")
+        print(f"🤖 [OPENER BOT DIALOGUE CHECK] text_box={text_box_visible}, continue_prompt={continue_prompt_visible}, player_mono={is_player_monologue}, clock={is_clock_dialogue}, nickname={is_nickname_dialogue}, naming={is_naming_screen}, dots={is_dot_dialogue}, is_real={is_real_dialogue}")
         if dialogue_text:
             print(f"🤖 [OPENER BOT DIALOGUE CHECK] Dialogue: '{dialogue_text[:60]}'...")
         
@@ -254,6 +266,9 @@ class OpenerBot:
         elif is_nickname_dialogue:
             print(f"🤖 [OPENER BOT] Nickname dialogue detected - letting state machine handle it")
             logger.info(f"[OPENER BOT] Nickname dialogue detected - state machine will handle it")
+        elif is_naming_screen:
+            print(f"🤖 [OPENER BOT] Naming screen detected - letting state machine handle it")
+            logger.info(f"[OPENER BOT] Naming screen detected - state machine will handle it")
         
         # FAILED MOVEMENT DETECTION: Safety net for misclassified dialogue
         # If agent tries to move but position doesn't change for 3+ frames while game_state='dialog',
@@ -572,24 +587,18 @@ class OpenerBot:
                 action_clear_dialogue._naming_step = 0
             
             # SPECIAL CASE: Detect naming keyboard screen
-            # Indicators: "YOUR NAME?" dialogue + still in TITLE_SEQUENCE
+            # Indicators: "YOUR NAME?" in dialogue OR menu_title + still in TITLE_SEQUENCE
             # Solution: B → START → A sequence to exit with default name
             location = s.get('player', {}).get('location', '')
-            if 'YOUR NAME' in dialogue and 'TITLE_SEQUENCE' in location:
-                print(f"🎮 [S1_NAMING] Detected naming keyboard (step {action_clear_dialogue._naming_step})")
-                
-                if action_clear_dialogue._naming_step == 0:
-                    action_clear_dialogue._naming_step = 1
-                    print("🎮 [S1_NAMING] Step 1: Pressing B to clear any text")
-                    return ['B']
-                elif action_clear_dialogue._naming_step == 1:
-                    action_clear_dialogue._naming_step = 2
-                    print("🎮 [S1_NAMING] Step 2: Pressing START to jump to OK button")
-                    return ['START']
-                else:
-                    action_clear_dialogue._naming_step = 0  # Reset for next time
-                    print("🎮 [S1_NAMING] Step 3: Pressing A to confirm and exit")
-                    return ['A']
+            # Check both dialogue and menu_title since VLM may put it in either field
+            has_your_name = 'YOUR NAME' in dialogue or 'YOUR NAME' in menu_title
+            if has_your_name and 'TITLE_SEQUENCE' in location:
+                print(f"🎮 [S1_NAMING] Detected naming keyboard - using B→START→A shortcut")
+                print(f"   dialogue='{dialogue[:30]}...', menu_title='{menu_title[:30]}...'")
+                # Reset step counter (not needed anymore but keep for consistency)
+                action_clear_dialogue._naming_step = 0
+                # Return full sequence in one go to minimize VLM calls
+                return ['B', 'START', 'A']
             else:
                 # Reset step counter when not in naming keyboard
                 action_clear_dialogue._naming_step = 0
@@ -778,15 +787,32 @@ class OpenerBot:
 
         def action_nav(goal: NavigationGoal):
             """
-            Factory for navigation actions with stuck detection.
+            Factory for navigation actions with stuck detection and movement batching.
             
             Strategy:
-            1. Always attempt navigation first (ignore VLM dialogue reports)
-            2. Track position history to detect being stuck
-            3. Only clear dialogue when stuck AND dialogue is detected in game state
-            4. This prevents reacting to VLM hallucinations while handling real dialogue blocks
+            1. Calculate sequence of movements toward goal
+            2. Batch up to MAX_MOVEMENT_BATCH_SIZE movements to reduce VLM calls
+            3. Track position history to detect being stuck
+            4. Only clear dialogue when stuck AND dialogue is detected in game state
+            5. This prevents reacting to VLM hallucinations while handling real dialogue blocks
             """
             def nav_fn(s, v):
+                # CRITICAL SAFETY CHECK: Don't navigate if we're still on naming screen!
+                # This prevents getting stuck trying to move when the keyboard is visible
+                dialogue = (v.get('on_screen_text', {}).get('dialogue', '') or '').upper()
+                menu_title = (v.get('on_screen_text', {}).get('menu_title', '') or '').upper()
+                screen_context = v.get('screen_context', '').lower()
+                
+                has_your_name = "YOUR NAME" in dialogue or "YOUR NAME" in menu_title
+                has_keyboard = any(letters in menu_title for letters in ['A B C', 'NAME INPUT'])
+                is_naming_screen = has_your_name or has_keyboard or (screen_context == 'menu' and ('NAME' in dialogue or 'NAME' in menu_title))
+                
+                if is_naming_screen:
+                    print(f"🚫 [NAV SAFETY] Naming screen detected - refusing to navigate!")
+                    print(f"   dialogue='{dialogue[:40]}...', menu='{menu_title[:40]}...', context='{screen_context}'")
+                    print(f"   Pressing A to advance instead")
+                    return ['A']  # Press A to try to advance past naming screen
+                
                 # Initialize position tracking
                 if not hasattr(nav_fn, '_position_history'):
                     nav_fn._position_history = deque(maxlen=5)
@@ -799,6 +825,8 @@ class OpenerBot:
                 player_data = s.get('player', {})
                 position = player_data.get('position', {})
                 current_pos = (position.get('x'), position.get('y'), player_data.get('location'))
+                current_x = position.get('x')
+                current_y = position.get('y')
                 
                 # Track position history
                 nav_fn._position_history.append(current_pos)
@@ -851,8 +879,72 @@ class OpenerBot:
                     else:
                         print(f"🚫 [NAV STUCK] No dialogue detected, continuing with goal")
                 
-                # Not stuck or haven't been stuck long enough - proceed with navigation
-                return goal
+                # Calculate path to goal - batch multiple steps for efficiency
+                goal_x = goal.x
+                goal_y = goal.y
+                
+                # Check if we've reached the goal
+                if current_x == goal_x and current_y == goal_y:
+                    # At goal - handle interaction if needed
+                    if goal.should_interact:
+                        print(f"🎯 [NAV] Reached goal ({goal_x}, {goal_y}) - interacting")
+                        return ['A']
+                    else:
+                        print(f"🎯 [NAV] Reached goal ({goal_x}, {goal_y}) - no interaction needed")
+                        return []
+                
+                # Calculate sequence of movements toward goal
+                movements = []
+                temp_x, temp_y = current_x, current_y
+                
+                # Calculate Manhattan distance
+                while len(movements) < MAX_MOVEMENT_BATCH_SIZE:
+                    dx = goal_x - temp_x
+                    dy = goal_y - temp_y
+                    
+                    if dx == 0 and dy == 0:
+                        break  # Reached goal
+                    
+                    # Prioritize axis with larger distance (same strategy as main agent)
+                    if abs(dy) > abs(dx):
+                        # Y-axis is primary
+                        if dy < 0:
+                            movements.append('UP')
+                            temp_y -= 1
+                        else:
+                            movements.append('DOWN')
+                            temp_y += 1
+                    elif abs(dx) > abs(dy):
+                        # X-axis is primary
+                        if dx < 0:
+                            movements.append('LEFT')
+                            temp_x -= 1
+                        else:
+                            movements.append('RIGHT')
+                            temp_x += 1
+                    else:
+                        # Equal distance - prefer Y-axis first (consistent with main agent)
+                        if dy != 0:
+                            if dy < 0:
+                                movements.append('UP')
+                                temp_y -= 1
+                            else:
+                                movements.append('DOWN')
+                                temp_y += 1
+                        elif dx != 0:
+                            if dx < 0:
+                                movements.append('LEFT')
+                                temp_x -= 1
+                            else:
+                                movements.append('RIGHT')
+                                temp_x += 1
+                
+                if movements:
+                    print(f"🗺️ [NAV] From ({current_x},{current_y}) to ({goal_x},{goal_y}): {' → '.join(movements[:3])}{'...' if len(movements) > 3 else ''} ({len(movements)} steps)")
+                    return movements
+                else:
+                    print(f"⚠️ [NAV] Already at goal position")
+                    return []
             
             return nav_fn
 
@@ -886,7 +978,7 @@ class OpenerBot:
             if not hasattr(action_special_naming, '_naming_step'):
                 action_special_naming._naming_step = 0
             
-            print(f"🎮 [NAMING DEBUG] dialogue='{dialogue[:50]}...', screen_context={screen_context}, menu_title='{menu_title[:30]}...', entered={action_special_naming._entered_naming_screen}")
+            print(f"🎮 [NAMING DEBUG] dialogue='{dialogue[:50] if dialogue else ''}', screen_context={screen_context}, menu_title='{menu_title[:30] if menu_title else ''}', entered={action_special_naming._entered_naming_screen}")
             
             # Gender selection
             if "ARE YOU A BOY" in dialogue or "BOY OR" in dialogue:
@@ -902,29 +994,14 @@ class OpenerBot:
                 print("🎮 [NAMING] Name confirmation - pressing A")
                 return ['A']
             
-            # Check if we're IN the naming keyboard (letters visible, can type)
-            # The keyboard shows as screen_context='dialogue' with a grid of letters
-            # We detect this by checking if "NAME" is in menu_title (top of screen shows name entry)
-            in_naming_keyboard = (screen_context == 'dialogue' and 
-                                 action_special_naming._entered_naming_screen and
-                                 ("NAME" in menu_title or len(menu_title) > 0))
-            
-            if in_naming_keyboard:
-                # We're inside the naming keyboard - press START to accept default
-                print(f"🎮 [NAMING] Inside keyboard (menu_title='{menu_title}'), pressing START to accept default")
-                action_special_naming._entered_naming_screen = False  # Reset for next time
-                return ['START']
-            
-            # "What's your name?" prompt - press A ONCE to enter naming screen
-            if "YOUR NAME" in dialogue and not action_special_naming._entered_naming_screen:
-                action_special_naming._entered_naming_screen = True
-                print("🎮 [NAMING] 'YOUR NAME?' prompt detected - pressing A to enter screen")
-                return ['A']
-            
-            # If we pressed A but naming screen hasn't appeared yet, wait
-            if action_special_naming._entered_naming_screen and "YOUR NAME" in dialogue:
-                print("🎮 [NAMING] Waiting for naming screen to load...")
-                return None  # Wait one frame for screen to change
+            # SIMPLIFIED: If we see "YOUR NAME?" anywhere (dialogue or menu_title), use the shortcut immediately
+            # This handles both the prompt and the keyboard screen
+            has_your_name = "YOUR NAME" in dialogue or "YOUR NAME" in menu_title
+            if has_your_name:
+                print(f"🎮 [NAMING] 'YOUR NAME?' detected (in dialogue={('YOUR NAME' in dialogue)}, in menu_title={('YOUR NAME' in menu_title)})")
+                print(f"   Using B→START→A shortcut to skip naming")
+                action_special_naming._entered_naming_screen = False  # Reset
+                return ['B', 'START', 'A']
             
             # General dialogue clearing (for other dialogue in this state)
             if v.get('visual_elements', {}).get('text_box_visible', False):
@@ -996,14 +1073,11 @@ class OpenerBot:
             Handles nickname screen - either decline before entering OR exit if already inside.
             
             Strategy: Due to VLM timing, we often enter the naming window before detecting it.
-            If inside the naming window, use shortcut: B (backspace) → START (move to OK) → A (confirm)
+            If inside the naming window, use shortcut: B → B → START → A sequence to exit
+            (double B ensures any text is cleared)
             """
             dialogue = (v.get('on_screen_text', {}).get('dialogue', '') or '').upper()
             screen_context = v.get('screen_context', '').lower()
-            
-            # Initialize step counter if needed
-            if not hasattr(action_special_nickname, '_nickname_step'):
-                action_special_nickname._nickname_step = 0
             
             # Check if we're INSIDE the naming window (keyboard visible)
             # Indicators: "nickname?" in dialogue, letter grid visible, "SELECT" menu visible
@@ -1014,34 +1088,14 @@ class OpenerBot:
             )
             
             if inside_naming_window:
-                # We're already inside - use B → START → A shortcut to exit quickly
-                print(f"🎮 [NICKNAME WINDOW] Inside naming screen (step {action_special_nickname._nickname_step})")
-                
-                if action_special_nickname._nickname_step == 0:
-                    action_special_nickname._nickname_step = 1
-                    print("🎮 [NICKNAME WINDOW] Step 1: Pressing B to clear any letters")
-                    return ['B']
-                elif action_special_nickname._nickname_step == 1:
-                    action_special_nickname._nickname_step = 2
-                    print("🎮 [NICKNAME WINDOW] Step 2: Pressing START to jump to OK button")
-                    return ['START']
-                else:
-                    action_special_nickname._nickname_step = 0  # Reset for next time
-                    print("🎮 [NICKNAME WINDOW] Step 3: Pressing A to confirm and exit")
-                    return ['A']
+                # We're already inside - use B→B→START→A shortcut to exit quickly
+                print(f"🎮 [NICKNAME WINDOW] Inside naming screen - using B→B→START→A shortcut")
+                return ['B', 'B', 'START', 'A']
             
             # If asking about nickname BEFORE entering naming window (ideal case)
             if "NICKNAME" in dialogue and not inside_naming_window:
-                print(f"🎮 [NICKNAME PROMPT] At nickname prompt (step {action_special_nickname._nickname_step})")
-                
-                if action_special_nickname._nickname_step == 0:
-                    action_special_nickname._nickname_step = 1
-                    print("🎮 [NICKNAME PROMPT] Step 1: Pressing DOWN to select NO")
-                    return ['DOWN']
-                else:
-                    action_special_nickname._nickname_step = 0  # Reset for next time
-                    print("🎮 [NICKNAME PROMPT] Step 2: Pressing A to confirm NO")
-                    return ['A']
+                print(f"🎮 [NICKNAME PROMPT] At nickname prompt - using DOWN→A to select NO")
+                return ['DOWN', 'A']
             
             # Clear any remaining dialogue
             if v.get('visual_elements', {}).get('text_box_visible', False):
@@ -1214,27 +1268,36 @@ class OpenerBot:
         def trans_detect_naming_screen(next_state: str) -> Callable:
             """
             Transition when we detect the actual naming/gender screen.
-            The naming screen has distinct characteristics:
-            - NOT in TITLE_SEQUENCE location anymore
-            - OR has specific menu_title
-            - OR dialogue contains gender question WITHOUT name already set
+            The naming screen has distinct visual characteristics - detect by what we SEE, not milestones.
+            
+            CRITICAL: Do NOT check PLAYER_NAME_SET milestone here!
+            The milestone gets set BEFORE we see the keyboard (game auto-assigns default name).
+            We need to detect the keyboard is visible and handle it, regardless of milestone state.
             """
             def check_fn(s, v):
                 location = s.get('player', {}).get('location', '')
                 dialogue = (v.get('on_screen_text', {}).get('dialogue', '') or '').upper()
                 menu_title = (v.get('on_screen_text', {}).get('menu_title', '') or '').upper()
-                player_name = s.get('player', {}).get('name', '')
-                name_milestone_done = s.get('milestones', {}).get('PLAYER_NAME_SET', {}).get('completed', False)
+                screen_context = v.get('screen_context', '').lower()
                 
-                # If name is already set, we missed the screen
-                if name_milestone_done:
-                    print(f"🔍 [TRANS_NAMING] Name already set ({player_name}), missed the naming screen!")
-                    return 'S3_TRUCK_RIDE'  # Skip directly to truck
+                # CRITICAL: Check for naming keyboard visually, not by milestone
+                # Indicators: "YOUR NAME?" in text + screen_context='menu' + keyboard visible
+                has_your_name = "YOUR NAME" in dialogue or "YOUR NAME" in menu_title
+                is_menu_context = screen_context == 'menu'
+                
+                # Also check for alphabet keyboard indicators in menu_title
+                has_keyboard_letters = any(letter_set in menu_title for letter_set in ['A B C', 'ABCDEFG', 'NAME INPUT'])
+                
+                if has_your_name and (is_menu_context or has_keyboard_letters):
+                    print(f"🔍 [TRANS_NAMING] Naming keyboard detected visually!")
+                    print(f"   dialogue='{dialogue[:40]}...', menu_title='{menu_title[:40]}...', screen='{screen_context}'")
+                    return next_state
                 
                 # Check for gender/naming screen indicators
                 # Gender question should appear when we're NOT just in title sequence anymore
                 if "BOY" in dialogue and "GIRL" in dialogue and 'TITLE_SEQUENCE' not in location:
                     print(f"🔍 [TRANS_NAMING] Gender question detected outside title sequence!")
+                    return next_state
                     return next_state
                 
                 # Naming keyboard has distinctive menu title
@@ -1243,6 +1306,42 @@ class OpenerBot:
                     return next_state
                 
                 return None
+            return check_fn
+        
+        def trans_naming_complete_and_visual_cleared(next_state: str) -> Callable:
+            """
+            Transition after naming is complete AND naming screen is visually gone.
+            
+            CRITICAL SAFETY CHECK: This prevents transitioning to S3_TRUCK_RIDE while
+            we're still on the naming keyboard. We check BOTH:
+            1. Milestone PLAYER_NAME_SET is complete (name has been set in memory)
+            2. Visual indicators show naming screen is GONE (no "YOUR NAME?" visible)
+            
+            This ensures we don't try to navigate while still on the naming screen.
+            """
+            def check_fn(s, v):
+                name_milestone_done = s.get('milestones', {}).get('PLAYER_NAME_SET', {}).get('completed', False)
+                dialogue = (v.get('on_screen_text', {}).get('dialogue', '') or '').upper()
+                menu_title = (v.get('on_screen_text', {}).get('menu_title', '') or '').upper()
+                screen_context = v.get('screen_context', '').lower()
+                
+                # Check if naming screen is visually gone
+                has_your_name = "YOUR NAME" in dialogue or "YOUR NAME" in menu_title
+                has_keyboard = any(letters in menu_title for letters in ['A B C', 'NAME INPUT'])
+                is_still_naming = has_your_name or has_keyboard or screen_context == 'menu'
+                
+                print(f"🔍 [S2_TRANS] Milestone={name_milestone_done}, still_naming={is_still_naming}")
+                print(f"   dialogue='{dialogue[:30]}...', menu='{menu_title[:30]}...', context='{screen_context}'")
+                
+                # CRITICAL: Only transition if milestone is done AND naming screen is visually cleared
+                if name_milestone_done and not is_still_naming:
+                    print(f"✅ [S2_TRANS] Naming complete AND visually cleared → {next_state}")
+                    return next_state
+                elif name_milestone_done and is_still_naming:
+                    print(f"⏳ [S2_TRANS] Milestone done but naming screen still visible - waiting...")
+                    return None
+                else:
+                    return None
             return check_fn
         
         def trans_name_set_plus_frames(s, v, frames_to_wait: int = 10):
@@ -1430,9 +1529,13 @@ class OpenerBot:
             # === Phase 1: Title & Naming ===
             'S0_TITLE_SCREEN': BotState(
                 name='S0_TITLE_SCREEN',
-                description='Title screen',
-                action_fn=action_press_a,
-                next_state_fn=trans_has_dialogue('S1_PROF_DIALOG')
+                description='Title screen - press A, but detect naming screen for shortcut',
+                action_fn=action_clear_dialogue,  # Use clear_dialogue to handle naming shortcut
+                # Transition to S1 if dialogue appears, OR to S2 if naming screen appears
+                next_state_fn=lambda s, v: (
+                    trans_detect_naming_screen('S2_GENDER_NAME_SELECT')(s, v) or
+                    trans_has_dialogue('S1_PROF_DIALOG')(s, v)
+                )
             ),
             'S1_PROF_DIALOG': BotState(
                 name='S1_PROF_DIALOG',
@@ -1442,9 +1545,13 @@ class OpenerBot:
             ),
             'S2_GENDER_NAME_SELECT': BotState(
                 name='S2_GENDER_NAME_SELECT',
-                description='Gender and Name selection screens',
+                description='Gender and Name selection screens - use shortcut to skip',
                 action_fn=action_special_naming,
-                next_state_fn=trans_milestone_complete('PLAYER_NAME_SET', 'S3_TRUCK_RIDE')
+                # CRITICAL: Don't transition until naming screen is GONE (no more "YOUR NAME?" visible)
+                # AND milestone is set (name has been applied)
+                next_state_fn=lambda s, v: (
+                    trans_naming_complete_and_visual_cleared('S3_TRUCK_RIDE')(s, v)
+                )
             ),
 
             # === Phase 2: Truck & House (The "Stuck in House" Fix) ===

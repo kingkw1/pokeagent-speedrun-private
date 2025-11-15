@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # Maximum number of movement steps to batch together for faster navigation
 # Batching reduces VLM calls and speeds up movement by executing multiple steps at once
 # Conservative default prevents runaway if obstacles appear mid-path
-MAX_MOVEMENT_BATCH_SIZE = 10  # ~1.3 seconds of movement at 60 FPS
+MAX_MOVEMENT_BATCH_SIZE = 15  # ~1.3 seconds of movement at 60 FPS
 
 # Track recent positions to avoid immediate backtracking through warps
 # Store tuples of (x, y, map_location) for the last 10 positions
@@ -1941,6 +1941,10 @@ What button do you press? Respond with: A"""
                 
                 logger.info(f"🤖 [OPENER BOT] State: {bot_state['current_state']} | Suggested action: {opener_action}")
                 
+                # Check if this is a multi-button sequence (like battle bot's recommended_sequence)
+                is_multi_button_sequence = isinstance(opener_action, list) and len(opener_action) > 1
+                recommended_sequence = opener_action if is_multi_button_sequence else None
+                
                 # Create streamlined executor prompt for VLM
                 bot_state_name = bot_state.get('current_state', 'unknown')
                 bot_action_str = opener_action[0] if isinstance(opener_action, list) and len(opener_action) > 0 else str(opener_action)
@@ -1954,9 +1958,12 @@ What button do you press? Respond with: A"""
                     if dialogue:
                         visual_context_brief += f" (dialogue: {dialogue[:50]}...)" if len(dialogue) > 50 else f" (dialogue: {dialogue})"
                 
-                # Add step-based context for multi-step sequences
+                # Add context for multi-button sequences
                 step_context = ""
-                if bot_state_name == 'S24_NICKNAME':
+                if is_multi_button_sequence:
+                    sequence_str = '→'.join(opener_action)
+                    step_context = f"\nMULTI-BUTTON SEQUENCE: {sequence_str} (will execute all buttons in order)"
+                elif bot_state_name == 'S24_NICKNAME':
                     # Nickname uses B→START→A sequence
                     step_num = getattr(opener_bot.states.get('S24_NICKNAME').action_fn, '_nickname_step', 0)
                     step_context = f"\nSEQUENCE STEP {step_num+1}/3: Press {bot_action_str} (Full sequence: B→START→A to skip nickname)"
@@ -2001,7 +2008,12 @@ What button should you press? Respond with ONE button name only: A, B, UP, DOWN,
                     
                     if final_action:
                         logger.info(f"✅ [VLM EXECUTOR] OpenerBot→{bot_action_str}, VLM confirmed→{final_action[0]}")
-                        return final_action
+                        # If we have a multi-button sequence, return the full sequence (like battle bot does)
+                        if recommended_sequence:
+                            logger.info(f"✅ [VLM EXECUTOR] Returning full sequence: {recommended_sequence}")
+                            return recommended_sequence
+                        else:
+                            return final_action
                     else:
                         # COMPETITION COMPLIANCE: VLM must provide valid response - retry with simpler prompt
                         logger.warning(f"⚠️ [VLM EXECUTOR] Could not parse VLM response '{vlm_executor_response[:50]}', retrying")
@@ -2024,7 +2036,12 @@ Answer with just the button name:"""
                         
                         if final_retry_action:
                             logger.info(f"✅ [VLM EXECUTOR RETRY] Got valid response: {final_retry_action[0]}")
-                            return final_retry_action
+                            # If we have a multi-button sequence, return the full sequence
+                            if recommended_sequence:
+                                logger.info(f"✅ [VLM EXECUTOR RETRY] Returning full sequence: {recommended_sequence}")
+                                return recommended_sequence
+                            else:
+                                return final_retry_action
                         else:
                             # CRITICAL: No valid VLM response after retry - CRASH per competition rules
                             error_msg = f"❌ [COMPLIANCE VIOLATION] VLM failed to provide valid button after 2 attempts. Response 1: '{vlm_executor_response[:100]}', Response 2: '{retry_response[:100]}'. Competition rules require final action from neural network. CANNOT PROCEED."
