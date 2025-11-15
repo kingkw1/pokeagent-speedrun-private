@@ -46,8 +46,8 @@ class VLMBackend(ABC):
     """Abstract base class for VLM backends"""
     
     @abstractmethod
-    def get_query(self, img: Union[Image.Image, np.ndarray], text: str, module_name: str = "Unknown") -> str:
-        """Process an image and text prompt"""
+    def get_query(self, img: Union[Image.Image, np.ndarray, str], text: str, module_name: str = "Unknown") -> str:
+        """Process an image and text prompt (accepts PIL Image, numpy array, or file path)"""
         pass
     
     @abstractmethod
@@ -460,10 +460,15 @@ class LocalHuggingFaceBackend(VLMBackend):
             logger.error(f"Error generating response: {e}")
             raise
     
-    def get_query(self, img: Union[Image.Image, np.ndarray], text: str, module_name: str = "Unknown") -> str:
+    def get_query(self, img: Union[Image.Image, np.ndarray, str], text: str, module_name: str = "Unknown") -> str:
         """Process an image and text prompt using local HuggingFace model"""
-        # Handle both PIL Images and numpy arrays
-        if hasattr(img, 'convert'):  # It's a PIL Image
+        from PIL import Image
+        
+        # Handle PIL Images, numpy arrays, AND string file paths
+        if isinstance(img, str):
+            # It's a file path - load it
+            image = Image.open(img).convert("RGB")
+        elif hasattr(img, 'convert'):  # It's a PIL Image
             image = img.convert("RGB")
         elif hasattr(img, 'shape'):  # It's a numpy array
             image = Image.fromarray(img).convert("RGB")
