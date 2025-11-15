@@ -648,6 +648,92 @@ class BattleBot:
         print(f"❓ [MENU STATE] UNKNOWN - pressing A as fallback")
         return "unknown"
     
+    def _extract_species_from_visible_entities(self, visual_data: Dict[str, Any]) -> str:
+        """
+        Extract opponent species from VLM's visible_entities field.
+        
+        This is a FALLBACK when dialogue parsing fails. The VLM can often see
+        the opponent Pokemon's name on screen even if dialogue doesn't contain it.
+        
+        Looks for:
+        - visible_entities list containing Pokemon names
+        - Filters out our own Pokemon (TREECKO, etc.)
+        - Returns the first non-player Pokemon found
+        
+        Args:
+            visual_data: VLM perception data with visible_entities
+            
+        Returns:
+            Species name or 'Unknown' if not found
+        """
+        visible_entities = visual_data.get('visible_entities', [])
+        
+        if not visible_entities:
+            logger.info("🔍 [VLM FALLBACK] No visible_entities in visual data")
+            return 'Unknown'
+        
+        logger.info(f"🔍 [VLM FALLBACK] Checking visible_entities: {visible_entities}")
+        print(f"🔍 [VLM FALLBACK] visible_entities: {visible_entities}")
+        
+        # Get our Pokemon species to filter out
+        our_species = set()
+        if hasattr(self, '_state_data'):
+            party = self._state_data.get('party', [])
+            our_species = {p.get('species', '').upper() for p in party if p.get('species')}
+        
+        # Common player Pokemon we should ignore
+        player_pokemon = {'TREECKO', 'TORCHIC', 'MUDKIP', 'GROVYLE', 'COMBUSKEN', 'MARSHTOMP'}
+        our_species.update(player_pokemon)
+        
+        # Parse visible_entities (can be list of strings or list of dicts)
+        for entity in visible_entities:
+            if isinstance(entity, str):
+                # Simple string: "ZIGZAGOON", "ZIGZAGOON Lv4", etc.
+                species = entity.upper().strip()
+                # Remove level info if present
+                species = species.split('LV')[0].strip()
+                
+                # Skip player Pokemon
+                if species in our_species:
+                    continue
+                
+                # Skip generic labels
+                if species in {'PLAYER', 'TRAINER', 'YOUNGSTER', 'LASS', 'BUG', 'CATCHER'}:
+                    continue
+                
+                # Found opponent Pokemon!
+                logger.info(f"✅ [VLM FALLBACK] Found opponent from visible_entities: '{species}'")
+                print(f"✅ [VLM FALLBACK] Opponent: {species}")
+                return self._fix_species_name(species)
+            
+            elif isinstance(entity, dict):
+                # Dict with name/type: {"type": "pokemon", "name": "ZIGZAGOON"}
+                entity_name = entity.get('name', '').upper().strip()
+                entity_type = entity.get('type', '').lower()
+                
+                # Remove level info
+                entity_name = entity_name.split('LV')[0].strip()
+                
+                # Skip player Pokemon
+                if entity_name in our_species:
+                    continue
+                
+                # Skip non-Pokemon
+                if entity_type in {'player', 'trainer', 'npc'}:
+                    continue
+                
+                # Skip generic labels
+                if entity_name in {'PLAYER', 'TRAINER', 'YOUNGSTER', 'LASS', 'BUG', 'CATCHER', ''}:
+                    continue
+                
+                # Found opponent!
+                logger.info(f"✅ [VLM FALLBACK] Found opponent from entity dict: '{entity_name}'")
+                print(f"✅ [VLM FALLBACK] Opponent: {entity_name}")
+                return self._fix_species_name(entity_name)
+        
+        logger.warning("⚠️ [VLM FALLBACK] No opponent Pokemon found in visible_entities")
+        return 'Unknown'
+    
     def _extract_opponent_species_from_dialogue(self) -> str:
         """
         Extract opponent Pokemon species from dialogue history.
@@ -662,6 +748,9 @@ class BattleBot:
         
         CRITICAL: Always check the MOST RECENT dialogue first to detect Pokemon switches.
         If trainer sends out a new Pokemon, we must update the cache immediately.
+        
+        NEWLINE HANDLING: VLM often returns dialogue with newlines (e.g., "sent\nout").
+        We normalize all dialogue by replacing newlines with spaces before pattern matching.
         """
         logger.info(f"🔍 [SPECIES EXTRACT] Searching dialogue history ({len(self._dialogue_history)} entries)")
         print(f"🔍 [SPECIES EXTRACT] Dialogue history: {[d[:40] for d in self._dialogue_history]}")
@@ -670,7 +759,9 @@ class BattleBot:
         # CRITICAL: Check the most recent 3 dialogue entries FIRST for Pokemon switches
         # This ensures we detect when trainers send out new Pokemon (e.g., Zigzagoon → Shroomish)
         for i, dialogue_entry in enumerate(list(reversed(self._dialogue_history))[:3]):
-            dialogue_lower = dialogue_entry.lower()
+            # NORMALIZE: Replace newlines with spaces to handle "sent\nout" patterns
+            dialogue_normalized = dialogue_entry.replace('\n', ' ')
+            dialogue_lower = dialogue_normalized.lower()
             
             # Check for "sent out" pattern (trainer switching Pokemon)
             if 'sent out' in dialogue_lower:
@@ -678,7 +769,7 @@ class BattleBot:
                 
                 try:
                     # Extract species name after "sent out"
-                    after_sent = dialogue_entry.lower().split('sent out')[1]
+                    after_sent = dialogue_normalized.lower().split('sent out')[1]
                     species = after_sent.strip(' !.').upper()
                     species_name = species.split()[0] if species.split() else 'Unknown'
                     
@@ -707,7 +798,9 @@ class BattleBot:
         
         # Search recent dialogue for "sent out" or "sent" pattern (trainer battles)
         for i, dialogue_entry in enumerate(reversed(self._dialogue_history)):
-            dialogue_lower = dialogue_entry.lower()
+            # NORMALIZE: Replace newlines with spaces
+            dialogue_normalized = dialogue_entry.replace('\n', ' ')
+            dialogue_lower = dialogue_normalized.lower()
             logger.debug(f"  [{i}] Checking: '{dialogue_entry[:60]}'")
             
             # Pattern 1: "YOUNGSTER CALVIN sent out POOCHYENA!" (standard)
@@ -717,7 +810,7 @@ class BattleBot:
                 # Extract species name after "sent out"
                 try:
                     # Split on "sent out" and take the part after
-                    after_sent = dialogue_entry.lower().split('sent out')[1]
+                    after_sent = dialogue_normalized.lower().split('sent out')[1]
                     # Remove punctuation and whitespace
                     species = after_sent.strip(' !.').upper()
                     # Take first word (species name)
@@ -744,7 +837,7 @@ class BattleBot:
                 
                 try:
                     # Split on "sent" and take the part after
-                    after_sent = dialogue_entry.lower().split(' sent ')[1]
+                    after_sent = dialogue_normalized.lower().split(' sent ')[1]
                     # Remove punctuation and whitespace
                     species = after_sent.strip(' !.').upper()
                     # Take first word (species name)
@@ -769,7 +862,7 @@ class BattleBot:
                 
                 try:
                     # Extract word between "wild" and "appeared"
-                    parts = dialogue_entry.lower().split('wild')[1].split('appeared')[0]
+                    parts = dialogue_normalized.lower().split('wild')[1].split('appeared')[0]
                     species_name = parts.strip(' !.').upper()
                     
                     logger.info(f"✅ [SPECIES] Extracted wild: '{species_name}' from '{dialogue_entry}'")
@@ -1185,6 +1278,13 @@ class BattleBot:
                     # VLM sees "YOUNGSTER CALVIN sent out POOCHYENA!" during battle intro
                     # We need to extract species name from that dialogue
                     opp_species = self._extract_opponent_species_from_dialogue()
+                    
+                    # FALLBACK: If dialogue parsing failed, try VLM's visible_entities
+                    if opp_species == 'Unknown':
+                        logger.warning("⚠️ [SPECIES] Dialogue extraction failed - trying VLM visible_entities fallback")
+                        print("⚠️ [SPECIES] Unknown from dialogue - checking visible_entities")
+                        opp_species = self._extract_species_from_visible_entities(visual_data)
+                    
                     logger.info(f"🔍 [SPECIES EXTRACTION] Extracted opponent: '{opp_species}'")
                     print(f"🔍 [SPECIES] Opponent = '{opp_species}'")
                     
@@ -1252,6 +1352,12 @@ class BattleBot:
                         
                         # Extract opponent species and make move decision
                         opp_species = self._extract_opponent_species_from_dialogue()
+                        
+                        # FALLBACK: Try visible_entities if dialogue failed
+                        if opp_species == 'Unknown':
+                            logger.warning("⚠️ [BLIND] Dialogue failed - trying visible_entities")
+                            opp_species = self._extract_species_from_visible_entities(visual_data)
+                        
                         logger.info(f"🔍 [BLIND DECISION] Opponent from dialogue: '{opp_species}'")
                         print(f"🔍 [BLIND] Opponent = '{opp_species}'")
                         
@@ -1277,6 +1383,12 @@ class BattleBot:
                         # Get player_pokemon for level check
                         player_pokemon = battle_info.get('player_pokemon', {})
                         opp_species = self._extract_opponent_species_from_dialogue()
+                        
+                        # FALLBACK: Try visible_entities if dialogue failed
+                        if opp_species == 'Unknown':
+                            logger.warning("⚠️ [RECOVERY] Dialogue failed - trying visible_entities")
+                            opp_species = self._extract_species_from_visible_entities(visual_data)
+                        
                         use_absorb = self._should_use_absorb(opp_species, player_pokemon)
                         
                         if use_absorb:
