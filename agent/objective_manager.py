@@ -855,6 +855,19 @@ class ObjectiveManager:
                             'journey_reason': 'Position for Pokemon Center exit warp'
                         }
                 
+                # SPECIAL CASE: After exiting Pokemon Center, navigate NORTH to stable area before gym
+                # Pokemon Center exit drops us at (16, 38-39) in southern Rustboro
+                # # Gym is at (27, 19) in northern Rustboro - navigate UP first to avoid pathfinding issues
+                # if not needs_healing and in_rustboro_city and current_y > 35:
+                #     logger.info(f"🏥 [POST-HEAL NAV] After healing, navigating NORTH from Y={current_y} toward gym area")
+                #     print(f"🏥 [POST-HEAL] Healed! Moving NORTH toward gym (currently at Y={current_y})")
+                    
+                #     return {
+                #         'goal_direction': 'north',
+                #         'description': f'Navigate NORTH from Pokemon Center area (Y={current_y}) toward gym region',
+                #         'journey_reason': 'Move north after healing before navigating to gym'
+                #     }
+                
                 if needs_healing:
                     # Check if we're already in the Pokemon Center
                     in_pokecenter = 'POKEMON CENTER' in current_location or 'POKECENTER' in current_location

@@ -1234,8 +1234,30 @@ def _astar_pathfind_with_grid_data(
         def manhattan_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> int:
             return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
         
-        # Find closest target to minimize search space
-        closest_target = min(target_positions, key=lambda t: manhattan_distance(current_pos, t))
+        # CRITICAL FIX: When we have a specific goal, choose target that's BEST aligned with goal direction
+        # Don't just pick closest target - that can choose wrong-direction targets (e.g., warp to the LEFT when goal is NORTH)
+        if goal_coords is not None:
+            # We have a specific goal coordinate - choose frontier tile that moves toward it
+            goal_x, goal_y = goal_coords
+            
+            def target_score(target_pos: Tuple[int, int]) -> float:
+                """Score targets by how well they move toward the goal. Lower is better."""
+                tx, ty = target_pos
+                # Distance from this target to the goal
+                dist_to_goal = manhattan_distance(target_pos, (goal_x, goal_y))
+                # Distance from current position to this target
+                dist_to_target = manhattan_distance(current_pos, target_pos)
+                
+                # Primary factor: how much closer to goal does this target get us?
+                # Secondary factor: prefer closer targets (tie-breaker)
+                # Weight: 10:1 ratio - prioritize goal alignment over proximity
+                return dist_to_goal * 10 + dist_to_target
+            
+            closest_target = min(target_positions, key=target_score)
+            print(f"🎯 [A* GOAL] Selected target {closest_target} (moves toward goal {goal_coords})")
+        else:
+            # No specific goal - just find closest frontier tile in the direction
+            closest_target = min(target_positions, key=lambda t: manhattan_distance(current_pos, t))
         
         # Priority queue: (f_score, g_score, position, path, path_coords)
         # f_score = g_score + heuristic
