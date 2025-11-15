@@ -812,6 +812,43 @@ class BattleBot:
             else:
                 logger.info(f"✅ [LEVEL CHECK] Level {player_level} >= 6 - Absorb available")
                 print(f"✅ [LEVEL CHECK] Level {player_level} - Absorb learned!")
+            
+            # Check if Absorb has PP remaining
+            # Absorb is typically move slot 2 for Treecko (Pound is slot 1)
+            moves = player_pokemon.get('moves', [])
+            move_pp = player_pokemon.get('move_pp', [])
+            
+            logger.info(f"🔍 [PP CHECK] Moves: {moves}")
+            logger.info(f"🔍 [PP CHECK] Move PP: {move_pp}")
+            print(f"🔍 [PP CHECK] Moves: {moves}, PP: {move_pp}")
+            
+            # Find Absorb in move list
+            absorb_index = -1
+            for i, move in enumerate(moves):
+                if move and 'ABSORB' in move.upper():
+                    absorb_index = i
+                    break
+            
+            if absorb_index >= 0 and absorb_index < len(move_pp):
+                absorb_pp = move_pp[absorb_index]
+                logger.info(f"🔍 [PP CHECK] Found ABSORB at index {absorb_index}, PP = {absorb_pp}")
+                print(f"🔍 [PP CHECK] ABSORB PP: {absorb_pp}")
+                
+                if absorb_pp == 0:
+                    logger.warning(f"⚠️ [MOVE SELECT] ABSORB has 0 PP - cannot use!")
+                    print(f"⚠️ [MOVE SELECT] ABSORB depleted (0 PP) → POUND")
+                    logger.info(f"=" * 60)
+                    print(f"=" * 50)
+                    return False
+                else:
+                    logger.info(f"✅ [PP CHECK] ABSORB has {absorb_pp} PP remaining")
+                    print(f"✅ [PP CHECK] ABSORB PP: {absorb_pp} (available!)")
+            else:
+                logger.warning(f"⚠️ [PP CHECK] Could not find ABSORB in move list (index={absorb_index}, moves={moves})")
+                print(f"⚠️ [PP CHECK] ABSORB not found in moves - using POUND")
+                logger.info(f"=" * 60)
+                print(f"=" * 50)
+                return False
         else:
             logger.warning("⚠️ [LEVEL CHECK] No player_pokemon data - cannot verify Absorb availability")
             print("⚠️ [LEVEL CHECK] No player data - assuming Absorb not available")

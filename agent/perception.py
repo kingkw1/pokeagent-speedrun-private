@@ -166,16 +166,16 @@ JSON response:"""
             
             try:
                 print(f"🔍 [PERCEPTION] Step - Calling VLM for visual analysis...")
-                print(f"🖼️ [PERCEPTION] Frame type: {type(frame)}")
-                print(f"📝 [PERCEPTION] Extraction prompt length: {len(extraction_prompt)} chars")
+                # print(f"🖼️ [PERCEPTION] Frame type: {type(frame)}")
+                # print(f"📝 [PERCEPTION] Extraction prompt length: {len(extraction_prompt)} chars")
                 
                 vlm_response = vlm.get_query(frame, system_prompt + extraction_prompt, "PERCEPTION-EXTRACT")
                 signal.alarm(0)  # Cancel timeout
                 
-                print(f"🔍 [PERCEPTION] VLM Raw Response:")
-                print(f"=== START VLM RESPONSE ===")
-                print(vlm_response)
-                print(f"=== END VLM RESPONSE ===")
+                # print(f"🔍 [PERCEPTION] VLM Raw Response:")
+                # print(f"=== START VLM RESPONSE ===")
+                # print(vlm_response)
+                # print(f"=== END VLM RESPONSE ===")
                 
                 # Extract JSON from response (handle cases where VLM adds extra text or markdown)
                 # First try to find JSON in markdown code blocks
@@ -187,7 +187,7 @@ JSON response:"""
                 if json_match:
                     # Get the JSON text (use group 1 if we matched markdown, otherwise group 0)
                     json_text = json_match.group(1) if json_match.lastindex else json_match.group(0)
-                    print(f"🔍 [PERCEPTION] Extracted JSON: {json_text[:200]}...")
+                    print(f"🔍 [PERCEPTION] Extracted JSON: {json_text}")
                     
                     # Fix Python tuple syntax to JSON array syntax before parsing
                     json_text = re.sub(r'\((\d+),\s*(\d+)\)', r'[\1, \2]', json_text)

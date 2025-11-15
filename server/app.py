@@ -988,23 +988,23 @@ async def get_comprehensive_state():
                 current_map_number = env.memory_reader._read_u8(env.memory_reader.addresses.MAP_NUMBER)
                 current_map_id = (current_map_bank << 8) | current_map_number
                 
-                print(f"🗺️ [SERVER A* BOUNDS] Looking for area with map_id={current_map_id:04X} ({current_location})")
-                print(f"🗺️ [SERVER A* BOUNDS] Map stitcher has {len(map_stitcher.map_areas)} areas")
-                print(f"🗺️ [SERVER A* BOUNDS] Available map IDs: {[f'{mid:04X}' for mid in sorted(map_stitcher.map_areas.keys())]}")
+                # print(f"🗺️ [SERVER A* BOUNDS] Looking for area with map_id={current_map_id:04X} ({current_location})")
+                # print(f"🗺️ [SERVER A* BOUNDS] Map stitcher has {len(map_stitcher.map_areas)} areas")
+                # print(f"🗺️ [SERVER A* BOUNDS] Available map IDs: {[f'{mid:04X}' for mid in sorted(map_stitcher.map_areas.keys())]}")
                 logger.info(f"🗺️ [SERVER A*] Looking for area with map_id={current_map_id:04X} ({current_location})")
                 
                 # First try to match by map ID (most reliable)
                 if current_map_id in map_stitcher.map_areas:
                     matching_area = map_stitcher.map_areas[current_map_id]
-                    print(f"✅ [SERVER A* BOUNDS] Found area by map ID {current_map_id:04X}: {matching_area.location_name}")
+                    # print(f"✅ [SERVER A* BOUNDS] Found area by map ID {current_map_id:04X}: {matching_area.location_name}")
                     logger.info(f"✅ [SERVER A*] Found area by map ID {current_map_id:04X}: {matching_area.location_name}")
                     
                     if hasattr(matching_area, 'explored_bounds'):
                         bounds = matching_area.explored_bounds
-                        print(f"✅ [SERVER A* BOUNDS] Area has explored_bounds: {bounds}")
+                        # print(f"✅ [SERVER A* BOUNDS] Area has explored_bounds: {bounds}")
                         logger.info(f"🗺️ [SERVER A*] Found bounds: {bounds}")
                     else:
-                        print(f"⚠️ [SERVER A* BOUNDS] Area has NO explored_bounds attribute!")
+                        # print(f"⚠️ [SERVER A* BOUNDS] Area has NO explored_bounds attribute!")
                         logger.warning(f"⚠️ [SERVER A*] Area has no explored_bounds")
                     
                     # Get origin offset for coordinate translation
