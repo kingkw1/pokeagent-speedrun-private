@@ -1947,7 +1947,14 @@ What button do you press? Respond with: A"""
                 
                 # Create streamlined executor prompt for VLM
                 bot_state_name = bot_state.get('current_state', 'unknown')
-                bot_action_str = opener_action[0] if isinstance(opener_action, list) and len(opener_action) > 0 else str(opener_action)
+                
+                # CRITICAL: For multi-button sequences (navigation batching or shortcuts), show the full sequence
+                if is_multi_button_sequence:
+                    bot_action_str = opener_action[0]  # First button for VLM confirmation
+                    full_sequence_str = '→'.join(opener_action)  # Full sequence for logging
+                else:
+                    bot_action_str = opener_action[0] if isinstance(opener_action, list) and len(opener_action) > 0 else str(opener_action)
+                    full_sequence_str = bot_action_str
                 
                 # Get minimal context
                 visual_context_brief = "unknown"
@@ -1958,11 +1965,18 @@ What button do you press? Respond with: A"""
                     if dialogue:
                         visual_context_brief += f" (dialogue: {dialogue[:50]}...)" if len(dialogue) > 50 else f" (dialogue: {dialogue})"
                 
+                # Detect navigation batching vs special shortcuts
+                is_navigation_batch = is_multi_button_sequence and all(btn in ['UP', 'DOWN', 'LEFT', 'RIGHT'] for btn in opener_action)
+                is_shortcut_sequence = is_multi_button_sequence and not is_navigation_batch
+                
                 # Add context for multi-button sequences
                 step_context = ""
-                if is_multi_button_sequence:
-                    sequence_str = '→'.join(opener_action)
-                    step_context = f"\nMULTI-BUTTON SEQUENCE: {sequence_str} (will execute all buttons in order)"
+                if is_navigation_batch:
+                    # Navigation batching - show direction and count
+                    step_context = f"\nNAVIGATION BATCH: {full_sequence_str} ({len(opener_action)} movements to reduce VLM calls)"
+                elif is_shortcut_sequence:
+                    # Special shortcut sequence (naming, nickname, clock, etc.)
+                    step_context = f"\nMULTI-BUTTON SEQUENCE: {full_sequence_str} (will execute all buttons in order)"
                 elif bot_state_name == 'S24_NICKNAME':
                     # Nickname uses B→START→A sequence
                     step_num = getattr(opener_bot.states.get('S24_NICKNAME').action_fn, '_nickname_step', 0)
