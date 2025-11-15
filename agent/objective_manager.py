@@ -1102,6 +1102,40 @@ class ObjectiveManager:
                     'description': 'Navigate to (9,3) and face RIGHT to interact with rival at (10,3)'
                 }
         
+        # =====================================================================
+        # PETALBURG WOODS: Navigate around obstacle zone
+        # =====================================================================
+        # In the eastern section of Petalburg Woods (x=11-25, y=31-38), there's
+        # a difficult area with NPCs/obstacles. Route to (9,34) to avoid them.
+        # =====================================================================
+        in_petalburg_woods = graph_location == 'PETALBURG_WOODS' or 'MAP_18_0B' in current_location
+        
+        if in_petalburg_woods:
+            position = player_data.get('position', {})
+            current_x = position.get('x', 0)
+            current_y = position.get('y', 0)
+            
+            # Trigger zone: X between 11-25 AND Y between 31-38
+            in_obstacle_zone = (11 <= current_x <= 25) and (31 <= current_y <= 38)
+            
+            if in_obstacle_zone:
+                WAYPOINT = (9, 34)
+                current_pos = (current_x, current_y)
+                
+                logger.info(f"🌲 [PETALBURG WOODS] In obstacle zone at ({current_x}, {current_y})")
+                print(f"🌲 [PETALBURG WOODS] Obstacle zone detected - navigating to waypoint {WAYPOINT}")
+                
+                # Navigate to waypoint unless already there
+                if current_pos != WAYPOINT:
+                    return {
+                        'goal_coords': (9, 34, 'PETALBURG_WOODS'),
+                        'description': 'Navigate to (9,34) to avoid Petalburg Woods obstacle zone',
+                        'avoid_grass': True
+                    }
+                else:
+                    logger.info(f"✅ [PETALBURG WOODS] Reached waypoint {WAYPOINT} - continuing")
+                    print(f"✅ [PETALBURG WOODS] Waypoint reached - resuming normal navigation")
+        
         # ROUTE 104 SOUTH: Navigate around NPC using waypoint system
         # The NPC at (11, 44) blocks the direct path with a large dialogue zone
         # Blocked tiles: (11,44), (12,44), (13,44), (14,44), (15,44), (11,43), (11,42), (11,41), (11,40)

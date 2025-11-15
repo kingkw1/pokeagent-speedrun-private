@@ -9,6 +9,13 @@ from abc import ABC, abstractmethod
 from typing import Union, List, Dict, Any, Optional
 import numpy as np
 
+# CRITICAL FIX: Unset GCP credentials BEFORE any Google imports
+# This prevents the ALTS authentication error that causes agent stalls
+# Must happen before google.generativeai is imported anywhere in the module
+if "GOOGLE_APPLICATION_CREDENTIALS" in os.environ:
+    print("⚠️ [VLM] Unsetting GOOGLE_APPLICATION_CREDENTIALS to prevent ALTS authentication conflict")
+    del os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
+
 # Set up module logging
 logger = logging.getLogger(__name__)
 
@@ -727,7 +734,7 @@ class GeminiBackend(VLMBackend):
         if not self.api_key:
             raise ValueError("Error: Gemini API key is missing! Set GEMINI_API_KEY or GOOGLE_API_KEY environment variable.")
         
-        # Configure the API
+        # Configure the API with explicit API key (not ADC)
         genai.configure(api_key=self.api_key)
         
         # Initialize the model
