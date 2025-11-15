@@ -510,23 +510,23 @@ LOCATION_GRAPH: Dict[str, Dict[str, Any]] = {
     # ROUTE 104 (NORTH)
     # ========================================
     "ROUTE_104_NORTH": {
-        "map_id": None,
+        "map_id": "0013",  # Same map as Route 104 South (distinguished by Y coordinate)
         "display_name": "Route 104 (North)",
         "description": "Northern section of Route 104, after Petalburg Woods",
         "portals": {
             "PETALBURG_WOODS": {
                 "type": "open_world",
                 "direction": "south",
-                "entry_coords": (7, 0),
-                "exit_coords": (7, 0),
+                "entry_coords": (14, 29),  # Estimated entry point from Petalburg Woods
+                "exit_coords": (14, 38),   # South boundary back to Petalburg Woods
                 "description": "South through Petalburg Woods",
                 "requirements": None,
             },
             "RUSTBORO_CITY": {
                 "type": "open_world",
                 "direction": "north",
-                "entry_coords": (16, 0),
-                "exit_coords": (16, 0),
+                "entry_coords": (19, 47),  # Based on Rustboro City portal definition
+                "exit_coords": (25, 11),   # North boundary to Rustboro City (actual warp location)
                 "description": "North to Rustboro City",
                 "requirements": None,
             },

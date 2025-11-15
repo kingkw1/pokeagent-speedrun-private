@@ -933,35 +933,39 @@ class ObjectiveManager:
         # =====================================================================
         # SUB-GOAL: ROUTE 104 NORTH WAYPOINT
         # =====================================================================
-        # Route 104 North has a tricky layout - left/up leads to dead-end,
-        # agent must go right first then up. Add waypoint to guide navigation.
+        # SUB-GOAL: ROUTE 104 NORTH WAYPOINTS
+        # =====================================================================
+        # Route 104 North has a tricky layout with multiple navigation challenges:
+        # 1. Left/up from entry leads to dead-end - need to go right first
+        # 2. Bridge crossing at Y ~12 requires careful navigation
         # 
-        # Conditions:
-        # - In Route 104 North (Y < 30)
-        # - Haven't reached Rustboro City yet
-        # - In lower-left area (X: 2-18, Y: 19-29)
-        # - Not already at/past waypoint
-        #
-        # Waypoint: (19, 22) - eastern path before going north
+        # Waypoint 1: (19, 22) - eastern path before going north (avoid dead-end)
+        # Waypoint 2: (19, 12) - approach bridge from explored area
         # =====================================================================
         if graph_location == 'ROUTE_104_NORTH':
             rustboro_complete = is_milestone_complete('RUSTBORO_CITY')
             
-            # Check if in lower-left area that needs waypoint guidance
-            in_waypoint_zone = (2 <= current_x <= 18) and (19 <= current_y <= 29)
-            at_or_past_waypoint = current_x >= 19 or current_y < 19
-            
-            if not rustboro_complete and in_waypoint_zone and not at_or_past_waypoint:
-                logger.info(f"🗺️ [ROUTE 104 SUB-GOAL] Player at ({current_x}, {current_y}) in lower-left zone")
-                logger.info(f"🗺️ [ROUTE 104 SUB-GOAL] Adding waypoint (19, 22) to avoid dead-end")
-                print(f"🗺️ [ROUTE 104 SUB-GOAL] Waypoint: Navigate to (19, 22) before going north")
+            if not rustboro_complete:
+                # Waypoint 1: Lower-left area - guide east to avoid dead-end
+                in_waypoint1_zone = (2 <= current_x <= 18) and (19 <= current_y <= 29)
+                if in_waypoint1_zone:
+                    logger.info(f"🗺️ [ROUTE 104 WP1] Player at ({current_x}, {current_y}) in lower-left zone")
+                    logger.info(f"🗺️ [ROUTE 104 WP1] Adding waypoint (19, 22) to avoid dead-end")
+                    print(f"🗺️ [ROUTE 104 WP1] Waypoint: Navigate to (19, 22) before going north")
+                    
+                    return {
+                        'goal_coords': (19, 22, 'ROUTE_104_NORTH'),
+                        'should_interact': False,
+                        'description': 'Navigate to waypoint (19, 22) on Route 104 North to avoid dead-end',
+                        'journey_reason': 'Route 104 North waypoint 1 navigation'
+                    }
                 
-                return {
-                    'goal_coords': (19, 22, 'ROUTE_104_NORTH'),
-                    'should_interact': False,
-                    'description': 'Navigate to waypoint (19, 22) on Route 104 North to avoid dead-end',
-                    'journey_reason': 'Route 104 North waypoint navigation'
-                }
+                # Waypoint 2: Bridge approach - guide west then north
+                # The agent needs to go left (west) from the eastern side to reach the bridge
+                # at around X=19. From (25,12) the path is: go LEFT to ~19, then can go UP
+                # Disable this waypoint - just go directly north, let A* handle it
+                # The real issue is the final destination should be the Rustboro portal
+                pass
         
         # If we have a target, plan/update journey
         if target_location:
