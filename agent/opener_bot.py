@@ -303,21 +303,42 @@ class OpenerBot:
         print(f"🤖 [OPENER BOT GET_ACTION] Player location: {player_loc}")
         print(f"🤖 [OPENER BOT GET_ACTION] Attempt: {self.state_attempt_count + 1}")
         
-        # AUTO-DETECT STARTING STATE on first call OR if party data just became available
+        # AUTO-DETECT STARTING STATE on first call OR if party data just became available OR significant location change
         party = state_data.get('party', [])
         has_party = len(party) > 0 if party else False
-        print(f"🤖 [OPENER BOT DEBUG] Party check: party={party}, has_party={has_party}, current_state={self.current_state_name}")
-        force_redetect = (has_party and self.current_state_name == 'S20_INTERACT_BAG')  # Party appeared after being in S20
-        print(f"🤖 [OPENER BOT DEBUG] Force redetect: {force_redetect}")
+        player_loc = state_data.get('player', {}).get('location', '')
         
-        if not self.initialized_state or force_redetect:
-            if force_redetect:
+        print(f"🤖 [OPENER BOT DEBUG] Party check: party={party}, has_party={has_party}, current_state={self.current_state_name}")
+        
+        # Track last location to detect significant changes
+        if not hasattr(self, '_last_detected_location'):
+            self._last_detected_location = None
+        
+        # Force re-detection if:
+        # 1. Party appeared after being in S20_INTERACT_BAG
+        # 2. Location changed significantly (e.g., warp to MOVING_VAN from TITLE_SEQUENCE)
+        force_redetect_party = (has_party and self.current_state_name == 'S20_INTERACT_BAG')
+        force_redetect_location = (
+            self._last_detected_location is not None and 
+            player_loc != self._last_detected_location and
+            player_loc in ['MOVING_VAN', 'PLAYERS_HOUSE_1F', 'PLAYERS_HOUSE_2F', 'ROUTE_101', 'PROFESSOR BIRCHS LAB']
+        )
+        
+        print(f"🤖 [OPENER BOT DEBUG] Force redetect: party={force_redetect_party}, location={force_redetect_location}")
+        
+        if not self.initialized_state or force_redetect_party or force_redetect_location:
+            if force_redetect_party:
                 print(f"🤖 [OPENER BOT REDETECT] Party data now available ({len(party)} Pokemon), re-detecting state from S20")
+            if force_redetect_location:
+                print(f"🤖 [OPENER BOT REDETECT] Significant location change: {self._last_detected_location} -> {player_loc}")
             detected_state = self._detect_starting_state(state_data)
             if detected_state and detected_state != self.current_state_name:
                 print(f"🤖 [OPENER BOT INIT] Auto-detected starting state: {detected_state}")
                 self._transition_to_state(detected_state)
             self.initialized_state = True
+        
+        # Update last detected location
+        self._last_detected_location = player_loc
         
         state = self.states.get(self.current_state_name)
         if not state:
