@@ -545,6 +545,36 @@ class ObjectiveManager:
         current_y = position.get('y', 0)
         current_location = player_data.get('location', '').upper()
         
+        # Convert location name to graph format for special case checks
+        # CRITICAL: Check longer/more specific names FIRST to avoid substring matches
+        location_mapping = {
+            'PETALBURG CITY GYM': 'PETALBURG_CITY_GYM',
+            'PETALBURG GYM': 'PETALBURG_CITY_GYM',
+            'RUSTBORO CITY POKEMON CENTER': 'RUSTBORO_CITY_POKEMON_CENTER_1F',
+            'RUSTBORO CITY GYM': 'RUSTBORO_CITY_GYM',
+            'RUSTBORO GYM': 'RUSTBORO_CITY_GYM',
+            'BIRCHS LAB': 'PROFESSOR_BIRCHS_LAB',
+            'BIRCH LAB': 'PROFESSOR_BIRCHS_LAB',
+            'LITTLEROOT TOWN': 'LITTLEROOT_TOWN',
+            'OLDALE TOWN': 'OLDALE_TOWN',
+            'RUSTBORO CITY': 'RUSTBORO_CITY',
+            'PETALBURG CITY': 'PETALBURG_CITY',
+            'ROUTE 101': 'ROUTE_101',
+            'ROUTE 103': 'ROUTE_103',
+            'ROUTE 102': 'ROUTE_102',
+            'PETALBURG WOODS': 'PETALBURG_WOODS',
+            'MAP_18_0B': 'PETALBURG_WOODS',
+        }
+        
+        graph_location = None
+        if 'ROUTE 104' in current_location:
+            graph_location = 'ROUTE_104_SOUTH' if current_y >= 30 else 'ROUTE_104_NORTH'
+        else:
+            for loc_key, loc_value in location_mapping.items():
+                if loc_key in current_location:
+                    graph_location = loc_value
+                    break
+        
         # Get milestone states
         milestones = state_data.get('milestones', {})
         
@@ -577,6 +607,46 @@ class ObjectiveManager:
                 'target': None,
                 'description': 'Press A to advance dialogue',
                 'milestone': None
+            }
+        
+        # =====================================================================
+        # CRITICAL FIX: Exit unwanted buildings first
+        # =====================================================================
+        # If we're in a building that's NOT our target (e.g., entered a house door
+        # while trying to navigate to the gym), exit it first before continuing.
+        # This prevents A* from trying to navigate to outdoor goals while stuck indoors.
+        # =====================================================================
+        
+        # List of building keywords that indicate we're indoors but shouldn't be
+        unwanted_buildings = ['HOUSE', 'MART', 'SHOP']
+        in_unwanted_building = any(keyword in current_location for keyword in unwanted_buildings)
+        
+        if in_unwanted_building:
+            logger.info(f"🏠 [EXIT BUILDING] Detected unwanted building: '{current_location}'")
+            print(f"🏠 [EXIT BUILDING] Inside '{current_location}' - exiting before continuing to target")
+            
+            # Use directional movement to exit (typically DOWN for houses/marts)
+            return {
+                'goal_direction': 'south',
+                'description': f'Exit {current_location} before continuing to target',
+                'journey_reason': 'Leave unwanted building'
+            }
+        
+        # =====================================================================
+        # SPECIAL CASE: Rustboro City boundary navigation
+        # =====================================================================
+        # If agent is in lower Rustboro (Y > 48), navigate UP to safer bounds first
+        # This prevents map stitcher edge case issues and ensures stable navigation
+        # =====================================================================
+        if graph_location == 'RUSTBORO_CITY' and current_y > 48:
+            logger.info(f"🏙️ [RUSTBORO BOUNDARY] Agent at edge (Y={current_y}), navigating UP to stable region")
+            print(f"🏙️ [RUSTBORO BOUNDARY] At Y={current_y} (edge area), moving UP to stable zone")
+            
+            # Use simple upward navigation until we're in stable bounds (Y <= 48)
+            return {
+                'goal_direction': 'north',
+                'description': f'Navigate UP from Rustboro edge (Y={current_y}) to stable region',
+                'journey_reason': 'Move to stable map region before navigation'
             }
         
         # =====================================================================
@@ -851,6 +921,7 @@ class ObjectiveManager:
         location_mapping = {
             'PETALBURG CITY GYM': 'PETALBURG_CITY_GYM',  # Specific first
             'PETALBURG GYM': 'PETALBURG_CITY_GYM',
+            'RUSTBORO CITY POKEMON CENTER': 'RUSTBORO_CITY_POKEMON_CENTER_1F',  # Specific first
             'RUSTBORO CITY GYM': 'RUSTBORO_CITY_GYM',
             'RUSTBORO GYM': 'RUSTBORO_CITY_GYM',
             'BIRCHS LAB': 'PROFESSOR_BIRCHS_LAB',  # Note: BIRCHS with S to match location_graph
