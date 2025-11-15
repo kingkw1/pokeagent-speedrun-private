@@ -633,23 +633,6 @@ class ObjectiveManager:
             }
         
         # =====================================================================
-        # SPECIAL CASE: Rustboro City boundary navigation
-        # =====================================================================
-        # If agent is in lower Rustboro (Y > 48), navigate UP to safer bounds first
-        # This prevents map stitcher edge case issues and ensures stable navigation
-        # =====================================================================
-        if graph_location == 'RUSTBORO_CITY' and current_y > 48:
-            logger.info(f"🏙️ [RUSTBORO BOUNDARY] Agent at edge (Y={current_y}), navigating UP to stable region")
-            print(f"🏙️ [RUSTBORO BOUNDARY] At Y={current_y} (edge area), moving UP to stable zone")
-            
-            # Use simple upward navigation until we're in stable bounds (Y <= 48)
-            return {
-                'goal_direction': 'north',
-                'description': f'Navigate UP from Rustboro edge (Y={current_y}) to stable region',
-                'journey_reason': 'Move to stable map region before navigation'
-            }
-        
-        # =====================================================================
         # NEW: USE NAVIGATION PLANNER FOR MULTI-HOP JOURNEYS
         # =====================================================================
         # The planner handles complex navigation automatically while we still
@@ -732,6 +715,258 @@ class ObjectiveManager:
                 logger.info(f"🎯 [DAD DIALOGUE] Not in gym yet, need to enter")
                 print(f"🎯 [DAD DIALOGUE] Not in gym yet, need to enter")
                 # Fall through to sequential system which will target PETALBURG_CITY_GYM
+        
+        # =====================================================================
+        # SUB-GOAL: RUSTBORO CITY POKEMON CENTER HEALING
+        # =====================================================================
+        # CRITICAL: This must run BEFORE the sequential milestone system
+        # because we need to heal before challenging the gym
+        # =====================================================================
+        # If we've reached Rustboro City but don't have the gym badge yet,
+        # and our Pokemon need healing (HP or PP), go to Pokemon Center first
+        # =====================================================================
+        
+        # DEBUG: Always log this check
+        logger.info(f"🔍 [POKECENTER DEBUG] graph_location='{graph_location}', current_location='{current_location}'")
+        print(f"🔍 [POKECENTER DEBUG] graph_location='{graph_location}', current_location='{current_location}'")
+        
+        # CRITICAL: Check both outside Pokemon Center (RUSTBORO_CITY) AND inside (RUSTBORO_CITY_POKEMON_CENTER_1F)
+        in_rustboro_city = graph_location == 'RUSTBORO_CITY'
+        in_pokecenter = graph_location == 'RUSTBORO_CITY_POKEMON_CENTER_1F'
+        
+        print(f"🔍 [POKECENTER DEBUG] in_rustboro_city={in_rustboro_city}, in_pokecenter={in_pokecenter}")
+        
+        if in_rustboro_city or in_pokecenter:
+            rustboro_complete = is_milestone_complete('RUSTBORO_CITY')
+            has_stone_badge = is_milestone_complete('STONE_BADGE')
+            
+            logger.info(f"🏥 [POKECENTER CHECK] In Rustboro: milestone={rustboro_complete}, badge={has_stone_badge}")
+            print(f"🏥 [POKECENTER CHECK] In Rustboro: milestone={rustboro_complete}, badge={has_stone_badge}")
+            
+            if rustboro_complete and not has_stone_badge:
+                # =====================================================================
+                # COMPREHENSIVE PARTY DATA DEBUGGING
+                # =====================================================================
+                # Trace the entire path: state_data → game → party → pokemon objects
+                # =====================================================================
+                
+                # =====================================================================
+                # FIX: Party data is in state_data['player']['party'], NOT state_data['game']['party']
+                # The game memory reader stores party in the player section, not game section
+                # Fallback: Also check state_data['party'] if player['party'] is empty
+                # =====================================================================
+                party = state_data.get('player', {}).get('party', [])
+                
+                # Fallback to top-level party if player party is empty
+                if not party:
+                    party = state_data.get('party', [])
+                    if party:
+                        print(f"🔍 [POKECENTER] Using fallback: state_data['party']")
+                
+                needs_healing = False
+                healing_reasons = []
+                
+                # DEBUG: Show where we got the party data from
+                print(f"\n🔍 [POKECENTER] Fetching party from state_data['player']['party']")
+                print(f"🔍 [POKECENTER] Party length: {len(party) if party else 0}")
+                if party and len(party) > 0:
+                    print(f"🔍 [POKECENTER] First Pokemon: {party[0].get('species_name', 'UNKNOWN') if isinstance(party[0], dict) else party[0]}")
+                
+                if party:
+                    print(f"\n{'=' * 60}")
+                    print(f"🔍 [POKEMON HP/PP CHECK] Checking {len(party)} Pokemon")
+                    print(f"{'=' * 60}")
+                    
+                    for i, pokemon in enumerate(party):
+                        # Pokemon is a dictionary, not an object
+                        species = pokemon.get('species_name', 'UNKNOWN')
+                        current_hp = pokemon.get('current_hp', 0)
+                        max_hp = pokemon.get('max_hp', 1)
+                        hp_percent = (current_hp / max_hp * 100) if max_hp > 0 else 0
+                        
+                        # Get move PP data
+                        move_pp = pokemon.get('move_pp', [])  # List of current PP values
+                        moves = pokemon.get('moves', [])  # Move names
+                        
+                        # DEBUG: Show raw data
+                        logger.info(f"🔍 [POKEMON {i+1}] species={species}, hp={current_hp}/{max_hp}, moves={moves}, pp={move_pp}")
+                        
+                        print(f"\n  Pokemon #{i+1}: {species}")
+                        print(f"    HP: {current_hp}/{max_hp} ({hp_percent:.1f}%)")
+                        print(f"    Moves: {moves}")
+                        print(f"    Move PP: {move_pp}")
+                        
+                        # Check HP
+                        if current_hp < max_hp:
+                            needs_healing = True
+                            reason = f"{species} HP: {current_hp}/{max_hp} ({hp_percent:.1f}%)"
+                            healing_reasons.append(reason)
+                            print(f"    ⚠️ HP NOT FULL - needs healing!")
+                        else:
+                            print(f"    ✅ HP at 100%")
+                        
+                        # Check PP for all moves
+                        # Note: We don't have max PP in the data, so we can't check PP percentage
+                        # We'll assume any move with 0 PP needs healing
+                        print(f"    Move PP Status:")
+                        for move_idx, (move_name, current_pp) in enumerate(zip(moves, move_pp)):
+                            if move_name and move_name != 'NONE':
+                                if current_pp == 0:
+                                    needs_healing = True
+                                    reason = f"{species} {move_name}: PP depleted (0 PP)"
+                                    healing_reasons.append(reason)
+                                    print(f"      {move_name}: {current_pp} PP ⚠️ DEPLETED!")
+                                else:
+                                    print(f"      {move_name}: {current_pp} PP ✅")
+                    
+                    print(f"{'=' * 60}\n")
+                
+                logger.info(f"🏥 [POKECENTER] needs_healing={needs_healing}, reasons: {healing_reasons}")
+                print(f"🏥 [POKECENTER] Healing needed: {needs_healing}")
+                if healing_reasons:
+                    print(f"🏥 [POKECENTER] Reasons:")
+                    for reason in healing_reasons:
+                        print(f"  - {reason}")
+                else:
+                    print(f"✅ [POKECENTER] All Pokemon at full HP with moves available!")
+                
+                # CRITICAL: Exit Pokemon Center after healing is complete
+                # Healing complete + inside Pokemon Center = time to leave
+                if not needs_healing and in_pokecenter:
+                    logger.info(f"🏥 [POKECENTER EXIT] Healing complete, exiting Pokemon Center")
+                    print(f"🏥 [POKECENTER EXIT] Pokemon healed - leaving Pokemon Center")
+                    
+                    # Warp tile is at (7, 9) but it's not walkable in the grid
+                    # Navigate to (6, 8) first, then push DOWN through the warp
+                    # Check if we're already at (6, 8) - if so, just push DOWN
+                    if current_x == 6 and current_y == 8:
+                        logger.info(f"🏥 [POKECENTER EXIT] At (6, 8), pushing DOWN through warp")
+                        return {
+                            'goal_direction': 'south',
+                            'description': 'Push DOWN from (6, 8) to exit Pokemon Center via warp',
+                            'journey_reason': 'Exit Pokemon Center after healing'
+                        }
+                    else:
+                        # Not at warp position yet, navigate there
+                        logger.info(f"🏥 [POKECENTER EXIT] Navigating to (6, 8) before exit warp")
+                        return {
+                            'goal_coords': (6, 8, current_location),
+                            'description': 'Navigate to (6, 8) to prepare for Pokemon Center exit',
+                            'journey_reason': 'Position for Pokemon Center exit warp'
+                        }
+                
+                if needs_healing:
+                    # Check if we're already in the Pokemon Center
+                    in_pokecenter = 'POKEMON CENTER' in current_location or 'POKECENTER' in current_location
+                    
+                    if in_pokecenter:
+                        # Navigate to nurse and interact
+                        # Nurse is at (7, 3), we need to be at (7, 4) facing UP
+                        logger.info(f"🏥 [POKECENTER] In Pokemon Center, navigating to nurse at (7, 3)")
+                        print(f"🏥 [POKECENTER] In Pokemon Center - talking to nurse")
+                        
+                        return {
+                            'goal_coords': (7, 4, current_location),
+                            'npc_coords': (7, 3),  # Nurse position
+                            'should_interact': True,
+                            'description': 'Navigate to (7, 4) and interact with nurse at (7, 3) to heal Pokemon'
+                        }
+                    else:
+                        # Not in Pokemon Center yet - navigate there using the navigation planner
+                        # This ensures proper pathfinding through the location graph
+                        logger.info(f"🏥 [POKECENTER] Need healing, planning journey to Pokemon Center")
+                        print(f"🏥 [POKECENTER] Pokemon need healing - planning route to Pokemon Center")
+                        print(f"🏥 [POKECENTER] Current: {graph_location}, Target: RUSTBORO_CITY_POKEMON_CENTER_1F")
+                        
+                        # SPECIAL CASE: Rustboro City boundary navigation
+                        # If agent is in lower Rustboro (Y > 55), navigate UP to safer bounds first
+                        # This prevents map stitcher edge case issues
+                        if graph_location == 'RUSTBORO_CITY' and current_y > 48:
+                            logger.info(f"🏙️ [RUSTBORO BOUNDARY] Agent at edge (Y={current_y}), navigating UP to stable region")
+                            print(f"🏙️ [RUSTBORO BOUNDARY] At Y={current_y} (edge area), moving UP to stable zone")
+                            
+                            # Use simple upward navigation until we're in stable bounds (Y <= 55)
+                            return {
+                                'goal_direction': 'north',
+                                'description': f'Navigate UP from Rustboro edge (Y={current_y}) to stable region',
+                                'journey_reason': 'Move to stable map region before Pokemon Center navigation'
+                            }
+                        
+                        # Use navigation planner to create journey
+                        success = self.navigation_planner.plan_journey(
+                            start_location=graph_location,
+                            end_location="RUSTBORO_CITY_POKEMON_CENTER_1F",
+                            final_coords=(16, 38)  # Pokemon Center entrance in Rustboro
+                        )
+                        
+                        if success:
+                            # Get directive from planner
+                            current_pos = (current_x, current_y)
+                            planner_directive = self.navigation_planner.get_current_directive("RUSTBORO_CITY_POKEMON_CENTER_1F", current_pos)
+                            
+                            if planner_directive:
+                                logger.info(f"🏥 [POKECENTER] Planner directive: {planner_directive.get('description', 'Unknown')}")
+                                print(f"🗺️ [POKECENTER] Navigation Planner active: {planner_directive.get('description', 'Unknown')}")
+                                
+                                # Convert Navigation Planner directive to action system format
+                                # The action system expects 'goal_coords' or 'action: NAVIGATE_AND_INTERACT'
+                                action_type = planner_directive.get('action')
+                                
+                                if action_type == 'INTERACT_WARP':
+                                    # Warp tile interaction - navigate to warp coordinates
+                                    target = planner_directive.get('target')
+                                    location = planner_directive.get('location', 'RUSTBORO_CITY')
+                                    
+                                    return {
+                                        'goal_coords': (target[0], target[1], location),
+                                        'should_interact': True,
+                                        'description': planner_directive.get('description', 'Navigate to warp tile'),
+                                        'journey_reason': 'Pokemon Center healing (via planner)'
+                                    }
+                                
+                                elif action_type == 'NAVIGATE_AND_INTERACT':
+                                    # Direct navigation with A* pathfinding
+                                    target = planner_directive.get('target')
+                                    location = planner_directive.get('location', 'RUSTBORO_CITY')
+                                    should_interact = planner_directive.get('should_interact', True)
+                                    
+                                    return {
+                                        'goal_coords': (target[0], target[1], location),
+                                        'should_interact': should_interact,
+                                        'description': planner_directive.get('description', 'Navigate to target'),
+                                        'journey_reason': 'Pokemon Center healing (via planner)'
+                                    }
+                                
+                                elif action_type == 'NAVIGATE_DIRECTION':
+                                    # Directional navigation for boundary crossing
+                                    direction = planner_directive.get('direction', 'north')
+                                    
+                                    return {
+                                        'goal_direction': direction,
+                                        'description': planner_directive.get('description', f'Navigate {direction}'),
+                                        'journey_reason': 'Pokemon Center healing (via planner)'
+                                    }
+                                
+                                elif action_type == 'WAIT':
+                                    # Waiting for warp to complete - don't issue movement
+                                    logger.info(f"🏥 [POKECENTER] Waiting for warp to complete")
+                                    return None
+                                
+                                else:
+                                    logger.warning(f"🏥 [POKECENTER] Unknown planner action: {action_type}")
+                        
+                        # Fallback: direct coordinate navigation
+                        logger.warning(f"🏥 [POKECENTER] Planner failed, using direct navigation")
+                        print(f"🏥 [POKECENTER] Using direct navigation to (16, 38)")
+                        
+                        return {
+                            'goal_coords': (16, 38, 'RUSTBORO_CITY'),
+                            'should_interact': True,
+                            'description': 'Navigate to Pokemon Center at (16, 38) to heal Pokemon',
+                            'journey_reason': 'Heal Pokemon before challenging gym'
+                        }
+                else:
+                    print(f"✅ [POKECENTER] All Pokemon at 100% HP/PP - no healing needed!")
         
         # =====================================================================
         # SEQUENTIAL MILESTONE SYSTEM
