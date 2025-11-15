@@ -728,13 +728,88 @@ def _astar_pathfind_with_grid_data(
     goal_coords: Optional[Tuple[int, int]] = None
 ) -> Optional[str]:
     """
-    A* pathfinding using map grid data from the server.
+    ============================================================================
+    🧭 INTELLIGENT A* PATHFINDING WITH FRONTIER-BASED MAZE NAVIGATION
+    ============================================================================
     
-    This is SUPERIOR to _local_pathfind_from_tiles because:
-    - Uses COMPLETE explored map (not just 15x15 view)
-    - Sees entire room/area layout
-    - Can plan around obstacles globally
+    This is the core pathfinding system that enables the agent to navigate
+    complex environments including mazes, obstacles, and unexplored areas.
+    
+    🎯 WHY THIS IS SUPERIOR:
+    -------------------------
+    Compared to _local_pathfind_from_tiles (15x15 local view):
+    - Uses COMPLETE explored map from MapStitcher (hundreds of tiles)
+    - Sees entire room/area layout for global planning
+    - Can plan around obstacles that are outside immediate view
+    - Handles both direct goals AND frontier exploration
     - Integrates warp avoidance with position history
+    
+    🔍 THREE-TIER NAVIGATION STRATEGY:
+    -----------------------------------
+    
+    1️⃣ DIRECT PATHFINDING (goal_coords provided and explored):
+       - Paths directly to the goal coordinates if they're walkable
+       - Handles portal tiles ('?') as valid targets
+       - Used for specific targets like "walk to NPC at (9,3)"
+    
+    2️⃣ FRONTIER NAVIGATION (goal unexplored or blocked):
+       - Finds "frontier tiles" - explored tiles adjacent to unknown areas
+       - Prioritizes frontiers in the direction of the goal
+       - **SMART MAZE HANDLING**: When direct frontier blocked, includes
+         perpendicular frontiers as backup targets (KEY INNOVATION)
+       - This allows pathfinding to navigate around obstacles by exploring
+         sideways when forward path is blocked
+    
+    3️⃣ FALLBACK (no pathfindable frontiers):
+       - Returns None to let VLM handle edge cases
+       - VLM can use visual context to make decisions
+    
+    🧩 MAZE NAVIGATION INNOVATION:
+    -------------------------------
+    The key breakthrough for maze navigation (e.g., Petalburg Woods):
+    
+    **Problem**: Agent gets stuck when direct path to goal is blocked
+    - Goal: North exit at (7, 0)
+    - Obstacle: Trees blocking direct north path
+    - Old behavior: Only tried north frontier → failed → gave up
+    
+    **Solution**: Multi-directional frontier search
+    - PRIMARY frontiers: Directly toward goal (north)
+    - PERPENDICULAR frontiers: Side directions (east/west)
+    - A* tries PRIMARY first, then PERPENDICULAR as backup
+    - Result: Discovers maze paths by exploring perpendicular when blocked
+    
+    Example:
+    ```
+    Goal: North (↑)
+    
+    Old strategy:          New strategy:
+    ####?####              ####?####
+    ##?..?##               ##5..3##  ← Try perpendicular (3,5)
+    ##....##               ##....##
+    ##.P..##               ##.P..##
+    ↑ Only try 1,2         ↑ Try 1,2 first, then 3-5
+    
+    Result: Can find path  Result: Finds path around
+    if 1,2 reachable      obstacle via 3→4→5→2→1
+    ```
+    
+    📊 SCORING SYSTEM:
+    -------------------
+    Frontier tiles are scored to prioritize best exploration:
+    - Lower score = higher priority
+    - score = distance_to_goal + (distance_to_player * weight)
+    - Primary frontiers: -5 bonus (strongly preferred)
+    - Perpendicular frontiers: +0.2 weight (allowed but secondary)
+    
+    🎮 INTEGRATION WITH GAME MECHANICS:
+    ------------------------------------
+    - Handles portals ('?') as valid walkable targets
+    - Avoids ledges (directional constraints)  
+    - Penalizes tall grass to avoid random encounters (speedrun mode)
+    - Respects doors/stairs but allows them as final targets
+    - Batches movement for efficiency (up to 8 steps)
+    - Truncates paths at warps for safety
     
     Args:
         location_grid: Dictionary mapping (x, y) tuples to tile symbols
@@ -748,6 +823,8 @@ def _astar_pathfind_with_grid_data(
     
     Returns:
         First step direction ('UP', 'DOWN', 'LEFT', 'RIGHT') or None if no path
+    
+    ============================================================================
     """
     try:
         from collections import deque
@@ -774,6 +851,8 @@ def _astar_pathfind_with_grid_data(
         print(f"   Bounds: X:{bounds['min_x']}-{bounds['max_x']}, Y:{bounds['min_y']}-{bounds['max_y']}")
         
         # Determine target positions based on whether we have specific goal coordinates
+        target_positions = []  # Initialize empty
+        
         if goal_coords:
             # We have a specific destination - pathfind directly to it
             goal_x, goal_y = goal_coords
@@ -787,15 +866,20 @@ def _astar_pathfind_with_grid_data(
                 # Walkable tiles: '.' (floor), '_' (path), '~' (grass), 'D' (door), '?' (portal/warp/unknown)
                 if goal_tile not in ['.', '_', '~', 'D', '?']:
                     print(f"⚠️ [A* DIRECT] Goal {goal_coords} is not walkable (tile: '{goal_tile}')")
-                    return None
-                
-                # Use the goal coordinates as the single target
-                target_positions = [goal_coords]
-                if goal_tile == '?':
-                    print(f"✅ [A* DIRECT] Goal is portal/warp tile ('?'), pathfinding to: {goal_coords}")
+                    print(f"   Falling back to frontier navigation toward goal region")
+                    # Goal explored but blocked - use frontier navigation to find alternative route
+                    # This handles cases where goal coords are approximate (e.g., exit portal nearby)
+                    # Fall through to frontier-based navigation below
                 else:
-                    print(f"✅ [A* DIRECT] Goal is walkable, pathfinding to: {goal_coords}")
-            else:
+                    # Use the goal coordinates as the single target
+                    target_positions = [goal_coords]
+                    if goal_tile == '?':
+                        print(f"✅ [A* DIRECT] Goal is portal/warp tile ('?'), pathfinding to: {goal_coords}")
+                    else:
+                        print(f"✅ [A* DIRECT] Goal is walkable, pathfinding to: {goal_coords}")
+            
+            # If target_positions not set (goal unwalkable or unexplored), use frontier navigation
+            if not target_positions:
                 # Goal not yet explored - find frontier tiles in that direction
                 print(f"⚠️ [A* DIRECT] Goal {goal_coords} not in explored grid yet")
                 print(f"   Using smart frontier navigation toward goal coordinates")
@@ -806,6 +890,7 @@ def _astar_pathfind_with_grid_data(
                 dy = goal_y - player_y
                 
                 # Find frontier tiles that are closest to the goal direction
+                # IMPROVED: Allow exploration in perpendicular directions for maze navigation
                 target_positions = []
                 for (x, y), tile in location_grid.items():
                     if tile not in ['.', '_', '~', 'D', '?']:
@@ -815,10 +900,42 @@ def _astar_pathfind_with_grid_data(
                     tile_dx = x - player_x
                     tile_dy = y - player_y
                     
-                    # Dot product: positive means tile is in goal direction
-                    dot_product = (tile_dx * dx) + (tile_dy * dy)
-                    if dot_product <= 0:
-                        continue  # Tile is wrong direction
+                    # RELAXED CHECK: Allow tiles that make progress in EITHER dimension
+                    # This enables maze navigation where you must go sideways to eventually go forward
+                    # Old: dot_product check was too strict for mazes
+                    # New: Accept if tile makes progress in primary direction OR doesn't go backwards
+                    primary_progress = False
+                    if abs(dx) >= abs(dy):
+                        # Primarily horizontal goal - prioritize X progress
+                        if dx > 0 and tile_dx > 0:
+                            primary_progress = True
+                        elif dx < 0 and tile_dx < 0:
+                            primary_progress = True
+                    else:
+                        # Primarily vertical goal - prioritize Y progress
+                        if dy > 0 and tile_dy > 0:
+                            primary_progress = True
+                        elif dy < 0 and tile_dy < 0:
+                            primary_progress = True
+                    
+                    # Also accept tiles that don't go backwards (allow perpendicular movement)
+                    not_backwards = True
+                    if abs(dx) >= abs(dy):
+                        # Don't go backwards horizontally
+                        if dx > 0 and tile_dx < -2:
+                            not_backwards = False
+                        elif dx < 0 and tile_dx > 2:
+                            not_backwards = False
+                    else:
+                        # Don't go backwards vertically
+                        if dy > 0 and tile_dy < -2:
+                            not_backwards = False
+                        elif dy < 0 and tile_dy > 2:
+                            not_backwards = False
+                    
+                    # Accept if either making primary progress OR not going backwards
+                    if not (primary_progress or not_backwards):
+                        continue
                     
                     # Check if it's a frontier tile (has unexplored adjacent)
                     has_unknown_neighbor = False
@@ -831,18 +948,72 @@ def _astar_pathfind_with_grid_data(
                         # Calculate how aligned this frontier tile is with goal direction
                         distance_to_player = abs(tile_dx) + abs(tile_dy)
                         distance_to_goal = abs(goal_x - x) + abs(goal_y - y)
-                        # Prefer tiles that reduce distance to goal
+                        # Prefer tiles that reduce distance to goal, but allow some flexibility
+                        # Bonus for tiles that make progress in primary direction
                         score = distance_to_goal + (distance_to_player * 0.1)
+                        if primary_progress:
+                            score -= 5  # Bonus for primary direction progress
                         target_positions.append((score, x, y))
                 
                 if target_positions:
                     # Sort by score (lower is better - closer to goal)
                     target_positions.sort()
-                    target_positions = [(x, y) for score, x, y in target_positions[:5]]
-                    print(f"✅ [A* FRONTIER → GOAL] Found {len(target_positions)} frontier tiles toward ({goal_x}, {goal_y})")
+                    primary_targets = [(x, y) for score, x, y in target_positions[:5]]
+                    print(f"✅ [A* FRONTIER → GOAL] Found {len(primary_targets)} PRIMARY frontier tiles toward ({goal_x}, {goal_y})")
+                    target_positions = primary_targets
                 else:
-                    print(f"⚠️ [A* FRONTIER → GOAL] No frontier found, using extreme edge in goal direction")
-                    # Fallback to simple directional navigation
+                    print(f"⚠️ [A* FRONTIER → GOAL] No PRIMARY frontier found")
+                    target_positions = []
+                
+                # IMPROVEMENT: If we found frontier tiles but they might be blocked,
+                # also add perpendicular frontier tiles as backup targets
+                # This allows maze navigation when direct path is blocked
+                perpendicular_targets = []
+                for (x, y), tile in location_grid.items():
+                    if tile not in ['.', '_', '~', 'D', '?']:
+                        continue
+                    
+                    tile_dx = x - player_x
+                    tile_dy = y - player_y
+                    
+                    # Check if this is perpendicular to primary direction
+                    is_perpendicular = False
+                    if abs(dy) > abs(dx):
+                        # Primary is vertical, perpendicular is horizontal
+                        if abs(tile_dx) > 2 and abs(tile_dy) < 3:
+                            is_perpendicular = True
+                    else:
+                        # Primary is horizontal, perpendicular is vertical
+                        if abs(tile_dy) > 2 and abs(tile_dx) < 3:
+                            is_perpendicular = True
+                    
+                    if not is_perpendicular:
+                        continue
+                    
+                    # Check if it's a frontier tile (has unexplored adjacent)
+                    has_unknown_neighbor = False
+                    for nx, ny in [(x-1,y), (x+1,y), (x,y-1), (x,y+1)]:
+                        if (nx, ny) not in location_grid:
+                            has_unknown_neighbor = True
+                            break
+                    
+                    if has_unknown_neighbor:
+                        distance_to_player = abs(tile_dx) + abs(tile_dy)
+                        distance_to_goal = abs(goal_x - x) + abs(goal_y - y)
+                        score = distance_to_goal + (distance_to_player * 0.2)
+                        perpendicular_targets.append((score, x, y))
+                
+                # Add perpendicular targets as backup
+                if perpendicular_targets:
+                    perpendicular_targets.sort()
+                    perp_positions = [(x, y) for score, x, y in perpendicular_targets[:5]]
+                    print(f"✅ [A* FRONTIER → GOAL] Found {len(perp_positions)} PERPENDICULAR frontier tiles as backup")
+                    # Add perpendicular targets AFTER primary targets (try primary first)
+                    target_positions = target_positions + perp_positions
+                
+                # Final fallback: use extreme edge
+                if not target_positions:
+                    print(f"⚠️ [A* FRONTIER → GOAL] No frontier found at all, using extreme edge in goal direction")
                     if abs(dx) > abs(dy):
                         # Primarily horizontal
                         if dx > 0:
@@ -1945,15 +2116,31 @@ Answer with just the button name:"""
                             return []
                     
                     # Calculate direction to goal
+                    # Prioritize the axis with MORE distance for maze navigation
+                    # This prevents oscillation when exploring perpendicular to goal
                     required_direction = None
-                    if current_x < goal_x:
-                        required_direction = 'RIGHT'
-                    elif current_x > goal_x:
-                        required_direction = 'LEFT'
-                    elif current_y < goal_y:
-                        required_direction = 'DOWN'
-                    elif current_y > goal_y:
-                        required_direction = 'UP'
+                    dx = goal_x - current_x
+                    dy = goal_y - current_y
+                    
+                    # Choose direction based on which axis needs more travel
+                    if abs(dy) > abs(dx):
+                        # Y-axis is primary (more distance to cover vertically)
+                        if current_y > goal_y:
+                            required_direction = 'UP'
+                        elif current_y < goal_y:
+                            required_direction = 'DOWN'
+                    elif abs(dx) > abs(dy):
+                        # X-axis is primary (more distance to cover horizontally)
+                        if current_x < goal_x:
+                            required_direction = 'RIGHT'
+                        elif current_x > goal_x:
+                            required_direction = 'LEFT'
+                    else:
+                        # Equal distance - prefer Y-axis first (arbitrary but consistent)
+                        if dy != 0:
+                            required_direction = 'UP' if dy < 0 else 'DOWN'
+                        elif dx != 0:
+                            required_direction = 'RIGHT' if dx > 0 else 'LEFT'
                     
                     # Check distance to goal
                     distance = abs(current_x - goal_x) + abs(current_y - goal_y)
@@ -2078,14 +2265,11 @@ Answer with just the button name:"""
                             # pathfound_action is now a list of moves, return it directly
                             return pathfound_action if isinstance(pathfound_action, list) else [pathfound_action]
                         
-                        # 4. Fallback to simple direction if all A* approaches fail
-                        if required_direction:
-                            logger.info(f"🗺️ [DIRECTIVE NAV] All A* failed, using simple direction: {required_direction} (distance: {distance})")
-                            print(f"🗺️ [DIRECTIVE NAV] A* failed, using simple direction fallback: {required_direction}")
-                            return [required_direction]
-                        else:
-                            logger.warning(f"⚠️ [DIRECTIVE NAV] Distance {distance} but no direction calculated")
-                            return []
+                        # 4. No path found - return empty to let VLM decide
+                        # The frontier-based navigation above handles maze exploration intelligently
+                        logger.warning(f"⚠️ [DIRECTIVE NAV] All pathfinding methods failed for goal ({goal_x}, {goal_y})")
+                        print(f"⚠️ [DIRECTIVE NAV] No path found, returning empty to let VLM navigate")
+                        return []
                     
                     # This shouldn't be reached (distance=0 handled above)
                     logger.warning(f"⚠️ [DIRECTIVE NAV] Unexpected state: at goal but not caught by check above")
