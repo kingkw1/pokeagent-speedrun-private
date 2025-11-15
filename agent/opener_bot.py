@@ -244,10 +244,26 @@ class OpenerBot:
             (screen_context == 'menu' or 'NAME' in menu_title)
         )
         
+        # STATE-BASED EXCEPTION: Check if current state is designed to handle dialogue
+        # States like S4_MOM_DIALOG_1F, S1_PROF_DIALOG, etc. should NOT yield even when dialogue is present
+        # They use action_clear_dialogue or action_clear_dialogue_persistent to handle it
+        dialogue_handling_states = [
+            'S1_PROF_DIALOG',           # Prof Birch intro
+            'S4_MOM_DIALOG_1F',         # Mom dialogue after truck
+            'S7_SET_CLOCK',             # Clock setting
+            'S10_MAYS_MOTHER_DIALOG',   # May's mom
+            'S14_PROF_BIRCH_DIALOG',    # Prof Birch in lab
+            'S23_BIRCH_DIALOG_2',       # After getting starter
+            'S24_NICKNAME',             # Nickname screen
+            # Add more dialogue-handling states as needed
+        ]
+        is_dialogue_handling_state = self.current_state_name in dialogue_handling_states
+        
         # DIALOGUE DETECTION: Yield to dialogue system if we see dialogue (and it's NOT player monologue)
-        # EXCEPTION: Don't yield on clock dialogue, nickname dialogue, or naming screen - let state machine handle them
+        # EXCEPTION 1: Special screens (clock, nickname, naming) - state machine handles them
+        # EXCEPTION 2: Current state is designed to handle dialogue - don't yield
         # SPECIAL CASE: Dot dialogue is always treated as real dialogue
-        is_real_dialogue = (continue_prompt_visible or text_box_visible) and (is_dot_dialogue or (not is_player_monologue and not is_clock_dialogue and not is_nickname_dialogue and not is_naming_screen))
+        is_real_dialogue = (continue_prompt_visible or text_box_visible) and (is_dot_dialogue or (not is_player_monologue and not is_clock_dialogue and not is_nickname_dialogue and not is_naming_screen and not is_dialogue_handling_state))
         
         # DEBUG: Always log dialogue detection
         print(f"🤖 [OPENER BOT DIALOGUE CHECK] text_box={text_box_visible}, continue_prompt={continue_prompt_visible}, player_mono={is_player_monologue}, clock={is_clock_dialogue}, nickname={is_nickname_dialogue}, naming={is_naming_screen}, dots={is_dot_dialogue}, is_real={is_real_dialogue}")
