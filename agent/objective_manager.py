@@ -22,44 +22,42 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 MILESTONE_PROGRESSION = [
-    # Index 0-2: Game start
+    # [0-2] SPLIT 01: Game start
     {"milestone": "GAME_RUNNING", "target_location": None, "description": "Game initialized"},
     {"milestone": "PLAYER_NAME_SET", "target_location": None, "description": "Player named"},
     {"milestone": "INTRO_CUTSCENE_COMPLETE", "target_location": None, "description": "Intro complete"},
     
-    # Index 3-7: Tutorial sequence
+    # [3-7] SPLIT 02: Tutorial sequence
     {"milestone": "LITTLEROOT_TOWN", "target_location": "LITTLEROOT_TOWN", "description": "Arrive in Littleroot"},
     {"milestone": "PLAYER_HOUSE_ENTERED", "target_location": None, "description": "Enter player house"},
     {"milestone": "PLAYER_BEDROOM", "target_location": None, "description": "Go upstairs to bedroom"},
     {"milestone": "RIVAL_HOUSE", "target_location": None, "description": "Visit rival's house"},
     {"milestone": "RIVAL_BEDROOM", "target_location": None, "description": "Go to rival's bedroom"},
     
-    # Index 8-10: Getting starter
+    # [8-10] SPLIT 03: Getting starter
     {"milestone": "ROUTE_101", "target_location": "ROUTE_101", "description": "Find Prof. Birch on Route 101"},
     {"milestone": "STARTER_CHOSEN", "target_location": None, "description": "Choose starter Pokemon"},
     {"milestone": "BIRCH_LAB_VISITED", "target_location": None, "description": "Visit Birch's Lab"},
     
-    # Index 11-13: Rival battle sequence
+    # [11-14] SPLIT 03: Rival battle sequence & Return to lab for Pokedex
     {"milestone": "OLDALE_TOWN", "target_location": "OLDALE_TOWN", "description": "Travel to Oldale Town"},
     {"milestone": "ROUTE_103", "target_location": "ROUTE_103", "target_coords": (9, 3), "description": "Go to Route 103"},
     {"milestone": "RIVAL_BATTLE_1", "target_location": "ROUTE_103", "target_coords": (9, 3), "description": "Battle rival May", "special": "rival_battle"},
-    
-    # Index 14-15: Return to lab for Pokedex
     {"milestone": "RECEIVED_POKEDEX", "target_location": "PROFESSOR_BIRCHS_LAB", "description": "Return to Birch for Pokedex"},
-    {"milestone": "ROUTE_102", "target_location": "ROUTE_102", "description": "Travel through Route 102"},
     
-    # Index 16-18: Petalburg City sequence
+    # [15-18] SPLIT 04: Petalburg City sequence
+    {"milestone": "ROUTE_102", "target_location": "ROUTE_102", "description": "Travel through Route 102"},
     {"milestone": "PETALBURG_CITY", "target_location": "PETALBURG_CITY", "description": "Arrive at Petalburg City"},
     {"milestone": "DAD_FIRST_MEETING", "target_location": "PETALBURG_CITY_GYM", "target_coords": (15, 8), "description": "Enter gym to meet Dad", "special": "gym_dialogue"},
     {"milestone": "GYM_EXPLANATION", "target_location": None, "description": "Watch Wally tutorial", "special": "gym_dialogue"},
     
-    # Index 19-22: Road to Rustboro
+    # [19-22] SPLIT 05: Road to Rustboro
     {"milestone": "ROUTE_104_SOUTH", "target_location": "ROUTE_104_SOUTH", "description": "Travel to Route 104 South"},
     {"milestone": "PETALBURG_WOODS", "target_location": "PETALBURG_WOODS", "description": "Navigate Petalburg Woods"},
     {"milestone": "TEAM_AQUA_GRUNT_DEFEATED", "target_location": None, "description": "Defeat Team Aqua grunt"},
     {"milestone": "ROUTE_104_NORTH", "target_location": "ROUTE_104_NORTH", "description": "Exit woods to Route 104 North"},
     
-    # Index 23-26: Rustboro Gym
+    # [23-26] SPLIT 06: Rustboro Gym
     {"milestone": "RUSTBORO_CITY", "target_location": "RUSTBORO_CITY", "description": "Arrive at Rustboro City"},
     {"milestone": "RUSTBORO_GYM_ENTERED", "target_location": "RUSTBORO_CITY_GYM", "target_coords": (27, 19), "description": "Enter Rustboro Gym"},
     {"milestone": "ROXANNE_DEFEATED", "target_location": None, "description": "Defeat Roxanne"},

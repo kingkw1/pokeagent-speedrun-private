@@ -317,9 +317,10 @@ class BattleBot:
         Detect whether this is a wild or trainer battle.
         
         Detection Priority (Terrain-First Approach):
-        1. TERRAIN CHECK: If battle started in tall grass → assume WILD (guilty until proven innocent)
-        2. DIALOGUE OVERRIDE: Check for trainer indicators ("TRAINER", "Foe", "can't escape") → switch to TRAINER
-        3. MEMORY FLAGS: Fallback to battle type flags if still unknown
+        1. SPECIAL CASE: Birch rescue battle (STARTER_CHOSEN but not BIRCH_LAB_VISITED) → FORCE FIGHT
+        2. TERRAIN CHECK: If battle started in tall grass → assume WILD (guilty until proven innocent)
+        3. DIALOGUE OVERRIDE: Check for trainer indicators ("TRAINER", "Foe", "can't escape") → switch to TRAINER
+        4. MEMORY FLAGS: Fallback to battle type flags if still unknown
         
         This implements a "default to wild in grass" strategy with trainer override.
         
@@ -335,6 +336,55 @@ class BattleBot:
         if not battle_info:
             logger.warning("⚠️ [BATTLE TYPE] No battle_info - cannot detect")
             return BattleType.UNKNOWN
+        
+        # ⭐⭐⭐ SPECIAL CASE: BIRCH RESCUE BATTLE ⭐⭐⭐
+        # In the opening sequence, Prof. Birch is attacked by a wild Zigzagoon on Route 101.
+        # The player must battle it after choosing their starter - you CANNOT run from this battle.
+        # Birch says "Don't leave me like this!" if you try to run.
+        # 
+        # Detection: In battle, but BIRCH_LAB_VISITED (or any milestone after it) NOT complete
+        # This is more robust than checking specific location - if we're in a battle before visiting
+        # Birch's lab, it MUST be the rescue battle (only battle possible in opening sequence).
+        # 
+        # Milestone progression: STARTER_CHOSEN [9] → BIRCH_LAB_VISITED [10] → OLDALE_TOWN [11] → ...
+        # Action: Override battle type to TRAINER (fight instead of run)
+        
+        milestones_completed = game_data.get('milestones_completed', [])
+        
+        # Define all milestones that come AFTER the rescue battle (at or after BIRCH_LAB_VISITED)
+        post_rescue_milestones = [
+            'BIRCH_LAB_VISITED',      # [10] - Visit lab after rescue
+            'OLDALE_TOWN',            # [11] - First town
+            'ROUTE_103',              # [12] - Rival battle location
+            'RIVAL_BATTLE_1',         # [13] - First rival battle
+            'RECEIVED_POKEDEX',       # [14] - Get Pokedex
+            'ROUTE_102',              # [15+] - All subsequent milestones
+            'PETALBURG_CITY',
+            'VISITED_DAD',
+            'ROUTE_104',
+            # ... (any future milestone means we're past the rescue battle)
+        ]
+        
+        # If NONE of the post-rescue milestones are complete, we're still in the opening sequence
+        # and any battle MUST be the Birch rescue battle
+        has_post_rescue_milestone = any(m in milestones_completed for m in post_rescue_milestones)
+        
+        is_birch_rescue_battle = not has_post_rescue_milestone
+        
+        if is_birch_rescue_battle:
+            self._current_battle_type = BattleType.TRAINER  # Force fight
+            player_data = game_data.get('player', {})
+            player_loc = player_data.get('location', 'UNKNOWN')
+            logger.info(f"=" * 80)
+            logger.info(f"🆘 [BIRCH RESCUE BATTLE] Special scripted battle detected!")
+            logger.info(f"   Location: {player_loc}")
+            logger.info(f"   Completed milestones: {milestones_completed}")
+            logger.info(f"   Has post-rescue milestone: {has_post_rescue_milestone}")
+            logger.info(f"   This is the Zigzagoon attacking Prof. Birch - CANNOT RUN!")
+            logger.info(f"   Forcing battle type to TRAINER (will fight instead of run)")
+            logger.info(f"=" * 80)
+            print(f"🆘 [BIRCH RESCUE] Cannot run from this battle - fighting to save Birch!")
+            return BattleType.TRAINER
         
         # PRIORITY 1: Check terrain - infer battle type from tile
         grass_tiles = ['TALL_GRASS', 'LONG_GRASS', 'SHORT_GRASS']
@@ -1007,6 +1057,17 @@ class BattleBot:
                 logger.warning("⚠️ [BATTLE BOT ERROR RECOVERY] Detected 'no running from' message - correcting to TRAINER battle")
                 print("⚠️ [BATTLE BOT] ERROR RECOVERY: This is a TRAINER battle, switching to fight mode!")
                 self._current_battle_type = BattleType.TRAINER
+                self._battle_type_locked = True  # Lock it
+                # Need to dismiss this message first, then we'll fight
+                return "RECOVER_FROM_RUN_FAILURE"
+            
+            # CRITICAL: Check for Birch rescue battle failure message (recovery from misdetection)
+            if "don't leave me" in dialogue_lower or "dont leave me" in dialogue_lower:
+                # We tried to run from the Birch rescue battle! Correct the battle type
+                logger.warning("⚠️ [BIRCH RESCUE ERROR RECOVERY] Detected Birch's plea - this is the scripted rescue battle!")
+                print("🆘 [BIRCH RESCUE] ERROR RECOVERY: Cannot run from this battle - switching to fight mode!")
+                self._current_battle_type = BattleType.TRAINER
+                self._battle_type_locked = True  # Lock it
                 # Need to dismiss this message first, then we'll fight
                 return "RECOVER_FROM_RUN_FAILURE"
             
