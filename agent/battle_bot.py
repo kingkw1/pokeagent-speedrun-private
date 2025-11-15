@@ -1215,27 +1215,59 @@ class BattleBot:
                 if menu_state == "base_menu":
                     # At "What will [POKEMON] do?" - navigate to RUN
                     # From FIGHT (default): DOWN → RIGHT → A
+                    self._unknown_state_count = 0  # Reset counter
                     logger.info("🏃 [BATTLE BOT] At base menu - navigating to RUN")
                     print(f"🏃 [BATTLE BOT] Selecting RUN (attempt #{self._run_attempts + 1})")
                     return "SELECT_RUN"  # Special action for navigating DOWN → RIGHT → A
                 
                 elif menu_state == "fight_menu":
                     # Accidentally entered fight menu - press B to go back
+                    self._unknown_state_count = 0  # Reset counter
                     logger.info("🏃 [BATTLE BOT] In fight menu - pressing B to return")
                     print("🏃 [BATTLE BOT] Exiting fight menu")
                     return "PRESS_B"
                 
                 elif menu_state == "bag_menu":
                     # Accidentally entered bag menu - press B to go back
+                    self._unknown_state_count = 0  # Reset counter
                     logger.info("🏃 [BATTLE BOT] In bag menu - pressing B to return")
                     print("🏃 [BATTLE BOT] Exiting bag menu")
                     return "PRESS_B"
                 
                 else:
-                    # Unknown state - press A to advance (might be dialogue we didn't detect)
-                    logger.info(f"🏃 [BATTLE BOT] Unknown menu state - pressing A")
-                    print("🏃 [BATTLE BOT] Advancing (unknown state)")
-                    return "ADVANCE_BATTLE_DIALOGUE"
+                    # Unknown state - increment counter and decide strategy
+                    self._unknown_state_count += 1
+                    logger.warning(f"❓ [WILD BATTLE] Unknown menu state '{menu_state}' (count: {self._unknown_state_count})")
+                    print(f"❓ [WILD BATTLE] Unknown state '{menu_state}' (#{self._unknown_state_count})")
+                    
+                    # CRITICAL: If we've been in "unknown" state for many turns AND made run attempts,
+                    # this is likely a TRAINER battle misdetected as WILD
+                    # (Trainer battles can't escape, so we get stuck)
+                    if self._unknown_state_count >= 9 and self._run_attempts >= 2:
+                        logger.error(f"🚨 [BATTLE TYPE CORRECTION] Stuck for {self._unknown_state_count} turns with {self._run_attempts} run attempts!")
+                        logger.error("   This is likely a TRAINER battle misdetected as WILD - switching to FIGHT mode!")
+                        print(f"🚨 [BATTLE TYPE CORRECTION] Can't escape after {self._run_attempts} attempts - this is a TRAINER battle!")
+                        self._current_battle_type = BattleType.TRAINER
+                        self._battle_type_locked = True
+                        self._unknown_state_count = 0
+                        # Now fight - will be handled on next iteration
+                        return "PRESS_A_ONLY"
+                    
+                    # If stuck for 3+ turns, force RUN attempt (VLM likely failed)
+                    if self._unknown_state_count >= 3:
+                        logger.warning(f"⚠️ [WILD BATTLE] Stuck in unknown state for {self._unknown_state_count} turns!")
+                        logger.warning("   VLM stuck - forcing SELECT_RUN")
+                        print(f"⚠️ [WILD BATTLE] VLM broken! Forcing RUN attempt (#{self._unknown_state_count})")
+                        # Increment run attempts when forcing RUN
+                        self._run_attempts += 1
+                        # Reset counter and force RUN selection
+                        self._unknown_state_count = 0
+                        return "SELECT_RUN"
+                    else:
+                        # First 2 unknown states - press A only (might be battle animation)
+                        logger.info("❓ [WILD BATTLE] Unknown state - pressing A only (animation?)")
+                        print(f"❓ [WILD BATTLE] Unknown #{self._unknown_state_count} - pressing A")
+                        return "PRESS_A_ONLY"
             
             # TRAINER BATTLE STRATEGY: Fight to win
             elif self._current_battle_type == BattleType.TRAINER:

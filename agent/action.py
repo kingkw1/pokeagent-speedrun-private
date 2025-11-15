@@ -38,6 +38,11 @@ _dismissed_monologues = set()
 _stuck_counter = 0
 _last_position = None
 
+# Track post-dialogue movements to prevent infinite loops
+# Counts how many directional movements have been made since last dialogue
+_post_dialogue_movement_count = 0
+_was_in_dialogue = False
+
 def format_observation_for_action(observation):
     """Format observation data for use in action prompts"""
     if isinstance(observation, dict) and 'visual_data' in observation:
@@ -1429,6 +1434,7 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     
     # Declare global variables at the start of the function
     global _recent_positions, _dismissed_monologues, _stuck_counter, _last_position
+    global _post_dialogue_movement_count, _was_in_dialogue
     
     # Track current position to avoid immediate backtracking through warps
     try:
@@ -1456,40 +1462,8 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         if location and location != action_step._last_location:
             print(f"🌀 [WARP DETECTED] Location changed: '{action_step._last_location}' → '{location}'")
             logger.info(f"🌀 [WARP DETECTED] Location changed: '{action_step._last_location}' → '{location}'")
-            action_step._warp_wait_frames = 1  # Wait 1 frame for position to stabilize
+            # No longer waiting frames - VLM is slow enough that position stabilizes naturally
             action_step._last_location = location
-        
-        # If we're waiting after a warp, decrement counter and use VLM executor for 'B' press
-        if action_step._warp_wait_frames > 0:
-            print(f"⏳ [WARP WAIT] Waiting {action_step._warp_wait_frames} more frames for position to stabilize")
-            logger.info(f"⏳ [WARP WAIT] Waiting {action_step._warp_wait_frames} frames")
-            action_step._warp_wait_frames -= 1
-            
-            # ✅ VLM EXECUTOR PATTERN (Competition Compliance)
-            # Route warp stabilization through VLM
-            warp_prompt = f"""Playing Pokemon Emerald. You just warped to a new location: {location}
-
-SITUATION: Position stabilizing after map transition (warp/door)
-RECOMMENDED ACTION: Press B to avoid accidentally triggering interactions while position updates
-
-What button should you press? Respond with ONE button name only: B"""
-            
-            try:
-                vlm_response = vlm.get_text_query(warp_prompt, "WARP_WAIT_EXECUTOR")
-                vlm_upper = vlm_response.upper().strip()
-                
-                if 'B' in vlm_upper:
-                    logger.info(f"✅ [VLM EXECUTOR] Warp wait, VLM confirmed→B")
-                    return ['B']
-                else:
-                    # Retry with simpler prompt
-                    retry_response = vlm.get_text_query("What button to avoid interactions? Answer: B", "WARP_WAIT_RETRY")
-                    logger.info(f"✅ [VLM EXECUTOR RETRY] Warp wait confirmed→B")
-                    return ['B']
-            except Exception as e:
-                # COMPLIANCE: VLM must make decision, but B is the only safe option
-                logger.error(f"⚠️ [VLM EXECUTOR] Warp wait error: {e}, defaulting to B")
-                return ['B']
         
     except Exception as e:
         print(f"⚠️ [POSITION TRACKING] Error tracking position: {e}")
@@ -2490,36 +2464,113 @@ What button should you press? Respond with ONLY the button name (A, B, UP, DOWN,
                                 logger.error(f"❌ [COMPLIANCE VIOLATION] VLM executor error for directive: {e}")
                                 raise RuntimeError(f"VLM executor failed for directive pathfinding: {e}")
                         
-                        # 4. No path found - use directional fallback navigation
+                        # 4. No path found - use SMART directional fallback with exploration
                         # Calculate general direction to goal and try moving that way
                         logger.warning(f"⚠️ [DIRECTIVE NAV] All pathfinding methods failed for goal ({goal_x}, {goal_y})")
-                        print(f"⚠️ [DIRECTIVE NAV] A* failed, using directional fallback")
+                        print(f"⚠️ [DIRECTIVE NAV] A* failed, using smart exploration fallback")
                         
                         # Calculate primary direction toward goal
                         dx = goal_x - current_x
                         dy = goal_y - current_y
                         
-                        # Determine best direction (prioritize larger delta)
-                        fallback_direction = None
+                        # Determine primary direction (prioritize larger delta)
+                        primary_direction = None
+                        perpendicular_directions = []
+                        
                         if abs(dx) > abs(dy):
                             # Horizontal movement is larger
-                            fallback_direction = 'RIGHT' if dx > 0 else 'LEFT'
+                            primary_direction = 'RIGHT' if dx > 0 else 'LEFT'
+                            # Perpendicular: try both UP and DOWN
+                            perpendicular_directions = ['UP', 'DOWN']
                         else:
                             # Vertical movement is larger (or equal)
-                            fallback_direction = 'DOWN' if dy > 0 else 'UP'
+                            primary_direction = 'DOWN' if dy > 0 else 'UP'
+                            # Perpendicular: try both LEFT and RIGHT
+                            perpendicular_directions = ['LEFT', 'RIGHT']
                         
-                        logger.info(f"🧭 [FALLBACK NAV] Moving {fallback_direction} toward goal (Δx={dx}, Δy={dy})")
-                        print(f"🧭 [FALLBACK NAV] A* failed, moving {fallback_direction} toward ({goal_x}, {goal_y})")
+                        # SMART EXPLORATION: Test which directions actually have walkable paths
+                        # A* failed to reach goal, but we can check if there are walkable tiles in each direction
+                        print(f"🔍 [SMART EXPLORATION] A* couldn't reach ({goal_x}, {goal_y})")
+                        print(f"🔍 [SMART EXPLORATION] Testing which directions have explorable tiles...")
+                        
+                        exploration_direction = None
+                        
+                        # Try directions in priority order: primary first, then perpendiculars
+                        candidate_directions = [primary_direction] + perpendicular_directions
+                        
+                        # Check each direction for walkable tiles
+                        for test_dir in candidate_directions:
+                            # Calculate position in that direction
+                            test_x, test_y = current_x, current_y
+                            if test_dir == 'UP':
+                                test_y -= 1
+                            elif test_dir == 'DOWN':
+                                test_y += 1
+                            elif test_dir == 'LEFT':
+                                test_x -= 1
+                            elif test_dir == 'RIGHT':
+                                test_x += 1
+                            
+                            # Check if that tile is walkable (use map stitcher if available)
+                            is_walkable_tile = False
+                            stitched_map_info = state_data.get('map', {}).get('stitched_map_info')
+                            
+                            if stitched_map_info and stitched_map_info.get('available'):
+                                current_area = stitched_map_info.get('current_area', {})
+                                grid_data = current_area.get('grid', {})
+                                
+                                if grid_data:
+                                    # Check stitched map
+                                    tile_key = f"{test_x},{test_y}"
+                                    tile_type = grid_data.get(tile_key)
+                                    
+                                    if tile_type:
+                                        # Tile is known - check if walkable
+                                        walkable_tiles = ['.', '_', '~', 'D', 'S', '^', 'v', '<', '>', 'L', '?']
+                                        is_walkable_tile = tile_type in walkable_tiles
+                                        
+                                        if is_walkable_tile:
+                                            print(f"✅ [EXPLORATION TEST] {test_dir} → ({test_x}, {test_y}) is walkable ('{tile_type}')")
+                                            exploration_direction = test_dir
+                                            break
+                                        else:
+                                            print(f"❌ [EXPLORATION TEST] {test_dir} → ({test_x}, {test_y}) blocked ('{tile_type}')")
+                                    else:
+                                        # Tile is unknown - this is a frontier! Perfect for exploration
+                                        print(f"🔍 [EXPLORATION TEST] {test_dir} → ({test_x}, {test_y}) is UNEXPLORED (frontier)")
+                                        exploration_direction = test_dir
+                                        break
+                        
+                        # If no direction found, fall back to primary (last resort)
+                        if not exploration_direction:
+                            print(f"⚠️ [SMART EXPLORATION] All directions appear blocked, trying primary anyway")
+                            exploration_direction = primary_direction
+                            logger.info(f"🧭 [FALLBACK NAV] Last resort: trying {primary_direction} toward goal (Δx={dx}, Δy={dy})")
+                        else:
+                            logger.info(f"🔍 [SMART EXPLORATION] Selected {exploration_direction} (walkable/unexplored path found)")
+                            print(f"🔍 [SMART EXPLORATION] Using {exploration_direction} to explore (best available direction)")
                         
                         # Use VLM executor for compliance
                         try:
-                            executor_prompt = f"""You are navigating in Pokemon Emerald.
+                            if _stuck_counter > 0:
+                                executor_prompt = f"""You are navigating in Pokemon Emerald.
 
 CURRENT POSITION: ({current_x}, {current_y})
 GOAL: ({goal_x}, {goal_y})  
-DIRECTION: {fallback_direction}
+PRIMARY DIRECTION: {primary_direction} (BLOCKED after {_stuck_counter} attempts)
+EXPLORATION DIRECTION: {exploration_direction}
 
-Pathfinding failed, but we should move {fallback_direction} toward the goal.
+The direct path is blocked. We should explore {exploration_direction} to reveal more of the map and find an alternative route.
+
+What button should you press? Respond with ONLY the button name (UP, DOWN, LEFT, RIGHT, A, B)."""
+                            else:
+                                executor_prompt = f"""You are navigating in Pokemon Emerald.
+
+CURRENT POSITION: ({current_x}, {current_y})
+GOAL: ({goal_x}, {goal_y})  
+DIRECTION: {exploration_direction}
+
+Pathfinding failed, but we should move {exploration_direction} toward the goal.
 
 What button should you press? Respond with ONLY the button name (UP, DOWN, LEFT, RIGHT, A, B)."""
 
@@ -2530,18 +2581,18 @@ What button should you press? Respond with ONLY the button name (UP, DOWN, LEFT,
                             valid_buttons = ['A', 'B', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'START', 'SELECT']
                             
                             if vlm_action in valid_buttons:
-                                logger.info(f"✅ [VLM EXECUTOR] Fallback navigation → VLM confirmed: {vlm_action}")
-                                print(f"✅ [VLM EXECUTOR] VLM confirmed fallback: {vlm_action}")
+                                logger.info(f"✅ [VLM EXECUTOR] Smart exploration → VLM confirmed: {vlm_action}")
+                                print(f"✅ [VLM EXECUTOR] VLM confirmed exploration: {vlm_action}")
                                 return [vlm_action]
                             else:
                                 # Fallback: use recommended direction without VLM confirmation
-                                logger.warning(f"⚠️ [FALLBACK] VLM unclear, using {fallback_direction} anyway")
-                                return [fallback_direction]
+                                logger.warning(f"⚠️ [FALLBACK] VLM unclear, using {exploration_direction} anyway")
+                                return [exploration_direction]
                                 
                         except Exception as e:
-                            # VLM failed - use fallback direction anyway (better than getting stuck)
-                            logger.warning(f"⚠️ [FALLBACK] VLM executor error, using {fallback_direction}: {e}")
-                            return [fallback_direction]
+                            # VLM failed - use exploration direction anyway (better than getting stuck)
+                            logger.warning(f"⚠️ [FALLBACK] VLM executor error, using {exploration_direction}: {e}")
+                            return [exploration_direction]
                     
                     # This shouldn't be reached (distance=0 handled above)
                     logger.warning(f"⚠️ [DIRECTIVE NAV] Unexpected state: at goal but not caught by check above")
@@ -3293,7 +3344,12 @@ What button should we press? Respond with ONLY the button name (A, B, UP, DOWN, 
                 
                 # Handle DIALOGUE (press A to advance dialogue)
                 elif directive.get('action') == 'DIALOGUE':
+                    # Track that we're in dialogue
+                    _was_in_dialogue = True
+                    _post_dialogue_movement_count = 0  # Reset counter when dialogue starts
+                    
                     logger.info(f"📍 [DIRECTIVE] DIALOGUE - routing through VLM executor")
+                    print(f"💬 [DIALOGUE] Detected - resetting post-dialogue movement counter")
                     
                     # ✅ VLM EXECUTOR PATTERN (Competition Compliance)
                     dialogue_prompt = f"""Playing Pokemon Emerald. Active dialogue detected.
@@ -5153,5 +5209,52 @@ Now analyze THIS frame and respond with your reasoning and button:
     logger.info(f"[ACTION] Actions decided: {', '.join(actions)}")
     final_step = len(recent_actions) if recent_actions else 0
     # print(f"🎮 [FINAL ACTION] Step {final_step} - Returning actions: {actions}")
+    
+    # 🚨 POST-DIALOGUE MOVEMENT LIMITING
+    # Prevents infinite loops where agent repeatedly triggers dialogue (e.g., Mom intercept)
+    # Limits to 3 directional movements after dialogue completes before requiring another check
+    
+    # Check if current action is a directional movement
+    directional_actions = {'UP', 'DOWN', 'LEFT', 'RIGHT'}
+    is_movement = any(action in directional_actions for action in actions)
+    
+    # If we were in dialogue and now we're not, start tracking movements
+    # Check if dialogue is currently active to know when it ends
+    is_dialogue_active = False
+    if isinstance(latest_observation, dict) and 'visual_data' in latest_observation:
+        visual_elements = latest_observation.get('visual_data', {}).get('visual_elements', {})
+        screen_context = latest_observation.get('visual_data', {}).get('screen_context', '')
+        is_dialogue_active = (
+            screen_context == 'dialogue' or 
+            visual_elements.get('text_box_visible', False) or
+            visual_elements.get('continue_prompt_visible', False)
+        )
+    
+    # When dialogue ends, start counting movements
+    if _was_in_dialogue and not is_dialogue_active:
+        logger.info(f"📍 [POST-DIALOGUE] Dialogue ended, starting movement counter")
+        print(f"✅ [DIALOGUE] Dialogue completed - tracking next {3 - _post_dialogue_movement_count} movements")
+    
+    # Update dialogue state
+    if is_dialogue_active:
+        _was_in_dialogue = True
+        _post_dialogue_movement_count = 0  # Reset while in dialogue
+    elif _was_in_dialogue:
+        # Dialogue just ended, we're now post-dialogue
+        pass
+    
+    # If this is a movement after dialogue, increment counter and check limit
+    if is_movement and _was_in_dialogue and not is_dialogue_active:
+        _post_dialogue_movement_count += 1
+        logger.info(f"📍 [POST-DIALOGUE] Movement #{_post_dialogue_movement_count}/3 after dialogue")
+        print(f"🚶 [POST-DIALOGUE] Movement {_post_dialogue_movement_count}/3 - {actions[0]}")
+        
+        # If we've hit the 3-movement limit, force a dialogue re-check
+        if _post_dialogue_movement_count >= 3:
+            logger.warning(f"🚨 [POST-DIALOGUE] Reached 3-movement limit! Forcing empty action to re-check dialogue")
+            print(f"⚠️ [POST-DIALOGUE] 3 movements completed - pausing to check for dialogue")
+            _post_dialogue_movement_count = 0  # Reset counter
+            _was_in_dialogue = False  # Clear dialogue state to allow fresh check
+            return []  # Return empty to force re-evaluation
     
     return actions 

@@ -132,6 +132,36 @@ class OCRDialogueDetector:
                 logger.debug("No dialogue box detected - skipping OCR")
                 return None
             
+            # CRITICAL: If we're in bypass mode (VLM confirmed dialogue visible), use simpler OCR
+            # Color masking is too fragile for different dialogue types (Mom's dialogue, etc.)
+            if self.skip_dialogue_box_detection:
+                logger.info("[OCR BYPASS MODE] Using simple OCR (VLM confirmed dialogue visible)")
+                
+                # Try simple thresholding on dialogue region first
+                simple_text = self._extract_text_simple_threshold(
+                    screenshot_np,
+                    self.OCR_TEXT_COORDS
+                )
+                if simple_text and len(simple_text.strip()) >= 3:
+                    # VLM already confirmed dialogue - skip strict validation
+                    logger.info(f"[OCR BYPASS] ✅ Extracted: '{simple_text[:60]}'")
+                    print(f"✅ [OCR FORCED] VLM detected text box, OCR extracted: '{simple_text[:60]}...'")
+                    return simple_text.strip()
+                
+                # If that fails, try battle text coords
+                simple_text = self._extract_text_simple_threshold(
+                    screenshot_np,
+                    self.BATTLE_TEXT_COORDS
+                )
+                if simple_text and len(simple_text.strip()) >= 3:
+                    # VLM already confirmed dialogue - skip strict validation
+                    logger.info(f"[OCR BYPASS] ✅ Extracted (battle coords): '{simple_text[:60]}'")
+                    print(f"✅ [OCR FORCED] VLM detected text box, OCR extracted: '{simple_text[:60]}...'")
+                    return simple_text.strip()
+                
+                logger.warning("[OCR BYPASS] Simple threshold failed, falling through to color mask")
+                print(f"⚠️ [OCR BYPASS] Simple methods failed, trying color mask")
+            
             # STEP 2: Primary dialogue box area (most common) - use tighter text coordinates
             dialogue_text = self._extract_text_from_region(
                 screenshot_np, 
@@ -385,6 +415,78 @@ class OCRDialogueDetector:
         binary_roi = cv2.morphologyEx(binary_roi, cv2.MORPH_OPEN, kernel_open)
         
         return binary_roi
+    
+    def _extract_text_simple_threshold(self, image_np: np.ndarray, coords: dict) -> str:
+        """
+        Extract text using simple adaptive thresholding (no color masking).
+        This is more robust for different dialogue types where text color varies.
+        Used when VLM confirms dialogue is visible but color masking fails.
+        
+        Args:
+            image_np: Image as numpy array
+            coords: Region coordinates {x, y, width, height}
+            
+        Returns:
+            Extracted text string
+        """
+        try:
+            # Extract region of interest
+            y1 = coords['y']
+            y2 = y1 + coords['height']
+            x1 = coords['x']
+            x2 = x1 + coords['width']
+            
+            roi = image_np[y1:y2, x1:x2]
+            
+            # Convert to grayscale
+            if len(roi.shape) == 3:
+                gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = roi.copy()
+            
+            # Scale up for better OCR
+            gray = cv2.resize(gray, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+            
+            # Method 1: Otsu's thresholding (works well when text is darker than background)
+            _, binary1 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+            
+            # Method 2: Adaptive thresholding (works when lighting varies)
+            binary2 = cv2.adaptiveThreshold(
+                gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                cv2.THRESH_BINARY_INV, 11, 2
+            )
+            
+            # Method 3: Simple threshold at mid-gray (catches black text on white background)
+            _, binary3 = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)
+            
+            # Morphological operations to clean up text
+            kernel = np.ones((2, 2), np.uint8)
+            
+            binary1 = cv2.morphologyEx(binary1, cv2.MORPH_CLOSE, kernel)
+            binary1 = cv2.dilate(binary1, kernel, iterations=1)
+            
+            binary2 = cv2.morphologyEx(binary2, cv2.MORPH_CLOSE, kernel)
+            binary2 = cv2.dilate(binary2, kernel, iterations=1)
+            
+            binary3 = cv2.morphologyEx(binary3, cv2.MORPH_CLOSE, kernel)
+            binary3 = cv2.dilate(binary3, kernel, iterations=1)
+            
+            # OCR configuration
+            config = r'--oem 3 --psm 6'
+            
+            # Try all three methods, return first success
+            for i, binary in enumerate([binary1, binary2, binary3], 1):
+                text = pytesseract.image_to_string(binary, config=config)
+                text = text.strip()
+                if text and len(text) >= 3:
+                    logger.debug(f"[OCR SIMPLE] Method {i} extracted: '{text[:50]}'")
+                    return text
+            
+            return ""
+            
+        except Exception as e:
+            logger.debug(f"[OCR SIMPLE] Failed: {e}")
+            return ""
     
     def _create_dialogue_color_mask(self, image: np.ndarray) -> np.ndarray:
         """Create binary mask for pixels matching Pokemon dialogue text colors"""

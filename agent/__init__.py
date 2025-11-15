@@ -133,7 +133,8 @@ class Agent:
                 perception_output = perception_step(
                     frame, 
                     state_data, 
-                    self.vlm
+                    self.vlm,
+                    recent_actions=recent_actions
                 )
                 
                 # SAFETY CHECK: Handle None perception output

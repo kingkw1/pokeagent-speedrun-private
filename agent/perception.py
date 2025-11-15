@@ -33,13 +33,19 @@ def is_template_text(text):
     return any(phrase.lower() in text_lower for phrase in TEMPLATE_PHRASES)
 
 
-def perception_step(frame, state_data, vlm):
+def perception_step(frame, state_data, vlm, recent_actions=None):
     """
     Extract structured visual information from the game frame using VLM-based analysis.
     Returns observation dictionary with structured visual data.
     
+    Args:
+        frame: Current game screenshot
+        state_data: Game state dictionary
+        vlm: VLM instance for visual queries
+        recent_actions: List of recent actions (optional, for dialogue detection optimization)
+    
     ===============================================================================
-    � HYBRID APPROACH - STRUCTURED VLM EXTRACTION �
+    🔍 HYBRID APPROACH - STRUCTURED VLM EXTRACTION 🔍
     ===============================================================================
     
     NEW STRATEGY: Image-to-Structure Extraction
@@ -187,6 +193,7 @@ JSON response:"""
                 if not json_match:
                     # RETRY: VLM didn't return JSON at all - try again with stricter prompt
                     print(f"⚠️ [PERCEPTION] No JSON in response, retrying with strict JSON-only prompt...")
+                    print(f"    (This is JSON format retry, NOT dialogue check)")
                     logger.warning(f"[PERCEPTION] VLM failed to return JSON, retrying")
                     
                     retry_prompt = f"""Return ONLY a JSON object analyzing this Pokemon Emerald screenshot. No explanations.
@@ -494,16 +501,25 @@ Answer in format: "1: YES/NO, 2: YES/NO" """
                         visual_elements = visual_data.get('visual_elements', {})
                         text_box_visible = visual_elements.get('text_box_visible')
                         
-                        # Only do secondary check if text_box_visible is missing/None or if dialogue seems like template
+                        # Only do secondary check if:
+                        # 1. Last action was dialogue-related (pressing A to advance dialogue)
+                        # 2. AND (text_box_visible is missing/None OR dialogue seems like template)
+                        last_action_was_dialogue = (
+                            recent_actions and 
+                            len(recent_actions) > 0 and 
+                            recent_actions[-1] == 'A'
+                        )
+                        
                         dialogue_text = visual_data.get('on_screen_text', {}).get('dialogue', '')
                         needs_secondary_check = (
-                            text_box_visible is None or 
-                            (dialogue_text and is_template_text(dialogue_text))
+                            last_action_was_dialogue and
+                            (text_box_visible is None or 
+                             (dialogue_text and is_template_text(dialogue_text)))
                         )
                         
                         if needs_secondary_check:
-                            print(f"🔍 [QWEN-2B FIX] Running secondary dialogue check (text_box_visible={text_box_visible}, has_template={is_template_text(dialogue_text) if dialogue_text else False})")
-                            logger.info("[PERCEPTION] Qwen-2B: Performing secondary dialogue visibility check")
+                            print(f"🔍 [QWEN-2B FIX] Running secondary dialogue check (last_action=A, text_box_visible={text_box_visible}, has_template={is_template_text(dialogue_text) if dialogue_text else False})")
+                            logger.info("[PERCEPTION] Qwen-2B: Performing secondary dialogue visibility check (last action was A)")
                             
                             try:
                                 # More specific prompt to avoid false positives (e.g., cardboard boxes in moving van)
@@ -557,6 +573,12 @@ Answer in format: "1: YES/NO, 2: YES/NO" """
                                 if 'visual_elements' not in visual_data:
                                     visual_data['visual_elements'] = {}
                                 visual_data['visual_elements']['text_box_visible'] = False
+                        else:
+                            # Skip secondary check - explain why
+                            if not last_action_was_dialogue:
+                                last_action = recent_actions[-1] if recent_actions else 'None'
+                                print(f"⏭️ [QWEN-2B FIX] Skipping secondary dialogue check (last_action={last_action}, not dialogue-related)")
+                                logger.info(f"[PERCEPTION] Skipping secondary dialogue check - last action was '{last_action}', not 'A'")
                     
                     # ============================================================
                     # END QWEN-2B FIX
@@ -644,6 +666,80 @@ Answer in format: "1: YES/NO, 2: YES/NO" """
                 logger.warning(f"[PERCEPTION] OCR failed during title sequence: {ocr_error}")
     else:
         print(f"✅ [PERCEPTION] VLM success - got screen context: {visual_data.get('screen_context', 'unknown')}")
+    
+    # ============================================================================
+    # 🔍 OCR AUGMENTATION - Run OCR on EVERY step to support dialogue detection
+    # ============================================================================
+    # OCR provides reliable dialogue detection that doesn't depend on VLM success.
+    # This prevents loops where VLM fails and battle bot can't detect menu states.
+    # 
+    # Strategy: Run OCR always, merge results with VLM data
+    # - If VLM has dialogue: Keep VLM, store OCR as backup
+    # - If VLM has no dialogue: Use OCR dialogue if available
+    # - Always store OCR result for debugging/fallback
+    if frame is not None:
+        try:
+            from utils.ocr_dialogue import create_ocr_detector
+            detector = create_ocr_detector()
+            
+            # CRITICAL: If VLM detected text_box_visible, bypass dialogue box detection
+            # VLM is better at detecting dialogue boxes than OCR color matching
+            vlm_text_box_visible = visual_data.get('visual_elements', {}).get('text_box_visible', False)
+            if vlm_text_box_visible:
+                # VLM says dialogue box is visible - force OCR to extract text
+                original_skip = detector.skip_dialogue_box_detection
+                detector.skip_dialogue_box_detection = True
+                ocr_dialogue = detector.detect_dialogue_from_screenshot(frame)
+                detector.skip_dialogue_box_detection = original_skip
+                if ocr_dialogue:
+                    print(f"✅ [OCR FORCED] VLM detected text box, OCR extracted: '{ocr_dialogue[:60]}...'")
+            else:
+                # Normal OCR with dialogue box detection
+                ocr_dialogue = detector.detect_dialogue_from_screenshot(frame)
+            
+            # Also try to extract all visible text for menu detection
+            # This helps detect battle menu states like "What will X do?"
+            try:
+                ocr_all_text = detector.detect_all_text_regions(frame)
+            except:
+                ocr_all_text = []
+            
+            # Store OCR results
+            if 'ocr_data' not in visual_data:
+                visual_data['ocr_data'] = {}
+            
+            if ocr_dialogue and ocr_dialogue.strip():
+                visual_data['ocr_data']['dialogue'] = ocr_dialogue
+                
+                # If VLM has no dialogue, use OCR
+                vlm_dialogue = visual_data.get('on_screen_text', {}).get('dialogue', '')
+                if not vlm_dialogue or vlm_dialogue.strip() == '':
+                    print(f"🔍 [OCR] VLM dialogue empty, using OCR: '{ocr_dialogue[:60]}...'")
+                    logger.info(f"[OCR] Using OCR dialogue (VLM empty): {ocr_dialogue[:50]}...")
+                    visual_data['on_screen_text']['dialogue'] = ocr_dialogue
+                    visual_data['on_screen_text']['raw_dialogue'] = ocr_dialogue
+                    # Update context if we detected dialogue
+                    if visual_data.get('screen_context') == 'overworld':
+                        visual_data['screen_context'] = 'dialogue'
+                    if 'visual_elements' not in visual_data:
+                        visual_data['visual_elements'] = {}
+                    visual_data['visual_elements']['text_box_visible'] = True
+                else:
+                    # VLM has dialogue - keep it but log OCR for comparison
+                    print(f"🔍 [OCR] VLM dialogue present, keeping VLM (OCR backup: '{ocr_dialogue[:40]}...')")
+                    logger.debug(f"[OCR] VLM dialogue: '{vlm_dialogue[:40]}', OCR: '{ocr_dialogue[:40]}'")
+            else:
+                print(f"🔍 [OCR] No dialogue detected")
+                logger.debug("[OCR] No dialogue found in frame")
+            
+            # Store all text regions for debugging (helps with menu detection)
+            if ocr_all_text:
+                visual_data['ocr_data']['all_text_regions'] = ocr_all_text
+                logger.debug(f"[OCR] Found {len(ocr_all_text)} text regions")
+                
+        except Exception as ocr_error:
+            print(f"⚠️ [OCR] Failed: {ocr_error}")
+            logger.warning(f"[OCR] OCR extraction failed: {ocr_error}")
     
     # Create structured observation
     observation = {
