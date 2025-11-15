@@ -377,6 +377,28 @@ class ObjectiveManager:
                     completed_ids.append(obj.id)
                     logger.info(f"✅ Auto-completed storyline objective via milestone {obj.milestone_id}: {obj.description}")
         
+        # LOCATION-BASED MILESTONE DETECTION
+        # Some locations don't have emulator milestones, so we detect them by location
+        player_data = state_data.get('player', {})
+        position = player_data.get('position', {})
+        current_x = position.get('x', 0)
+        current_y = position.get('y', 0)
+        current_location = player_data.get('location', '').upper()
+        
+        # Detect Route 104 North arrival (no emulator milestone for this)
+        # Use same Y-coordinate logic as location mapping: Y < 30 = North section
+        if 'ROUTE 104' in current_location and current_y < 30:
+            route_104_north_milestone = milestones.get('ROUTE_104_NORTH', {})
+            if not route_104_north_milestone.get('completed', False):
+                logger.info(f"✅ [LOCATION DETECTION] Route 104 North detected (Y={current_y} < 30)")
+                print(f"✅ [LOCATION DETECTION] Route 104 North detected at ({current_x}, {current_y})")
+                # Mark milestone as complete in the state data
+                milestones['ROUTE_104_NORTH'] = {
+                    'completed': True,
+                    'timestamp': datetime.now().timestamp(),
+                    'detected_by': 'location_check'
+                }
+        
         # CRITICAL FIX: Track state transitions for manual goal detection
         # This must happen here because check_storyline_milestones() is called every step
         # via planning → get_current_strategic_objective. get_next_action_directive() is
@@ -834,17 +856,32 @@ class ObjectiveManager:
             'ROUTE 101': 'ROUTE_101',
             'ROUTE 103': 'ROUTE_103',
             'ROUTE 102': 'ROUTE_102',
-            'ROUTE 104': 'ROUTE_104_SOUTH',  # May need to distinguish north/south
+            # ROUTE 104 handled specially below (needs Y coord to distinguish north/south)
             'PETALBURG WOODS': 'PETALBURG_WOODS',
             'MAP_18_0B': 'PETALBURG_WOODS',  # Raw map ID for Petalburg Woods
         }
         
         # Find matching location
         graph_location = None
-        for loc_key, loc_value in location_mapping.items():
-            if loc_key in current_location:
-                graph_location = loc_value
-                break
+        
+        # Special case: Route 104 uses Y coordinate to distinguish north/south
+        # South section: Y > 30 (portal to Petalburg Woods at y=38)
+        # North section: Y < 30 (after exiting Petalburg Woods at y=0-29)
+        if 'ROUTE 104' in current_location:
+            if current_y >= 30:
+                graph_location = 'ROUTE_104_SOUTH'
+                logger.info(f"🗺️ [ROUTE 104] Y={current_y} >= 30 → SOUTH section")
+                print(f"🗺️ [ROUTE 104] Y={current_y} >= 30 → SOUTH section")
+            else:
+                graph_location = 'ROUTE_104_NORTH'
+                logger.info(f"🗺️ [ROUTE 104] Y={current_y} < 30 → NORTH section")
+                print(f"🗺️ [ROUTE 104] Y={current_y} < 30 → NORTH section")
+        else:
+            # Standard location mapping
+            for loc_key, loc_value in location_mapping.items():
+                if loc_key in current_location:
+                    graph_location = loc_value
+                    break
         
         # DEBUG: Log location matching attempt
         if not graph_location:
@@ -892,6 +929,39 @@ class ObjectiveManager:
         # DEBUG: Log what target was provided by sequential system
         logger.info(f"🔍 [TARGET DEBUG] target_location={target_location}, target_coords={target_coords}, graph_location={graph_location}")
         print(f"🔍 [TARGET DEBUG] target_location={target_location}, target_coords={target_coords}, graph_location={graph_location}")
+        
+        # =====================================================================
+        # SUB-GOAL: ROUTE 104 NORTH WAYPOINT
+        # =====================================================================
+        # Route 104 North has a tricky layout - left/up leads to dead-end,
+        # agent must go right first then up. Add waypoint to guide navigation.
+        # 
+        # Conditions:
+        # - In Route 104 North (Y < 30)
+        # - Haven't reached Rustboro City yet
+        # - In lower-left area (X: 2-18, Y: 19-29)
+        # - Not already at/past waypoint
+        #
+        # Waypoint: (19, 22) - eastern path before going north
+        # =====================================================================
+        if graph_location == 'ROUTE_104_NORTH':
+            rustboro_complete = is_milestone_complete('RUSTBORO_CITY')
+            
+            # Check if in lower-left area that needs waypoint guidance
+            in_waypoint_zone = (2 <= current_x <= 18) and (19 <= current_y <= 29)
+            at_or_past_waypoint = current_x >= 19 or current_y < 19
+            
+            if not rustboro_complete and in_waypoint_zone and not at_or_past_waypoint:
+                logger.info(f"🗺️ [ROUTE 104 SUB-GOAL] Player at ({current_x}, {current_y}) in lower-left zone")
+                logger.info(f"🗺️ [ROUTE 104 SUB-GOAL] Adding waypoint (19, 22) to avoid dead-end")
+                print(f"🗺️ [ROUTE 104 SUB-GOAL] Waypoint: Navigate to (19, 22) before going north")
+                
+                return {
+                    'goal_coords': (19, 22, 'ROUTE_104_NORTH'),
+                    'should_interact': False,
+                    'description': 'Navigate to waypoint (19, 22) on Route 104 North to avoid dead-end',
+                    'journey_reason': 'Route 104 North waypoint navigation'
+                }
         
         # If we have a target, plan/update journey
         if target_location:
