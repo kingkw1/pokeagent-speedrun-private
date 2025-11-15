@@ -1556,6 +1556,33 @@ class OpenerBot:
                 return None
             return check_fn
 
+        def trans_nickname_or_dialogue_done(nickname_state: str, no_nickname_state: str) -> Callable:
+            """
+            Transition for S23_BIRCH_DIALOG_2 with two possible paths:
+            1. If "NICKNAME" appears in dialogue/menu_title → go to nickname_state (S24)
+            2. If dialogue clears AND no nickname text → go to no_nickname_state (S25)
+            
+            This handles the case where nickname screen may or may not appear after Birch's lab dialogue.
+            """
+            def check_fn(s, v):
+                dialogue = v.get('on_screen_text', {}).get('dialogue', '') or ''
+                menu_title = v.get('on_screen_text', {}).get('menu_title', '') or ''
+                text_box_visible = v.get('visual_elements', {}).get('text_box_visible', False)
+                
+                # Check if nickname screen appeared
+                if "NICKNAME" in dialogue.upper() or "NICKNAME" in menu_title.upper():
+                    print(f"🔍 [TRANS_NICKNAME_OR_DONE] NICKNAME detected → {nickname_state}")
+                    return nickname_state
+                
+                # Check if dialogue completely cleared (no nickname)
+                if not text_box_visible:
+                    print(f"🔍 [TRANS_NICKNAME_OR_DONE] Dialogue cleared, no nickname → {no_nickname_state}")
+                    return no_nickname_state
+                
+                # Still in dialogue, keep waiting
+                return None
+            return check_fn
+
         # --- State Machine Definition ---
         
         return {
@@ -1768,9 +1795,9 @@ class OpenerBot:
             ),
             'S23_BIRCH_DIALOG_2': BotState(
                 name='S23_BIRCH_DIALOG_2',
-                description='Dialogue with Birch after battle (in lab)',
+                description='Dialogue with Birch after battle (in lab) - may or may not show nickname screen',
                 action_fn=action_clear_dialogue,
-                next_state_fn=trans_dialogue_contains("NICKNAME", 'S24_NICKNAME')
+                next_state_fn=trans_nickname_or_dialogue_done(nickname_state='S24_NICKNAME', no_nickname_state='S25_LEAVE_LAB')
             ),
             'S24_NICKNAME': BotState(
                 name='S24_NICKNAME',

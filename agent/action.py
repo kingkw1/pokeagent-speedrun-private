@@ -2490,11 +2490,58 @@ What button should you press? Respond with ONLY the button name (A, B, UP, DOWN,
                                 logger.error(f"❌ [COMPLIANCE VIOLATION] VLM executor error for directive: {e}")
                                 raise RuntimeError(f"VLM executor failed for directive pathfinding: {e}")
                         
-                        # 4. No path found - return empty to let VLM decide
-                        # The frontier-based navigation above handles maze exploration intelligently
+                        # 4. No path found - use directional fallback navigation
+                        # Calculate general direction to goal and try moving that way
                         logger.warning(f"⚠️ [DIRECTIVE NAV] All pathfinding methods failed for goal ({goal_x}, {goal_y})")
-                        print(f"⚠️ [DIRECTIVE NAV] No path found, returning empty to let VLM navigate")
-                        return []
+                        print(f"⚠️ [DIRECTIVE NAV] A* failed, using directional fallback")
+                        
+                        # Calculate primary direction toward goal
+                        dx = goal_x - current_x
+                        dy = goal_y - current_y
+                        
+                        # Determine best direction (prioritize larger delta)
+                        fallback_direction = None
+                        if abs(dx) > abs(dy):
+                            # Horizontal movement is larger
+                            fallback_direction = 'RIGHT' if dx > 0 else 'LEFT'
+                        else:
+                            # Vertical movement is larger (or equal)
+                            fallback_direction = 'DOWN' if dy > 0 else 'UP'
+                        
+                        logger.info(f"🧭 [FALLBACK NAV] Moving {fallback_direction} toward goal (Δx={dx}, Δy={dy})")
+                        print(f"🧭 [FALLBACK NAV] A* failed, moving {fallback_direction} toward ({goal_x}, {goal_y})")
+                        
+                        # Use VLM executor for compliance
+                        try:
+                            executor_prompt = f"""You are navigating in Pokemon Emerald.
+
+CURRENT POSITION: ({current_x}, {current_y})
+GOAL: ({goal_x}, {goal_y})  
+DIRECTION: {fallback_direction}
+
+Pathfinding failed, but we should move {fallback_direction} toward the goal.
+
+What button should you press? Respond with ONLY the button name (UP, DOWN, LEFT, RIGHT, A, B)."""
+
+                            vlm_response = vlm.get_text_query(executor_prompt, "FALLBACK_EXECUTOR")
+                            
+                            # Parse VLM response
+                            vlm_action = vlm_response.strip().upper()
+                            valid_buttons = ['A', 'B', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'START', 'SELECT']
+                            
+                            if vlm_action in valid_buttons:
+                                logger.info(f"✅ [VLM EXECUTOR] Fallback navigation → VLM confirmed: {vlm_action}")
+                                print(f"✅ [VLM EXECUTOR] VLM confirmed fallback: {vlm_action}")
+                                return [vlm_action]
+                            else:
+                                # Fallback: use recommended direction without VLM confirmation
+                                logger.warning(f"⚠️ [FALLBACK] VLM unclear, using {fallback_direction} anyway")
+                                return [fallback_direction]
+                                
+                        except Exception as e:
+                            # VLM failed - use fallback direction anyway (better than getting stuck)
+                            logger.warning(f"⚠️ [FALLBACK] VLM executor error, using {fallback_direction}: {e}")
+                            return [fallback_direction]
                     
                     # This shouldn't be reached (distance=0 handled above)
                     logger.warning(f"⚠️ [DIRECTIVE NAV] Unexpected state: at goal but not caught by check above")
