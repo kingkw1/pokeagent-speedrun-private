@@ -707,6 +707,7 @@ class ObjectiveManager:
                     'npc_coords': (4, 107),  # Dad's actual position for determining facing direction
                     'should_interact': True,
                     'description': 'Navigate to (4, 108) and face UP to interact with Norman at (4, 107)'
+                    # Optional: 'avoid_grass': False  # Set to False to path through grass (useful for trainer avoidance)
                 }
             else:
                 # Not in gym yet, need to enter - fall through to sequential system
@@ -1462,11 +1463,13 @@ class ObjectiveManager:
                 target_coords = planner_directive['target']  # (x, y) tuple
                 should_interact = planner_directive.get('should_interact', False)
                 location = planner_directive.get('location', graph_location)
+                avoid_grass = planner_directive.get('avoid_grass', True)  # Default: avoid grass (speedrun mode)
                 
                 # Return simple goal - action.py will use A* to get there
                 return {
                     'goal_coords': (*target_coords, location),  # (x, y, 'LOCATION')
                     'should_interact': should_interact,
+                    'avoid_grass': avoid_grass,  # Pass through to A* pathfinding
                     'description': planner_directive.get('description', 'Navigate to coordinates'),
                     'journey_progress': self.navigation_planner.get_progress_summary()
                 }

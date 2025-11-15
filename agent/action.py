@@ -730,7 +730,8 @@ def _astar_pathfind_with_grid_data(
     location: str,
     goal_direction: str,
     recent_positions: Optional[deque] = None,
-    goal_coords: Optional[Tuple[int, int]] = None
+    goal_coords: Optional[Tuple[int, int]] = None,
+    avoid_grass: bool = True
 ) -> Optional[str]:
     """
     ============================================================================
@@ -825,6 +826,8 @@ def _astar_pathfind_with_grid_data(
         recent_positions: Deque of recent (x, y, location) tuples for warp avoidance
         goal_coords: Optional specific goal (x, y) to pathfind to. If provided, pathfinds
                      directly to this position instead of finding frontier tiles.
+        avoid_grass: If True (default), penalize grass tiles to avoid encounters. 
+                     If False, allow grass tiles for trainer avoidance or training.
     
     Returns:
         First step direction ('UP', 'DOWN', 'LEFT', 'RIGHT') or None if no path
@@ -1394,7 +1397,8 @@ def _astar_pathfind_with_grid_data(
                 
                 # Use tile cost instead of fixed cost of 1
                 # This makes A* prefer paths that avoid tall grass and unnecessary ledges
-                tile_cost = get_tile_cost(neighbor, avoid_grass=True)
+                # Use the avoid_grass parameter passed to this function
+                tile_cost = get_tile_cost(neighbor, avoid_grass=avoid_grass)
                 new_g_score = g_score + tile_cost
                 new_f_score = new_g_score + manhattan_distance(neighbor, closest_target)
                 
@@ -2133,7 +2137,8 @@ Answer with just the button name:"""
                     goal_coords = directive['goal_coords']  # (x, y, 'LOCATION')
                     should_interact = directive.get('should_interact', False)
                     npc_coords = directive.get('npc_coords')  # Optional (npc_x, npc_y) for facing direction
-                    print(f"🔍 [GOAL_COORDS] goal_coords={goal_coords}, should_interact={should_interact}, npc_coords={npc_coords}")
+                    avoid_grass = directive.get('avoid_grass', True)  # Default to True (speedrun mode)
+                    print(f"🔍 [GOAL_COORDS] goal_coords={goal_coords}, should_interact={should_interact}, npc_coords={npc_coords}, avoid_grass={avoid_grass}")
                     
                     if len(goal_coords) == 3:
                         target_x, target_y, target_map = goal_coords
@@ -2410,7 +2415,8 @@ What button should you press? Respond with ONE button name only: A"""
                                             location=state_data.get('player', {}).get('location', ''),
                                             goal_direction=goal_direction,
                                             recent_positions=_recent_positions,
-                                            goal_coords=(goal_x, goal_y)  # Always pass goal coords - A* handles unexplored case
+                                            goal_coords=(goal_x, goal_y),  # Always pass goal coords - A* handles unexplored case
+                                            avoid_grass=avoid_grass  # Pass through from directive
                                         )
                                         print(f"🗺️ [GOAL_COORDS] A* returned: {pathfound_action}")
                                     else:

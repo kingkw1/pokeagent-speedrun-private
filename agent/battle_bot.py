@@ -1306,18 +1306,22 @@ class BattleBot:
                     player_max_hp = player_pokemon.get('max_hp', 1)
                     player_hp_percent = (player_hp / player_max_hp * 100) if player_max_hp > 0 else 0
                     
-                    # Extract opponent species from dialogue history
-                    # VLM sees "YOUNGSTER CALVIN sent out POOCHYENA!" during battle intro
-                    # We need to extract species name from that dialogue
-                    opp_species = self._extract_opponent_species_from_dialogue()
+                    # PRIORITY 1: Try VLM visible_entities (most current, reflects Pokemon switches)
+                    opp_species = self._extract_species_from_visible_entities(visual_data)
                     
-                    # FALLBACK: If dialogue parsing failed, try VLM's visible_entities
+                    # PRIORITY 2: If VLM didn't find it, extract from dialogue history
                     if opp_species == 'Unknown':
-                        logger.warning("⚠️ [SPECIES] Dialogue extraction failed - trying VLM visible_entities fallback")
-                        print("⚠️ [SPECIES] Unknown from dialogue - checking visible_entities")
-                        opp_species = self._extract_species_from_visible_entities(visual_data)
+                        logger.info("⚠️ [SPECIES] VLM visible_entities didn't find opponent - checking dialogue")
+                        print("⚠️ [SPECIES] Not in visible_entities - checking dialogue")
+                        opp_species = self._extract_opponent_species_from_dialogue()
+                    else:
+                        # VLM found the opponent - update dialogue cache to match
+                        if self._opponent_species_from_dialogue != opp_species:
+                            logger.info(f"🔄 [SPECIES UPDATE] VLM sees '{opp_species}', updating cache from '{self._opponent_species_from_dialogue}'")
+                            print(f"🔄 [SPECIES UPDATE] VLM sees '{opp_species}' (was '{self._opponent_species_from_dialogue}')")
+                            self._opponent_species_from_dialogue = opp_species
                     
-                    logger.info(f"🔍 [SPECIES EXTRACTION] Extracted opponent: '{opp_species}'")
+                    logger.info(f"🔍 [SPECIES EXTRACTION] Final opponent: '{opp_species}'")
                     print(f"🔍 [SPECIES] Opponent = '{opp_species}'")
                     
                     logger.info(f"⚔️ [BATTLE BOT] In fight menu: {player_species} ({player_hp_percent:.1f}% HP) vs {opp_species}")
@@ -1382,15 +1386,15 @@ class BattleBot:
                         logger.warning("   VLM completely stuck - forcing MOVE selection blindly")
                         print(f"⚠️ [BATTLE BOT] VLM broken! Forcing move selection (attempt #{self._unknown_state_count - 4})")
                         
-                        # Extract opponent species and make move decision
-                        opp_species = self._extract_opponent_species_from_dialogue()
+                        # PRIORITY 1: Try VLM visible_entities (most current)
+                        opp_species = self._extract_species_from_visible_entities(visual_data)
                         
-                        # FALLBACK: Try visible_entities if dialogue failed
+                        # PRIORITY 2: Extract from dialogue if VLM didn't find it
                         if opp_species == 'Unknown':
-                            logger.warning("⚠️ [BLIND] Dialogue failed - trying visible_entities")
-                            opp_species = self._extract_species_from_visible_entities(visual_data)
+                            logger.warning("⚠️ [BLIND] VLM entities failed - trying dialogue")
+                            opp_species = self._extract_opponent_species_from_dialogue()
                         
-                        logger.info(f"🔍 [BLIND DECISION] Opponent from dialogue: '{opp_species}'")
+                        logger.info(f"🔍 [BLIND DECISION] Opponent species: '{opp_species}'")
                         print(f"🔍 [BLIND] Opponent = '{opp_species}'")
                         
                         # Get player_pokemon for level check
@@ -1414,12 +1418,14 @@ class BattleBot:
                         
                         # Get player_pokemon for level check
                         player_pokemon = battle_info.get('player_pokemon', {})
-                        opp_species = self._extract_opponent_species_from_dialogue()
                         
-                        # FALLBACK: Try visible_entities if dialogue failed
+                        # PRIORITY 1: Try VLM visible_entities (most current)
+                        opp_species = self._extract_species_from_visible_entities(visual_data)
+                        
+                        # PRIORITY 2: Extract from dialogue if VLM didn't find it
                         if opp_species == 'Unknown':
-                            logger.warning("⚠️ [RECOVERY] Dialogue failed - trying visible_entities")
-                            opp_species = self._extract_species_from_visible_entities(visual_data)
+                            logger.warning("⚠️ [RECOVERY] VLM entities failed - trying dialogue")
+                            opp_species = self._extract_opponent_species_from_dialogue()
                         
                         use_absorb = self._should_use_absorb(opp_species, player_pokemon)
                         
