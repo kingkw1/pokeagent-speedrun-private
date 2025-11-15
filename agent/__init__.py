@@ -275,7 +275,9 @@ class Agent:
                 )
                 
                 # SAFETY CHECK: Ensure action_output is valid
-                if action_output is None or not action_output:
+                # NOTE: Empty list [] means "wait/do nothing" and should NOT trigger fallback
+                # Only None means "failed to decide" and needs fallback
+                if action_output is None:
                     # Check if we're in dialogue - if so, don't press A (might be player monologue)
                     visual_dialogue = self.context.get('visual_dialogue_active', False)
                     if visual_dialogue:
@@ -283,7 +285,7 @@ class Agent:
                         # Return empty list to signal no action needed
                         action_output = []
                     else:
-                        logger.warning("[AGENT] Action step returned None/empty, using fallback")
+                        logger.warning("[AGENT] Action step returned None, using fallback")
                         action_output = ['A']  # Safe fallback action only when NOT in dialogue
                 
                 # Return in the expected format for the client

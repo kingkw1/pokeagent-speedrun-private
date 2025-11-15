@@ -2094,9 +2094,14 @@ Answer with just the button name:"""
                     goal_y = nav_goal.y
                     
                     logger.info(f"🗺️ [DIRECTIVE NAV] Current: ({current_x}, {current_y}) -> Goal: ({goal_x}, {goal_y})")
+                    print(f"🔍 [GOAL_COORDS] Current: ({current_x}, {current_y}), Goal: ({goal_x}, {goal_y})")
+                    print(f"🔍 [GOAL_COORDS] Position check: x match={current_x == goal_x}, y match={current_y == goal_y}")
                     
                     # At exact goal position - handle interaction with NPC
                     if current_x == goal_x and current_y == goal_y:
+                        print(f"🔍 [GOAL_COORDS] INSIDE position match block! should_interact={should_interact}")
+                        logger.info(f"🔍 [GOAL_COORDS] At exact goal position, should_interact={should_interact}")
+                        
                         if should_interact:
                             # If npc_coords provided, we need to face the NPC before pressing A
                             if npc_coords:
@@ -2135,6 +2140,7 @@ Answer with just the button name:"""
                                 return ['A']
                         else:
                             logger.info(f"🗺️ [DIRECTIVE NAV] At goal, no interaction needed")
+                            print(f"🔍 [GOAL_COORDS] At goal, no interaction needed - returning empty list []")
                             return []
                     
                     # Calculate direction to goal
