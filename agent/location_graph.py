@@ -456,8 +456,8 @@ LOCATION_GRAPH: Dict[str, Dict[str, Any]] = {
             "PETALBURG_WOODS": {
                 "type": "open_world",
                 "direction": "north",
-                "entry_coords": (9, 47),
-                "exit_coords": (9, 0),
+                "entry_coords": (10, 38),
+                "exit_coords": (10, 38),
                 "description": "North through Petalburg Woods",
                 "requirements": None,
             },
@@ -471,7 +471,7 @@ LOCATION_GRAPH: Dict[str, Dict[str, Any]] = {
     # PETALBURG WOODS
     # ========================================
     "PETALBURG_WOODS": {
-        "map_id": None,
+        "map_id": "180B",  # Hex map ID for Petalburg Woods
         "display_name": "Petalburg Woods",
         "description": "Forest area with Team Aqua encounter",
         "portals": {

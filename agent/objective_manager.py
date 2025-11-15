@@ -722,8 +722,40 @@ class ObjectiveManager:
             logger.info(f"📍 [MILESTONE] {milestone_id} - waiting for auto-complete")
             return None
         
-        # Get directive from navigation planner
-        planner_directive = self._get_navigation_planner_directive(state_data, target_location, target_coords, description)
+        # =====================================================================
+        # LOOK-AHEAD: Plan through pass-through locations to final destination
+        # =====================================================================
+        # Some milestones are just waypoints (e.g., PETALBURG_WOODS) - we should
+        # plan to the final destination (e.g., ROUTE_104_NORTH) instead
+        # =====================================================================
+        final_target = target_location
+        final_coords = target_coords
+        final_description = description
+        
+        # Check if this is a pass-through location by looking at next few milestones
+        if milestone_id == "PETALBURG_WOODS":
+            # PETALBURG_WOODS is milestone 20, look ahead to 22 (ROUTE_104_NORTH)
+            # Skip 21 (TEAM_AQUA_GRUNT_DEFEATED) since it's a battle, not navigation
+            logger.info(f"🔍 [LOOK-AHEAD] PETALBURG_WOODS is pass-through, checking next navigation milestone...")
+            print(f"🔍 [LOOK-AHEAD] Checking for final destination beyond PETALBURG_WOODS...")
+            
+            # Look ahead 2 milestones (20 -> 21 -> 22)
+            lookahead_index = next_milestone['index'] + 2
+            if lookahead_index < len(MILESTONE_PROGRESSION):
+                lookahead_milestone = MILESTONE_PROGRESSION[lookahead_index]
+                lookahead_location = lookahead_milestone.get("target_location")
+                
+                if lookahead_location and lookahead_milestone["milestone"] == "ROUTE_104_NORTH":
+                    # Found the final destination - plan to Route 104 North instead
+                    final_target = lookahead_location
+                    final_coords = lookahead_milestone.get("target_coords")
+                    final_description = f"Navigate through Petalburg Woods to {lookahead_location}"
+                    
+                    logger.info(f"✅ [LOOK-AHEAD] Planning to final destination: {final_target}")
+                    print(f"✅ [LOOK-AHEAD] Planning through PETALBURG_WOODS to {final_target}")
+        
+        # Get directive from navigation planner with final destination
+        planner_directive = self._get_navigation_planner_directive(state_data, final_target, final_coords, final_description)
         
         if planner_directive and not planner_directive.get('error'):
             # Planner successfully provided a directive
@@ -804,6 +836,7 @@ class ObjectiveManager:
             'ROUTE 102': 'ROUTE_102',
             'ROUTE 104': 'ROUTE_104_SOUTH',  # May need to distinguish north/south
             'PETALBURG WOODS': 'PETALBURG_WOODS',
+            'MAP_18_0B': 'PETALBURG_WOODS',  # Raw map ID for Petalburg Woods
         }
         
         # Find matching location
@@ -812,6 +845,15 @@ class ObjectiveManager:
             if loc_key in current_location:
                 graph_location = loc_value
                 break
+        
+        # DEBUG: Log location matching attempt
+        if not graph_location:
+            logger.warning(f"⚠️ [LOCATION MAPPING] Failed to map location '{current_location}' to graph")
+            print(f"⚠️ [LOCATION MAPPING] Unknown location: '{current_location}'")
+            print(f"   Available mappings: {list(location_mapping.keys())}")
+        else:
+            logger.info(f"✅ [LOCATION MAPPING] '{current_location}' → '{graph_location}'")
+            print(f"✅ [LOCATION MAPPING] '{current_location}' → '{graph_location}'")
         
         if not graph_location:
             # Unknown location - can't use planner

@@ -4431,6 +4431,6 @@ Now analyze THIS frame and respond with your reasoning and button:
     
     logger.info(f"[ACTION] Actions decided: {', '.join(actions)}")
     final_step = len(recent_actions) if recent_actions else 0
-    print(f"🎮 [FINAL ACTION] Step {final_step} - Returning actions: {actions}")
+    # print(f"🎮 [FINAL ACTION] Step {final_step} - Returning actions: {actions}")
     
     return actions 
