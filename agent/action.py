@@ -903,8 +903,30 @@ def _astar_pathfind_with_grid_data(
                 dy = goal_y - player_y
                 
                 # Find frontier tiles that are closest to the goal direction
-                # IMPROVED: Allow exploration in perpendicular directions for maze navigation
+                # IMPROVED: Prioritize exploration on the axis with largest distance
+                # Example: If goal is 40 tiles up and 1 tile right, explore upward first
+                #          Only explore right if no upward progress is possible
                 target_positions = []
+                
+                # Determine primary and secondary axes based on distance
+                abs_dx = abs(dx)
+                abs_dy = abs(dy)
+                
+                if abs_dx > abs_dy:
+                    primary_axis = 'horizontal'
+                    primary_progress_threshold = 0  # Require progress on primary axis
+                    secondary_progress_threshold = -2  # Allow perpendicular on secondary
+                    logger.info(f"🎯 [FRONTIER PRIORITY] Primary: HORIZONTAL (dx={dx}), Secondary: VERTICAL (dy={dy})")
+                else:
+                    primary_axis = 'vertical'
+                    primary_progress_threshold = 0  # Require progress on primary axis
+                    secondary_progress_threshold = -2  # Allow perpendicular on secondary
+                    logger.info(f"🎯 [FRONTIER PRIORITY] Primary: VERTICAL (dy={dy}), Secondary: HORIZONTAL (dx={dx})")
+                
+                # First pass: Collect tiles making progress on PRIMARY axis
+                primary_tiles = []
+                secondary_tiles = []
+                
                 for (x, y), tile in location_grid.items():
                     if tile not in ['.', '_', '~', 'D', '?']:
                         continue
@@ -913,69 +935,58 @@ def _astar_pathfind_with_grid_data(
                     tile_dx = x - player_x
                     tile_dy = y - player_y
                     
-                    # RELAXED CHECK: Allow tiles that make progress in EITHER dimension
-                    # This enables maze navigation where you must go sideways to eventually go forward
-                    # Old: dot_product check was too strict for mazes
-                    # New: Accept if tile makes progress in primary direction OR doesn't go backwards
-                    primary_progress = False
-                    if abs(dx) >= abs(dy):
-                        # Primarily horizontal goal - prioritize X progress
-                        if dx > 0 and tile_dx > 0:
-                            primary_progress = True
-                        elif dx < 0 and tile_dx < 0:
-                            primary_progress = True
-                    else:
-                        # Primarily vertical goal - prioritize Y progress
-                        if dy > 0 and tile_dy > 0:
-                            primary_progress = True
-                        elif dy < 0 and tile_dy < 0:
-                            primary_progress = True
-                    
-                    # Also accept tiles that don't go backwards (allow perpendicular movement)
-                    not_backwards = True
-                    if abs(dx) >= abs(dy):
-                        # Don't go backwards horizontally
-                        if dx > 0 and tile_dx < -2:
-                            not_backwards = False
-                        elif dx < 0 and tile_dx > 2:
-                            not_backwards = False
-                    else:
-                        # Don't go backwards vertically
-                        if dy > 0 and tile_dy < -2:
-                            not_backwards = False
-                        elif dy < 0 and tile_dy > 2:
-                            not_backwards = False
-                    
-                    # Accept if either making primary progress OR not going backwards
-                    if not (primary_progress or not_backwards):
-                        continue
-                    
-                    # Check if it's a frontier tile (has unexplored adjacent)
+                    # Check for frontier (has unexplored adjacent)
                     has_unknown_neighbor = False
                     for nx, ny in [(x-1,y), (x+1,y), (x,y-1), (x,y+1)]:
                         if (nx, ny) not in location_grid:
                             has_unknown_neighbor = True
                             break
                     
-                    if has_unknown_neighbor:
-                        # Calculate how aligned this frontier tile is with goal direction
-                        distance_to_player = abs(tile_dx) + abs(tile_dy)
-                        distance_to_goal = abs(goal_x - x) + abs(goal_y - y)
-                        # Prefer tiles that reduce distance to goal, but allow some flexibility
-                        # Bonus for tiles that make progress in primary direction
-                        score = distance_to_goal + (distance_to_player * 0.1)
-                        if primary_progress:
-                            score -= 5  # Bonus for primary direction progress
-                        target_positions.append((score, x, y))
+                    if not has_unknown_neighbor:
+                        continue
+                    
+                    # Calculate scores
+                    distance_to_player = abs(tile_dx) + abs(tile_dy)
+                    distance_to_goal = abs(goal_x - x) + abs(goal_y - y)
+                    score = distance_to_goal + (distance_to_player * 0.1)
+                    
+                    # Categorize by axis progress
+                    if primary_axis == 'horizontal':
+                        # Check horizontal progress
+                        if (dx > 0 and tile_dx > primary_progress_threshold) or \
+                           (dx < 0 and tile_dx < -primary_progress_threshold):
+                            # Makes progress on primary axis
+                            primary_tiles.append((score - 5, x, y))  # Bonus for primary
+                        elif (dy > 0 and tile_dy > secondary_progress_threshold) or \
+                             (dy < 0 and tile_dy < -secondary_progress_threshold) or \
+                             (abs(tile_dy) <= 2):  # Allow small perpendicular moves
+                            # Makes progress on secondary axis or perpendicular
+                            secondary_tiles.append((score, x, y))
+                    else:  # vertical primary
+                        # Check vertical progress
+                        if (dy > 0 and tile_dy > primary_progress_threshold) or \
+                           (dy < 0 and tile_dy < -primary_progress_threshold):
+                            # Makes progress on primary axis
+                            primary_tiles.append((score - 5, x, y))  # Bonus for primary
+                        elif (dx > 0 and tile_dx > secondary_progress_threshold) or \
+                             (dx < 0 and tile_dx < -secondary_progress_threshold) or \
+                             (abs(tile_dx) <= 2):  # Allow small perpendicular moves
+                            # Makes progress on secondary axis or perpendicular
+                            secondary_tiles.append((score, x, y))
                 
-                if target_positions:
-                    # Sort by score (lower is better - closer to goal)
-                    target_positions.sort()
-                    primary_targets = [(x, y) for score, x, y in target_positions[:5]]
-                    print(f"✅ [A* FRONTIER → GOAL] Found {len(primary_targets)} PRIMARY frontier tiles toward ({goal_x}, {goal_y})")
-                    target_positions = primary_targets
+                # Prioritize primary axis tiles, use secondary as fallback
+                if primary_tiles:
+                    primary_tiles.sort()
+                    target_positions = [(x, y) for score, x, y in primary_tiles[:10]]  # Limit to top 10
+                    logger.info(f"✅ [FRONTIER] Using {len(target_positions)} PRIMARY axis frontier tiles")
+                    print(f"✅ [FRONTIER] Exploring {len(target_positions)} tiles on PRIMARY axis ({primary_axis})")
+                elif secondary_tiles:
+                    secondary_tiles.sort()
+                    target_positions = [(x, y) for score, x, y in secondary_tiles[:10]]  # Limit to top 10
+                    logger.info(f"⚠️ [FRONTIER] No primary tiles, using {len(target_positions)} SECONDARY axis tiles")
+                    print(f"⚠️ [FRONTIER] Primary blocked, exploring {len(target_positions)} tiles on SECONDARY axis")
                 else:
-                    print(f"⚠️ [A* FRONTIER → GOAL] No PRIMARY frontier found")
+                    logger.warning(f"❌ [FRONTIER] No frontier tiles found in either direction")
                     target_positions = []
                 
                 # IMPROVEMENT: If we found frontier tiles but they might be blocked,
