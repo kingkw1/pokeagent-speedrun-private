@@ -137,6 +137,7 @@ class BattleBot:
         self._unknown_state_count = 0  # Track consecutive unknown menu states (VLM hallucination detector)
         self._wild_battle_dialogue_turns = 0  # Track dialogue turns in wild battle (force base_menu after N turns)
         self._opponent_species_from_dialogue = None  # Cache opponent species extracted from "sent out" dialogue
+        self._is_birch_rescue_battle = False  # Flag set ONCE at battle start for Birch rescue detection
         logger.info("🥊 [BATTLE BOT] Initialized with type-effective move selection")
     
     def should_handle(self, state_data: Dict[str, Any]) -> bool:
@@ -159,6 +160,9 @@ class BattleBot:
         game_data = state_data.get('game', {})
         in_battle = game_data.get('in_battle', False)
         player_data = state_data.get('player', {})
+        
+        # 🔍 DEBUG: Track battle state transitions
+        print(f"🔍 [BATTLE BOT SHOULD_HANDLE] in_battle={in_battle}, was_in_battle_last_step={self._was_in_battle_last_step}, _is_birch_rescue_battle={self._is_birch_rescue_battle}")
         
         # 🔍 TILE TRACKING: Update last overworld tile BEFORE checking battle state
         # This ensures we capture the tile from the step BEFORE battle started
@@ -256,12 +260,45 @@ class BattleBot:
             # Use the tile we were on BEFORE battle started (not current tile which is now battle screen)
             self._battle_start_tile = self._last_overworld_tile or 'UNKNOWN'
             
+            # ⭐ CHECK BIRCH RESCUE BATTLE ONCE AT BATTLE START ⭐
+            # This flag is set ONCE and never rechecked during the battle
+            milestones_completed = game_data.get('milestones_completed', [])
+            post_rescue_milestones = [
+                'BIRCH_LAB_VISITED', 'OLDALE_TOWN', 'ROUTE_103', 'RIVAL_BATTLE_1',
+                'RECEIVED_POKEDEX', 'ROUTE_102', 'PETALBURG_CITY', 'VISITED_DAD', 'ROUTE_104'
+            ]
+            has_post_rescue_milestone = any(m in milestones_completed for m in post_rescue_milestones)
+            
+            # CRITICAL FIX: If milestones list is empty, we can't determine if it's a rescue battle
+            # Empty list likely means milestones aren't being tracked or we're past the opening.
+            # Default to NOT a rescue battle (safer - allows running from wild battles).
+            # Only mark as rescue battle if we have milestones AND none are post-rescue.
+            if not milestones_completed:
+                # No milestones data available - assume NOT rescue battle (default to WILD)
+                self._is_birch_rescue_battle = False
+                logger.warning(f"⚠️ [BIRCH RESCUE CHECK] Milestones list is empty - defaulting to normal battle")
+                print(f"⚠️ [BATTLE START] No milestone data - treating as normal wild battle")
+            else:
+                # We have milestone data - check if we're in the rescue battle window
+                self._is_birch_rescue_battle = not has_post_rescue_milestone
+            
+            # Detailed logging for debugging
+            matching_milestones = [m for m in post_rescue_milestones if m in milestones_completed]
+            
             logger.info(f"=" * 80)
             logger.info(f"🥊 [BATTLE START] New battle detected!")
             logger.info(f"   _last_overworld_tile: '{self._last_overworld_tile}'")
             logger.info(f"   _battle_start_tile: '{self._battle_start_tile}'")
             logger.info(f"   current_tile_behavior (in battle): '{player_data.get('current_tile_behavior', 'N/A')}'")
+            logger.info(f"   All milestones completed: {milestones_completed}")
+            logger.info(f"   Post-rescue milestones we check: {post_rescue_milestones}")
+            logger.info(f"   Matching post-rescue milestones: {matching_milestones}")
+            logger.info(f"   has_post_rescue_milestone: {has_post_rescue_milestone}")
+            logger.info(f"   Is Birch rescue battle: {self._is_birch_rescue_battle}")
             logger.info(f"=" * 80)
+            print(f"🥊 [BATTLE START DEBUG] Milestones: {milestones_completed}")
+            print(f"🥊 [BATTLE START DEBUG] Matching: {matching_milestones}")
+            print(f"🥊 [BATTLE START DEBUG] Is Birch rescue: {self._is_birch_rescue_battle}")
             
             # Log if we have no tile info (shouldn't happen, but good to catch)
             if self._battle_start_tile == 'UNKNOWN':
@@ -287,6 +324,7 @@ class BattleBot:
                 self._battle_type_locked = False  # Reset lock for next battle
                 self._run_attempts = 0
                 self._dialogue_history = []
+                self._is_birch_rescue_battle = False  # Reset for next battle
                 self._battle_start_tile = None
                 self._current_opponent = None  # Reset opponent tracking
                 self._unknown_state_count = 0  # Reset VLM hallucination counter
@@ -342,49 +380,30 @@ class BattleBot:
         # The player must battle it after choosing their starter - you CANNOT run from this battle.
         # Birch says "Don't leave me like this!" if you try to run.
         # 
-        # Detection: In battle, but BIRCH_LAB_VISITED (or any milestone after it) NOT complete
-        # This is more robust than checking specific location - if we're in a battle before visiting
-        # Birch's lab, it MUST be the rescue battle (only battle possible in opening sequence).
+        # Detection: Flag is set ONCE at battle start in should_handle() method
+        # Checked using milestone completion: if no BIRCH_LAB_VISITED or later milestones, 
+        # this MUST be the rescue battle (only battle possible before visiting lab).
         # 
-        # Milestone progression: STARTER_CHOSEN [9] → BIRCH_LAB_VISITED [10] → OLDALE_TOWN [11] → ...
-        # Action: Override battle type to TRAINER (fight instead of run)
+        # The flag prevents re-checking milestones on every detection call, which was causing
+        # wild battles to be incorrectly classified as trainer battles.
         
-        milestones_completed = game_data.get('milestones_completed', [])
-        
-        # Define all milestones that come AFTER the rescue battle (at or after BIRCH_LAB_VISITED)
-        post_rescue_milestones = [
-            'BIRCH_LAB_VISITED',      # [10] - Visit lab after rescue
-            'OLDALE_TOWN',            # [11] - First town
-            'ROUTE_103',              # [12] - Rival battle location
-            'RIVAL_BATTLE_1',         # [13] - First rival battle
-            'RECEIVED_POKEDEX',       # [14] - Get Pokedex
-            'ROUTE_102',              # [15+] - All subsequent milestones
-            'PETALBURG_CITY',
-            'VISITED_DAD',
-            'ROUTE_104',
-            # ... (any future milestone means we're past the rescue battle)
-        ]
-        
-        # If NONE of the post-rescue milestones are complete, we're still in the opening sequence
-        # and any battle MUST be the Birch rescue battle
-        has_post_rescue_milestone = any(m in milestones_completed for m in post_rescue_milestones)
-        
-        is_birch_rescue_battle = not has_post_rescue_milestone
-        
-        if is_birch_rescue_battle:
+        if self._is_birch_rescue_battle:
             self._current_battle_type = BattleType.TRAINER  # Force fight
             player_data = game_data.get('player', {})
             player_loc = player_data.get('location', 'UNKNOWN')
             logger.info(f"=" * 80)
             logger.info(f"🆘 [BIRCH RESCUE BATTLE] Special scripted battle detected!")
             logger.info(f"   Location: {player_loc}")
-            logger.info(f"   Completed milestones: {milestones_completed}")
-            logger.info(f"   Has post-rescue milestone: {has_post_rescue_milestone}")
+            logger.info(f"   _is_birch_rescue_battle flag: {self._is_birch_rescue_battle}")
             logger.info(f"   This is the Zigzagoon attacking Prof. Birch - CANNOT RUN!")
             logger.info(f"   Forcing battle type to TRAINER (will fight instead of run)")
             logger.info(f"=" * 80)
             print(f"🆘 [BIRCH RESCUE] Cannot run from this battle - fighting to save Birch!")
+            print(f"🆘 [BIRCH RESCUE DEBUG] Flag value: {self._is_birch_rescue_battle}")
             return BattleType.TRAINER
+        else:
+            # Log that this is NOT a Birch rescue battle
+            logger.debug(f"✅ [BIRCH CHECK] Not Birch rescue battle (_is_birch_rescue_battle={self._is_birch_rescue_battle})")
         
         # PRIORITY 1: Check terrain - infer battle type from tile
         grass_tiles = ['TALL_GRASS', 'LONG_GRASS', 'SHORT_GRASS']
@@ -397,23 +416,6 @@ class BattleBot:
         assumed_type = BattleType.WILD  # SAFE DEFAULT: Try to run, fail if trainer
         logger.info(f"🌿 [BATTLE TYPE] Defaulting to WILD (tile logic disabled - safer to fail running than fight wild)")
         logger.info(f"   Tile was: '{self._battle_start_tile}' (ignored)")
-        
-        # # OLD TILE LOGIC (COMMENTED OUT - UNRELIABLE):
-        # if self._battle_start_tile in grass_tiles or self._battle_start_tile in water_tiles:
-        #     # Default assumption: battle in grass/water = wild battle
-        #     assumed_type = BattleType.WILD
-        #     logger.info(f"🌿 [BATTLE TYPE] Battle in {self._battle_start_tile} → assuming WILD (dialogue can override)")
-        # elif self._battle_start_tile == 'UNKNOWN' or self._battle_start_tile is None:
-        #     # No tile data - MUST wait for dialogue/memory evidence
-        #     assumed_type = BattleType.UNKNOWN
-        #     logger.warning(f"⚠️ [BATTLE TYPE] No tile data (_battle_start_tile={self._battle_start_tile})")
-        #     logger.warning(f"   Will rely on dialogue/memory flags")
-        # else:
-        #     # Battle on NORMAL tile (not grass/water) → assume TRAINER
-        #     # Wild Pokemon only appear in grass/water, so battles elsewhere are trainers
-        #     assumed_type = BattleType.TRAINER
-        #     logger.info(f"📍 [BATTLE TYPE] Battle on '{self._battle_start_tile}' (not grass/water) → assuming TRAINER")
-        #     logger.info(f"   Wild battles only occur in grass/water")
         
         # PRIORITY 2: Check dialogue for TRAINER indicators (HIGHEST PRIORITY - overrides everything)
         latest_observation = state_data.get('latest_observation', {})
