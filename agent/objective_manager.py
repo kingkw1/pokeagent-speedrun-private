@@ -137,6 +137,9 @@ class ObjectiveManager:
             'location': None,
         }
         
+        # Track if we've pressed B after entering gym
+        self._pressed_b_after_gym_warp = False
+        
         # NEW: Initialize NavigationPlanner for comparison testing
         self.navigation_planner = NavigationPlanner()
         self._last_planner_location = None
@@ -673,47 +676,88 @@ class ObjectiveManager:
                     'milestone': None
                 }
         
-        # === PETALBURG CITY → Talk to Dad in gym (SPECIAL CASE - like rival battle) ===
-        # Check internal goal state, not milestones
-        # This must come BEFORE the sequential milestone system because the emulator milestones
-        # complete instantly upon entering the gym, which would skip to ROUTE_104_SOUTH
-        if is_milestone_complete('PETALBURG_CITY') and not is_milestone_complete('PETALBURG_WOODS'):
-            dad_dialogue_complete = self.is_goal_complete('PETALBURG_GYM_DAD_DIALOGUE')
-            in_gym = 'PETALBURG CITY GYM' in current_location or 'PETALBURG_CITY_GYM' in current_location
+        # === PETALBURG CITY → Talk to Dad in gym (HP-BASED SPLIT DETECTION) ===
+        # =====================================================================
+        # PETALBURG CITY: HP-BASED DAD DIALOGUE DETECTION
+        # =====================================================================
+        # Simple HP-based logic (ignore milestones):
+        # - HP < 100% in Petalburg City/Gym → Go to Dad
+        # - HP = 100% in Petalburg City/Gym → Head west to Route 104 South
+        # =====================================================================
+        
+        in_petalburg_city = 'PETALBURG CITY' in current_location or 'PETALBURG_CITY' in current_location.replace(' ', '_')
+        in_gym = 'PETALBURG CITY GYM' in current_location or 'PETALBURG_CITY_GYM' in current_location
+        
+        if in_petalburg_city or in_gym:
+            # Check party HP to determine if Dad dialogue is complete
+            party = state_data.get('player', {}).get('party', [])
+            needs_dad_dialogue = False
             
-            logger.info(f"🎯 [DAD SPECIAL CASE] PETALBURG_CITY complete, PETALBURG_WOODS not complete")
-            logger.info(f"🎯 [DAD SPECIAL CASE] in_gym={in_gym}, dad_dialogue_complete={dad_dialogue_complete}")
-            print(f"🎯 [DAD SPECIAL CASE] in_gym={in_gym}, dad_dialogue_complete={dad_dialogue_complete}")
+            if party:
+                for pokemon in party:
+                    current_hp = pokemon.get('current_hp', 0)
+                    max_hp = pokemon.get('max_hp', 1)
+                    if max_hp > 0 and current_hp < max_hp:
+                        needs_dad_dialogue = True
+                        logger.info(f"🎯 [DAD HP CHECK] {pokemon.get('species_name', 'UNKNOWN')}: {current_hp}/{max_hp} HP - needs healing!")
+                        print(f"🎯 [DAD HP CHECK] {pokemon.get('species_name', 'UNKNOWN')}: {current_hp}/{max_hp} HP - needs healing!")
+                        break
             
-            if dad_dialogue_complete and in_gym:
-                # Already talked to Dad, need to leave gym
-                # Exit is at (4, 112) but it's a warp tile - use directional movement
-                logger.info(f"✅ [DAD DIALOGUE] Complete - leaving gym (move south)")
-                print(f"✅ [DAD DIALOGUE] Complete - leaving gym (move south)")
-                
-                return {
-                    'goal_direction': 'south',
-                    'description': 'Leave Petalburg Gym after talking to Dad',
-                    'journey_reason': 'Exit gym to continue to Route 104 South'
-                }
-            elif in_gym:
-                # In gym - navigate to Dad
-                # Dad is at (4, 107), we need to stand at (4, 108) and face UP
-                logger.info(f"🎯 [DAD DIALOGUE] In gym, navigating to (4, 108) to interact with Dad at (4, 107)")
-                print(f"🎯 [DAD DIALOGUE] In gym, navigating to (4, 108) to interact with Dad at (4, 107)")
-                
-                return {
-                    'goal_coords': (4, 108, 'PETALBURG_CITY_GYM'),
-                    'npc_coords': (4, 107),  # Dad's actual position for determining facing direction
-                    'should_interact': True,
-                    'description': 'Navigate to (4, 108) and face UP to interact with Norman at (4, 107)'
-                    # Optional: 'avoid_grass': False  # Set to False to path through grass (useful for trainer avoidance)
-                }
+            logger.info(f"🎯 [DAD HP CHECK] HP < 100%: {needs_dad_dialogue}, in_city: {in_petalburg_city}, in_gym: {in_gym}")
+            print(f"🎯 [DAD HP CHECK] HP < 100%: {needs_dad_dialogue}, in_city: {in_petalburg_city}, in_gym: {in_gym}")
+            
+            if needs_dad_dialogue:
+                # HP < 100% = need to talk to Dad
+                if in_gym:
+                    # In gym - navigate to Dad at (4, 107)
+                    logger.info(f"💚 [DAD HP] HP < 100%, in gym, navigating to Norman")
+                    print(f"💚 [DAD HP] HP < 100%, in gym, navigating to Norman")
+                    
+                    return {
+                        'goal_coords': (4, 108, 'PETALBURG_CITY_GYM'),
+                        'npc_coords': (4, 107),
+                        'should_interact': True,
+                        'description': f'Navigate to Norman at (4, 107) [HP: {current_hp}/{max_hp}]'
+                    }
+                else:
+                    # In Petalburg City - navigate to gym entrance
+                    logger.info(f"💚 [DAD HP] HP < 100%, in city, navigating to gym")
+                    print(f"💚 [DAD HP] HP < 100%, in city, navigating to gym")
+                    
+                    # Use navigation planner to get to gym
+                    success = self.navigation_planner.plan_journey(
+                        start_location=graph_location,
+                        end_location='PETALBURG_CITY_GYM',
+                        final_coords=(15, 8)  # Gym entrance warp tile
+                    )
+                    
+                    if success:
+                        return self.navigation_planner.get_current_directive(
+                            current_location=graph_location,
+                            current_coords=(current_x, current_y)
+                        )
+                    else:
+                        logger.error(f"❌ [NAV PLANNER] Failed to plan journey to gym")
+                        return None
             else:
-                # Not in gym yet, need to enter - fall through to sequential system
-                logger.info(f"🎯 [DAD DIALOGUE] Not in gym yet, need to enter")
-                print(f"🎯 [DAD DIALOGUE] Not in gym yet, need to enter")
-                # Fall through to sequential system which will target PETALBURG_CITY_GYM
+                # HP = 100% = Dad dialogue complete, head west to Route 104 South
+                logger.info(f"✅ [DAD HP] HP = 100%, heading west to Route 104 South")
+                print(f"✅ [DAD HP] HP = 100%, heading west to Route 104 South")
+                
+                # Use navigation planner to head west
+                success = self.navigation_planner.plan_journey(
+                    start_location=graph_location,
+                    end_location='ROUTE_104_SOUTH'
+                )
+                
+                if success:
+                    return self.navigation_planner.get_current_directive(
+                        current_location=graph_location,
+                        current_coords=(current_x, current_y)
+                    )
+                else:
+                    logger.error(f"❌ [NAV PLANNER] Failed to plan journey to Route 104 South")
+                    return None
         
         # =====================================================================
         # SUB-GOAL: RUSTBORO CITY POKEMON CENTER HEALING
@@ -1058,6 +1102,108 @@ class ObjectiveManager:
                     'description': 'Navigate to (9,3) and face RIGHT to interact with rival at (10,3)'
                 }
         
+        # ROUTE 104 SOUTH: Navigate around NPC using waypoint system
+        # The NPC at (11, 44) blocks the direct path with a large dialogue zone
+        # Blocked tiles: (11,44), (12,44), (13,44), (14,44), (15,44), (11,43), (11,42), (11,41), (11,40)
+        # Strategy: Route through grass on south side via waypoints 16,45 -> 10,45
+        in_route_104_south = 'ROUTE_104' in graph_location and 'SOUTH' in graph_location
+        
+        if in_route_104_south:
+            position = player_data.get('position', {})
+            current_x = position.get('x', 0)
+            current_y = position.get('y', 0)
+            
+            # Check if we're in the trigger zone that requires special routing
+            # Trigger: X between 16-25 AND Y between 41-53
+            in_trigger_zone = (16 <= current_x <= 25) and (41 <= current_y <= 53)
+            
+            # SPECIAL: If the player is on the horizontal grass path (y=45, x=10-17)
+            # between waypoints, route them to (10,45) regardless of trigger zone.
+            # This handles battle interruptions along the path from (16,45) to (10,45).
+            on_grass_path = (current_y == 45) and (10 <= current_x <= 17)
+            
+            if in_trigger_zone or on_grass_path:
+                if on_grass_path and not in_trigger_zone:
+                    logger.info(f"🌿 [ROUTE 104 SOUTH] On grass path at ({current_x}, {current_y}), routing to (10,45)")
+                    print(f"🌿 [ROUTE 104 SOUTH] On grass path y=45, continue west to (10,45)")
+                else:
+                    logger.info(f"🌿 [ROUTE 104 SOUTH] In trigger zone at ({current_x}, {current_y})")
+                    print(f"🌿 [ROUTE 104 SOUTH] Navigating around NPC via grass waypoints")
+                
+                # Waypoint sequence: current position -> (16,45) -> (10,45) -> continue
+                WAYPOINT_SEQUENCE = [
+                    (16, 45),  # East waypoint (approach grass from east)
+                    (10, 45),  # West waypoint (exit grass to west side)
+                ]
+                
+                current_pos = (current_x, current_y)
+
+                # CRITICAL: If on the horizontal grass path (y=45, x=10-17), always route to (10,45)
+                # This is the direct path from waypoint 1 (16,45) to waypoint 2 (10,45)
+                # Catches battle interruptions at positions like (11,45), (12,45), etc.
+                if (current_y == 45) and (10 <= current_x <= 17):
+                    final_wp = WAYPOINT_SEQUENCE[-1]  # (10, 45)
+                    if current_pos != final_wp:
+                        logger.info(f"🌿 [ROUTE 104 SOUTH] On horizontal path at {current_pos}, routing to {final_wp}")
+                        print(f"🌿 [ROUTE 104 SOUTH] On y=45 path, heading to {final_wp}")
+                        return {
+                            'goal_coords': (final_wp[0], final_wp[1], 'ROUTE_104_SOUTH'),
+                            'description': f'Continue west on grass path to {final_wp}',
+                            'avoid_grass': False
+                        }
+
+                # FALLBACK: Check broader grass corridor for other interruptions
+                # x in [10..16], y in [44..46]
+                GRASS_PATH_MIN_X, GRASS_PATH_MAX_X = 10, 16
+                GRASS_PATH_MIN_Y, GRASS_PATH_MAX_Y = 44, 46
+
+                if (GRASS_PATH_MIN_X <= current_x <= GRASS_PATH_MAX_X) and (GRASS_PATH_MIN_Y <= current_y <= GRASS_PATH_MAX_Y):
+                    # If we're already at the final west waypoint, fall through normally
+                    final_wp = WAYPOINT_SEQUENCE[-1]
+                    if current_pos != final_wp:
+                        logger.info(f"🌿 [ROUTE 104 SOUTH] In grass corridor at {current_pos}, directing to final waypoint {final_wp}")
+                        print(f"🌿 [ROUTE 104 SOUTH] In grass corridor, continue to {final_wp}")
+                        return {
+                            'goal_coords': (final_wp[0], final_wp[1], 'ROUTE_104_SOUTH'),
+                            'description': f'Continue through grass to {final_wp} (resume interrupted path)',
+                            'avoid_grass': False
+                        }
+
+                # Check if we're at or past a waypoint
+                for i, waypoint_pos in enumerate(WAYPOINT_SEQUENCE):
+                    if current_pos == waypoint_pos:
+                        # At this waypoint - move to next
+                        if i < len(WAYPOINT_SEQUENCE) - 1:
+                            next_pos = WAYPOINT_SEQUENCE[i + 1]
+                            next_x, next_y = next_pos
+                            
+                            logger.info(f"🎯 [ROUTE 104 SOUTH] At waypoint {i+1}/{len(WAYPOINT_SEQUENCE)}: {current_pos} -> {next_pos}")
+                            print(f"🎯 [ROUTE 104 SOUTH] Waypoint {i+1}/{len(WAYPOINT_SEQUENCE)}: going through grass")
+                            
+                            return {
+                                'goal_coords': (next_x, next_y, 'ROUTE_104_SOUTH'),
+                                'description': f'Navigate to waypoint {next_pos} (grass route around NPC)',
+                                'avoid_grass': False  # CRITICAL: Allow grass pathfinding for this route
+                            }
+                        else:
+                            # At final waypoint (10, 45) - release restrictions, continue normally
+                            logger.info(f"✅ [ROUTE 104 SOUTH] Completed waypoint sequence at {current_pos}")
+                            print(f"✅ [ROUTE 104 SOUTH] Past NPC zone, resuming normal navigation")
+                            # Fall through to normal navigation
+                            break
+                
+                # Not at any waypoint yet - navigate to first waypoint (16, 45)
+                if current_pos not in WAYPOINT_SEQUENCE:
+                    first_waypoint = WAYPOINT_SEQUENCE[0]
+                    logger.info(f"🎯 [ROUTE 104 SOUTH] At ({current_x},{current_y}), navigating to first waypoint {first_waypoint}")
+                    print(f"🎯 [ROUTE 104 SOUTH] Heading to waypoint 1: {first_waypoint}")
+                    
+                    return {
+                        'goal_coords': (first_waypoint[0], first_waypoint[1], 'ROUTE_104_SOUTH'),
+                        'description': f'Navigate to waypoint {first_waypoint} (avoid NPC dialogue zone)',
+                        'avoid_grass': True  # Avoid grass before reaching waypoint
+                    }
+        
         # ROXANNE BATTLE: Navigate through gym trainers then to gym leader
         # Logic: RUSTBORO_GYM_ENTERED complete AND ROXANNE_DEFEATED not complete
         # CRITICAL: Must visit waypoints to trigger trainer battles before Roxanne
@@ -1129,6 +1275,21 @@ class ObjectiveManager:
                         return result
                 
                 # Default: Not at any recognized waypoint, go to first waypoint
+                # SPECIAL: If we're at (27, 19), we just entered via warp
+                # The warp takes us to (5, 19) which is waypoint 0
+                # After warp, we might be briefly showing (27, 19) before update
+                GYM_ENTRANCE_OUTSIDE = (27, 19)
+                if current_pos == GYM_ENTRANCE_OUTSIDE:
+                    # Just entered gym, but position hasn't updated yet
+                    # Return directive for waypoint 1 (already at waypoint 0 after warp)
+                    second_waypoint = WAYPOINT_SEQUENCE[1]
+                    logger.info(f"🎯 [ROXANNE] Just entered gym at entrance tile, navigating to waypoint 2: {second_waypoint}")
+                    print(f"🎯 [ROXANNE] Gym entrance detected, navigating to waypoint 2: {second_waypoint}")
+                    return {
+                        'goal_coords': (second_waypoint[0], second_waypoint[1], 'RUSTBORO_CITY_GYM'),
+                        'description': f'Navigate to {second_waypoint} - second waypoint (after entrance warp)'
+                    }
+                
                 first_waypoint = WAYPOINT_SEQUENCE[0]
                 logger.info(f"🎯 [ROXANNE] At ({current_x},{current_y}), navigating to first waypoint {first_waypoint}")
                 print(f"🎯 [ROXANNE] Starting gym, navigating to waypoint 1: {first_waypoint}")

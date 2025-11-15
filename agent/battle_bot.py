@@ -225,8 +225,8 @@ class BattleBot:
         else:
             # Also print when IN battle to see tile status
             current_tile = player_data.get('current_tile_behavior', 'UNKNOWN')
-            print(f"🌍 [TILE TRACKING] IN BATTLE - current_tile_behavior: '{current_tile}', last_overworld_tile: '{self._last_overworld_tile}'")
-            logger.info(f"🌍 [TILE TRACKING] IN BATTLE - not updating tile (last_overworld_tile='{self._last_overworld_tile}')")
+            # print(f"🌍 [TILE TRACKING] IN BATTLE - current_tile_behavior: '{current_tile}', last_overworld_tile: '{self._last_overworld_tile}'")
+            # logger.info(f"🌍 [TILE TRACKING] IN BATTLE - not updating tile (last_overworld_tile='{self._last_overworld_tile}')")
         
         # Check if we're in post-battle dialogue
         latest_observation = state_data.get('latest_observation', {})
@@ -503,6 +503,16 @@ class BattleBot:
             if assumed_type == BattleType.WILD:
                 print(f"🏃 [BATTLE TYPE] WILD BATTLE - Will run away! (default)")
             return assumed_type
+        
+        # PRIORITY 2.5: Check if in GYM location (auto-register as trainer battle)
+        player_data = state_data.get('player', {})
+        current_location = player_data.get('location', '').upper()
+        
+        if 'GYM' in current_location:
+            self._current_battle_type = BattleType.TRAINER
+            logger.info(f"🏛️ [BATTLE TYPE] TRAINER BATTLE detected - in GYM location: '{current_location}'")
+            print(f"⚔️ [BATTLE TYPE] TRAINER BATTLE - Fighting in GYM: {current_location}")
+            return BattleType.TRAINER
         
         # PRIORITY 3: Check memory flags (fallback if terrain + dialogue inconclusive)
         logger.info(f"🔍 [BATTLE TYPE DETECT] No terrain assumption, checking memory flags...")
@@ -1044,14 +1054,14 @@ class BattleBot:
             logger.info(f"🔍 [MOVE SELECT] ❌ NOT in ABSORB_EFFECTIVE list")
             print(f"🔍 [CHECK 2] NO - not in EFFECTIVE list")
         
-        # Unknown Pokemon - default to Pound (conservative choice)
+        # Unknown Pokemon - default to Absorb (HP drain benefit)
         logger.warning(f"⚠️ [MOVE SELECT] Unknown Pokemon '{species_normalized}' - not in either list")
         logger.warning(f"   ABSORB_NOT_EFFECTIVE ({len(self.ABSORB_NOT_EFFECTIVE)} species): {self.ABSORB_NOT_EFFECTIVE}")
         logger.warning(f"   ABSORB_EFFECTIVE ({len(self.ABSORB_EFFECTIVE)} species): {self.ABSORB_EFFECTIVE}")
-        print(f"⚠️ [RESULT] Unknown Pokemon '{species_normalized}' → POUND (safe choice)")
+        print(f"🌿 [RESULT] Unknown Pokemon '{species_normalized}' → ABSORB (default: HP drain!)")
         logger.info(f"=" * 60)
         print(f"=" * 50)
-        return False
+        return True  # CHANGED: Default to Absorb for HP recovery
     
     def get_action(self, state_data: Dict[str, Any]) -> Optional[str]:
         """

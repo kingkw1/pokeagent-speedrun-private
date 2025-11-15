@@ -23,6 +23,11 @@ MAX_MOVEMENT_BATCH_SIZE = 15  # ~1.3 seconds of movement at 60 FPS
 # Store tuples of (x, y, map_location) for the last 10 positions
 _recent_positions = deque(maxlen=10)
 
+# Track warp detection for B press injection
+# When we detect an extreme coordinate jump (>20 tiles), press B to pause
+_needs_warp_settle_b_press = False
+_last_known_position = None
+
 # Track portal waiting - dict of {(x, y, map): frame_count}
 # Tracks how many frames we've waited at a specific portal tile
 _portal_wait_frames = {}
@@ -1439,6 +1444,7 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     # Declare global variables at the start of the function
     global _recent_positions, _dismissed_monologues, _stuck_counter, _last_position
     global _post_dialogue_movement_count, _was_in_dialogue
+    global _needs_warp_settle_b_press, _last_known_position
     
     # Track current position to avoid immediate backtracking through warps
     try:
@@ -1454,6 +1460,23 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
             # Only add if it's a new position (not the same as the last one)
             if not _recent_positions or _recent_positions[-1] != current_pos_key:
                 _recent_positions.append(current_pos_key)
+            
+            # WARP DETECTION: Check for extreme coordinate jumps (>20 tiles in one step)
+            # This indicates a warp/teleport occurred and we should press B to pause
+            if _last_known_position is not None:
+                last_x, last_y, last_loc = _last_known_position
+                dx = abs(current_x - last_x)
+                dy = abs(current_y - last_y)
+                distance = max(dx, dy)  # Manhattan distance (max of x and y deltas)
+                
+                # If we jumped >20 tiles, it's a warp - press B to settle
+                if distance > 20:
+                    logger.info(f"🌀 [WARP JUMP] Extreme coordinate jump detected: ({last_x}, {last_y}) → ({current_x}, {current_y}) = {distance} tiles")
+                    print(f"🌀 [WARP JUMP] Teleported {distance} tiles! Pressing B to settle position")
+                    _needs_warp_settle_b_press = True
+            
+            # Update last known position
+            _last_known_position = (current_x, current_y, location)
         
         # 🌀 WARP DETECTION - Wait 2 frames after location change to let position stabilize
         # Detect warps by looking for location name changes (map transitions)
@@ -1466,6 +1489,10 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         if location and location != action_step._last_location:
             print(f"🌀 [WARP DETECTED] Location changed: '{action_step._last_location}' → '{location}'")
             logger.info(f"🌀 [WARP DETECTED] Location changed: '{action_step._last_location}' → '{location}'")
+            # Set flag to press B before any navigation
+            _needs_warp_settle_b_press = True
+            logger.info(f"⏸️ [WARP FLAG] Set _needs_warp_settle_b_press = True due to location change")
+            print(f"⏸️ [WARP FLAG] Will press B to settle after warp")
             # No longer waiting frames - VLM is slow enough that position stabilizes naturally
             action_step._last_location = location
         
@@ -2108,6 +2135,14 @@ Answer with just the button name:"""
             logger.info(f"🔍 [DIRECTIVE DEBUG] Directive returned: {directive}")
             print(f"🔍 [DIRECTIVE DEBUG] Directive returned: {directive}")
             
+            # PRIORITY CHECK: If we detected a warp jump, press B to settle position first
+            # This prevents navigation from executing before the game position stabilizes
+            if _needs_warp_settle_b_press:
+                logger.info(f"⏸️ [WARP SETTLE] Pressing B after warp teleport to settle position")
+                print(f"⏸️ [WARP SETTLE] Pressing B after teleport to settle position")
+                _needs_warp_settle_b_press = False  # Reset flag
+                return ['B']
+            
             if directive:
                 # NEW SIMPLE DIRECTIVE FORMAT:
                 # - goal_coords: (x, y, 'LOCATION') - navigate to specific coordinates
@@ -2138,7 +2173,14 @@ Answer with just the button name:"""
                     should_interact = directive.get('should_interact', False)
                     npc_coords = directive.get('npc_coords')  # Optional (npc_x, npc_y) for facing direction
                     avoid_grass = directive.get('avoid_grass', True)  # Default to True (speedrun mode)
-                    print(f"🔍 [GOAL_COORDS] goal_coords={goal_coords}, should_interact={should_interact}, npc_coords={npc_coords}, avoid_grass={avoid_grass}")
+                    press_b_first = directive.get('press_b_first', False)  # Press B before navigating (for warp settling)
+                    print(f"🔍 [GOAL_COORDS] goal_coords={goal_coords}, should_interact={should_interact}, npc_coords={npc_coords}, avoid_grass={avoid_grass}, press_b_first={press_b_first}")
+                    
+                    # If press_b_first is True, press B to give warp time to settle
+                    if press_b_first:
+                        logger.info(f"⏸️ [PRESS B FIRST] Pressing B to settle warp before navigation")
+                        print(f"⏸️ [PRESS B FIRST] Pressing B to settle warp before navigation")
+                        return ['B']
                     
                     if len(goal_coords) == 3:
                         target_x, target_y, target_map = goal_coords
@@ -2501,60 +2543,115 @@ What button should you press? Respond with ONLY the button name (A, B, UP, DOWN,
                         
                         exploration_direction = None
                         
-                        # Try directions in priority order: primary first, then perpendiculars
-                        candidate_directions = [primary_direction] + perpendicular_directions
+                        # Get map stitcher data for tile checking
+                        stitched_map_info = state_data.get('map', {}).get('stitched_map_info')
+                        grid_data = {}
+                        if stitched_map_info and stitched_map_info.get('available'):
+                            current_area = stitched_map_info.get('current_area', {})
+                            grid_data = current_area.get('grid', {})
                         
-                        # Check each direction for walkable tiles
-                        for test_dir in candidate_directions:
-                            # Calculate position in that direction
-                            test_x, test_y = current_x, current_y
-                            if test_dir == 'UP':
-                                test_y -= 1
-                            elif test_dir == 'DOWN':
-                                test_y += 1
-                            elif test_dir == 'LEFT':
-                                test_x -= 1
-                            elif test_dir == 'RIGHT':
-                                test_x += 1
+                        # STRATEGY: If primary direction blocked, scan perpendiculars for nearest unexplored tile
+                        # This helps find gaps in walls that lead toward the goal
+                        
+                        # First, check primary direction
+                        primary_x, primary_y = current_x, current_y
+                        if primary_direction == 'UP':
+                            primary_y -= 1
+                        elif primary_direction == 'DOWN':
+                            primary_y += 1
+                        elif primary_direction == 'LEFT':
+                            primary_x -= 1
+                        elif primary_direction == 'RIGHT':
+                            primary_x += 1
+                        
+                        primary_tile_key = f"{primary_x},{primary_y}"
+                        primary_tile = grid_data.get(primary_tile_key) if grid_data else None
+                        walkable_tiles = ['.', '_', '~', 'D', 'S', '^', 'v', '<', '>', 'L', '?']
+                        
+                        # Check if primary is walkable or unexplored
+                        if primary_tile is None:
+                            # Primary is unexplored - go there!
+                            print(f"🔍 [EXPLORATION] {primary_direction} → ({primary_x}, {primary_y}) is UNEXPLORED (frontier)")
+                            exploration_direction = primary_direction
+                        elif primary_tile in walkable_tiles:
+                            # Primary is walkable - go there!
+                            print(f"✅ [EXPLORATION] {primary_direction} → ({primary_x}, {primary_y}) is walkable ('{primary_tile}')")
+                            exploration_direction = primary_direction
+                        else:
+                            # Primary is blocked - search perpendiculars for gaps
+                            print(f"❌ [EXPLORATION] {primary_direction} → ({primary_x}, {primary_y}) blocked ('{primary_tile}')")
+                            print(f"🔍 [LOCAL SEARCH] Scanning perpendicular directions for unexplored tiles...")
                             
-                            # Check if that tile is walkable (use map stitcher if available)
-                            is_walkable_tile = False
-                            stitched_map_info = state_data.get('map', {}).get('stitched_map_info')
+                            # Scan up to 5 tiles in each perpendicular direction to find gaps
+                            best_unexplored = None
+                            best_distance = 999
                             
-                            if stitched_map_info and stitched_map_info.get('available'):
-                                current_area = stitched_map_info.get('current_area', {})
-                                grid_data = current_area.get('grid', {})
-                                
-                                if grid_data:
-                                    # Check stitched map
-                                    tile_key = f"{test_x},{test_y}"
-                                    tile_type = grid_data.get(tile_key)
+                            for perp_dir in perpendicular_directions:
+                                for distance in range(1, 6):  # Check up to 5 tiles away
+                                    scan_x, scan_y = current_x, current_y
+                                    if perp_dir == 'UP':
+                                        scan_y -= distance
+                                    elif perp_dir == 'DOWN':
+                                        scan_y += distance
+                                    elif perp_dir == 'LEFT':
+                                        scan_x -= distance
+                                    elif perp_dir == 'RIGHT':
+                                        scan_x += distance
                                     
-                                    if tile_type:
-                                        # Tile is known - check if walkable
-                                        walkable_tiles = ['.', '_', '~', 'D', 'S', '^', 'v', '<', '>', 'L', '?']
-                                        is_walkable_tile = tile_type in walkable_tiles
-                                        
-                                        if is_walkable_tile:
-                                            print(f"✅ [EXPLORATION TEST] {test_dir} → ({test_x}, {test_y}) is walkable ('{tile_type}')")
-                                            exploration_direction = test_dir
-                                            break
-                                        else:
-                                            print(f"❌ [EXPLORATION TEST] {test_dir} → ({test_x}, {test_y}) blocked ('{tile_type}')")
+                                    scan_key = f"{scan_x},{scan_y}"
+                                    scan_tile = grid_data.get(scan_key) if grid_data else None
+                                    
+                                    # Found unexplored tile!
+                                    if scan_tile is None:
+                                        if distance < best_distance:
+                                            best_unexplored = (perp_dir, distance, scan_x, scan_y)
+                                            best_distance = distance
+                                        print(f"   🎯 [SCAN] {perp_dir} +{distance} → ({scan_x}, {scan_y}) UNEXPLORED")
+                                        break  # Found gap in this direction, check next direction
+                                    # Found walkable tile - continue scanning
+                                    elif scan_tile in walkable_tiles:
+                                        continue
+                                    # Hit wall - stop scanning this direction
                                     else:
-                                        # Tile is unknown - this is a frontier! Perfect for exploration
-                                        print(f"🔍 [EXPLORATION TEST] {test_dir} → ({test_x}, {test_y}) is UNEXPLORED (frontier)")
+                                        print(f"   🚫 [SCAN] {perp_dir} +{distance} → ({scan_x}, {scan_y}) blocked ('{scan_tile}')")
+                                        break
+                            
+                            # Use nearest unexplored tile found
+                            if best_unexplored:
+                                exploration_direction = best_unexplored[0]
+                                dist = best_unexplored[1]
+                                exp_x, exp_y = best_unexplored[2], best_unexplored[3]
+                                print(f"✅ [LOCAL SEARCH] Found unexplored tile at ({exp_x}, {exp_y}) via {exploration_direction} (+{dist} tiles)")
+                                print(f"🔍 [SMART EXPLORATION] Moving {exploration_direction} to explore and find gap toward goal")
+                            else:
+                                # No unexplored found - try any walkable perpendicular
+                                print(f"⚠️ [LOCAL SEARCH] No unexplored tiles found in perpendiculars")
+                                for test_dir in perpendicular_directions:
+                                    test_x, test_y = current_x, current_y
+                                    if test_dir == 'UP':
+                                        test_y -= 1
+                                    elif test_dir == 'DOWN':
+                                        test_y += 1
+                                    elif test_dir == 'LEFT':
+                                        test_x -= 1
+                                    elif test_dir == 'RIGHT':
+                                        test_x += 1
+                                    
+                                    test_key = f"{test_x},{test_y}"
+                                    test_tile = grid_data.get(test_key) if grid_data else None
+                                    
+                                    if test_tile and test_tile in walkable_tiles:
+                                        print(f"✅ [FALLBACK] {test_dir} → ({test_x}, {test_y}) is walkable ('{test_tile}')")
                                         exploration_direction = test_dir
                                         break
                         
-                        # If no direction found, fall back to primary (last resort)
+                        # Last resort - try primary anyway
                         if not exploration_direction:
-                            print(f"⚠️ [SMART EXPLORATION] All directions appear blocked, trying primary anyway")
+                            print(f"⚠️ [SMART EXPLORATION] All directions blocked, trying primary anyway")
                             exploration_direction = primary_direction
                             logger.info(f"🧭 [FALLBACK NAV] Last resort: trying {primary_direction} toward goal (Δx={dx}, Δy={dy})")
                         else:
-                            logger.info(f"🔍 [SMART EXPLORATION] Selected {exploration_direction} (walkable/unexplored path found)")
-                            print(f"🔍 [SMART EXPLORATION] Using {exploration_direction} to explore (best available direction)")
+                            logger.info(f"🔍 [SMART EXPLORATION] Selected {exploration_direction} (exploration strategy)")
                         
                         # Use VLM executor for compliance
                         try:
@@ -2708,9 +2805,9 @@ What button should you press? Respond with ONLY the button name (A, B, UP, DOWN,
                         logger.info(f"⏳ [WAIT] Still waiting for transition...")
                         print(f"⏳ [WAIT] Still waiting...")
                         return []
-        
-        # === EXISTING NAVIGATION GOAL HANDLING (unchanged) ===
-        # Check for active navigation goal from directive or other sources
+                
+                # Handle NAVIGATE_DIRECTION - directional navigation with optional portal coordinates
+                elif directive.get('action') == 'NAVIGATE_DIRECTION':
                     direction = directive.get('direction', 'south')  # 'north', 'south', 'east', 'west'
                     target_location = directive.get('target_location', '').upper()
                     portal_coords = directive.get('portal_coords')  # (x, y) tuple or None
@@ -3068,7 +3165,13 @@ What button should you press? Respond with ONLY the button name (A, B, UP, DOWN,
                 # Handle NAVIGATE_AND_INTERACT directive (most common)
                 elif directive.get('action') == 'NAVIGATE_AND_INTERACT' and directive.get('target'):
                     target = directive.get('target')
-                    target_x, target_y, target_map = target
+                    
+                    # Handle both 2-tuple (x, y) and 3-tuple (x, y, map) formats
+                    if len(target) == 2:
+                        target_x, target_y = target
+                        target_map = directive.get('location', '')  # Get map from 'location' field
+                    else:
+                        target_x, target_y, target_map = target
                     
                     logger.info(f"📍 [DIRECTIVE] Converting to NavigationGoal: ({target_x}, {target_y}, {target_map})")
                     
@@ -3302,20 +3405,24 @@ Confirm by responding with the exact action: {nav_action[0]}
                             # If VLM confirms the recommended action or gives a valid button, use it
                             if vlm_action == nav_action[0]:
                                 logger.info(f"📍 [DIRECTIVE] VLM confirmed recommended action: {vlm_action}")
-                                return [vlm_action]
+                                # CRITICAL FIX: Return the FULL nav_action list, not just first element!
+                                return nav_action
                             elif vlm_action in valid_buttons:
                                 # VLM suggested different action - log warning but use recommendation
                                 logger.warning(f"📍 [DIRECTIVE] VLM suggested {vlm_action}, but using pathfinding recommendation: {nav_action[0]}")
-                                return [nav_action[0]]
+                                # CRITICAL FIX: Return the FULL nav_action list, not just first element!
+                                return nav_action
                             else:
                                 # VLM gave invalid response - use recommendation directly
                                 logger.warning(f"📍 [DIRECTIVE] VLM response unclear: '{vlm_response}', using recommendation: {nav_action[0]}")
-                                return [nav_action[0]]
+                                # CRITICAL FIX: Return the FULL nav_action list, not just first element!
+                                return nav_action
                                     
                         except Exception as e:
                             # If VLM fails, use the pathfinding recommendation (still competition compliant as VLM was called)
                             logger.warning(f"📍 [DIRECTIVE] VLM executor error: {e}, using pathfinding recommendation: {nav_action[0]}")
-                            return [nav_action[0]]
+                            # CRITICAL FIX: Return the FULL nav_action list, not just first element!
+                            return nav_action
                 
                 # Handle INTERACT directive (at target, just press A)
                 elif directive.get('action') == 'INTERACT':
@@ -3386,6 +3493,38 @@ What button should you press? Respond with ONE button name only: A"""
                     # Return empty action to wait - don't fall through to VLM
                     # This prevents the agent from trying to navigate while waiting for dialogue
                     return []
+                
+                # Handle CROSS_BOUNDARY (open-world map transitions - no portal needed)
+                elif directive.get('action') == 'CROSS_BOUNDARY':
+                    direction = directive.get('direction', '').lower()
+                    from_location = directive.get('from_location', '')
+                    to_location = directive.get('to_location', '')
+                    
+                    logger.info(f"📍 [CROSS_BOUNDARY] Moving {direction} from {from_location} to {to_location}")
+                    print(f"🗺️ [CROSS_BOUNDARY] Going {direction}: {from_location} → {to_location}")
+                    
+                    # Get current location to check if boundary already crossed
+                    player_data = state_data.get('player', {})
+                    current_location = player_data.get('location', '').upper()
+                    
+                    # Check if we've already crossed into target location
+                    if to_location.upper() in current_location:
+                        logger.info(f"✅ [CROSS_BOUNDARY] Already in target location: {to_location}")
+                        return []  # Success - let objective manager provide next directive
+                    
+                    # CRITICAL FIX: Don't just move blindly in direction - this hits walls!
+                    # The NavigationPlanner should have created a NAVIGATE stage BEFORE this CROSS_BOUNDARY stage
+                    # If we're hitting CROSS_BOUNDARY, it means we should be AT the boundary already
+                    # This is a fallback - just try moving in the direction
+                    logger.warning(f"⚠️ [CROSS_BOUNDARY] Attempting blind directional movement - planner should navigate TO boundary first!")
+                    
+                    # Map direction to button
+                    direction_map = {'north': 'UP', 'south': 'DOWN', 'east': 'RIGHT', 'west': 'LEFT'}
+                    move_direction = direction_map.get(direction, 'UP')
+                    
+                    # Keep moving in the specified direction to cross boundary
+                    logger.info(f"🗺️ [CROSS_BOUNDARY] Moving {move_direction} to cross boundary")
+                    return [move_direction]
                 
                 else:
                     action_value = directive.get('action', 'UNKNOWN')
