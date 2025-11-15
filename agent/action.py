@@ -1573,14 +1573,14 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
                     # A to dismiss the message
                     # Then we'll be back at the base menu, so navigate to FIGHT
                     # UP → LEFT → A to select FIGHT option
-                    return ["B", "B", "UP", "LEFT", "A"]  # Just dismiss the message first, next step will select FIGHT
+                    return ["B", "B", "B", "UP", "LEFT", "A"]  # Just dismiss the message first, next step will select FIGHT
                 
                 elif battle_decision == "SELECT_RUN":
                     # Navigate to RUN from base menu
                     # CRITICAL: Press B twice first to clear any menus/states
                     # Then: DOWN → RIGHT → A to select RUN
                     logger.info("🏃 [BATTLE BOT] Selecting RUN: B → B → DOWN → RIGHT → A (menu clearing)")
-                    return ["B", "B", "DOWN", "RIGHT", "A"]
+                    return ["B", "B", "B", "DOWN", "RIGHT", "A"]
                 
                 elif battle_decision == "SELECT_FIGHT":
                     # Select FIGHT from base menu (just press A, it's the default)
@@ -1594,7 +1594,7 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
                     # B twice to clear any menus, then navigate to FIGHT, then to ABSORB
                     logger.info("🌿 [BATTLE BOT] Selecting ABSORB: B → B → UP → LEFT → A → DOWN → LEFT → A")
                     print("🌿 [BATTLE BOT] Using ABSORB (Grass-type, drains HP)")
-                    return ["B", "B", "UP", "LEFT", "A", "DOWN", "LEFT", "A"]
+                    return ["B", "B", "B", "UP", "LEFT", "A", "DOWN", "LEFT", "A"]
                 
                 elif battle_decision == "USE_MOVE_POUND":
                     # Select POUND from fight menu
@@ -1602,7 +1602,7 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
                     # Sequence: B → B → UP → LEFT → A (FIGHT) → UP → LEFT → A (POUND)
                     logger.info("🥊 [BATTLE BOT] Selecting POUND: B → B → UP → LEFT → A → UP → LEFT → A")
                     print("🥊 [BATTLE BOT] Using POUND (Normal-type)")
-                    return ["B", "B", "UP", "LEFT", "A", "UP", "LEFT", "A"]
+                    return ["B", "B", "B", "UP", "LEFT", "A", "UP", "LEFT", "A"]
                 
                 elif battle_decision == "PRESS_B":
                     # Exit submenu (fight menu or bag menu)
@@ -2282,7 +2282,7 @@ Answer with just the button name:"""
                     logger.info(f"🎯 [DIRECTIVE] Navigating {goal_direction}")
                     print(f"🎯 [DIRECTIVE] Processing goal_direction: {goal_direction}")
                     
-                    # Use existing frontier-based pathfinding
+                    # Try pathfinding first - it will fail if no walkable targets (e.g., at map edge)
                     suggested_action = _local_pathfind_from_tiles(state_data, goal_direction, recent_actions)
                     if suggested_action:
                         logger.info(f"🗺️ [DIRECTIVE] Directional pathfinding suggests: {suggested_action}")
@@ -2290,9 +2290,23 @@ Answer with just the button name:"""
                         # suggested_action is now a list of moves, return it directly
                         return suggested_action if isinstance(suggested_action, list) else [suggested_action]
                     else:
-                        logger.warning(f"⚠️ [DIRECTIVE] Directional pathfinding failed for {goal_direction}")
-                        print(f"⚠️ [DIRECTIVE] Directional pathfinding failed - returning empty")
-                        return []
+                        # Pathfinding failed - likely standing on warp tile at map edge
+                        # Just push in the goal direction to trigger the warp
+                        logger.info(f"🚪 [DIRECTIVE] No walkable tiles {goal_direction} - pushing direction to trigger warp")
+                        print(f"🚪 [DIRECTIVE] No walkable path {goal_direction} - pushing direction to cross boundary")
+                        
+                        # Convert direction to action
+                        direction_map = {
+                            'north': 'UP',
+                            'south': 'DOWN', 
+                            'east': 'RIGHT',
+                            'west': 'LEFT'
+                        }
+                        action = direction_map.get(goal_direction.lower(), 'UP')
+                        
+                        logger.info(f"🚪 [DIRECTIVE] Pushing {action} to cross boundary")
+                        print(f"🚪 [DIRECTIVE] Returning {action} to trigger warp/boundary crossing")
+                        return [action]
                 
                 # Handle wait_for_transition - wait for warp/map transition to complete
                 elif 'wait_for_transition' in directive:
