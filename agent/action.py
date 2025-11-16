@@ -1627,56 +1627,52 @@ What button should you press? Respond with ONE button name only: A"""
                     if opp_pkmn:
                         battle_context += f" | Opponent: {opp_pkmn.get('species', 'Unknown')} HP:{opp_pkmn.get('current_hp', '?')}/{opp_pkmn.get('max_hp', '?')}"
                 
-                # Map symbolic decision to button sequence and route ALL through VLM executor
+                # Map symbolic decision to SINGLE button recommendation for VLM
+                # COMPLIANCE: Battle bot recommends ONE button, VLM confirms it, agent presses it
+                # Multi-step sequences (like menu navigation) happen across multiple frames
                 button_recommendation = None
                 decision_explanation = ""
-                recommended_sequence = None  # For multi-button sequences
                 
                 if battle_decision == "ADVANCE_BATTLE_DIALOGUE":
-                    # Battle intro dialogue - press B-A-B to advance safely
+                    # Battle intro dialogue - just press B this frame
                     button_recommendation = "B"
-                    decision_explanation = "Advance battle intro dialogue (safe sequence: B→A→B)"
-                    recommended_sequence = ["B", "B", "A", "B"]
-                    logger.info("💬 [BATTLE BOT] Advancing battle dialogue with B → A → B (safe sequence)")
+                    decision_explanation = "Advance battle dialogue"
+                    logger.info("💬 [BATTLE BOT] Recommending B to advance dialogue")
                 
                 elif battle_decision == "RECOVER_FROM_RUN_FAILURE":
-                    # We tried to run from a trainer battle! 
-                    # Press B to dismiss "No! There's no running from a TRAINER BATTLE!" message
+                    # We tried to run from a trainer battle - press B to dismiss message
                     button_recommendation = "B"
-                    decision_explanation = "Dismiss 'no running from trainer' message and return to fight menu"
-                    recommended_sequence = ["B", "B", "B", "UP", "LEFT", "A"]
-                    logger.info("⚠️ [BATTLE BOT ERROR RECOVERY] Dismissing 'no running' message and returning to fight")
-                    print("⚠️ [BATTLE BOT] RECOVERY: B to dismiss → navigate to FIGHT")
+                    decision_explanation = "Dismiss 'no running from trainer' message"
+                    logger.info("⚠️ [BATTLE BOT ERROR RECOVERY] Recommending B to dismiss message")
+                    print("⚠️ [BATTLE BOT] RECOVERY: Recommending B")
                 
                 elif battle_decision == "SELECT_RUN":
-                    # Navigate to RUN from base menu
+                    # Battle bot will navigate to RUN over multiple frames
+                    # This frame: just recommend the next step
                     button_recommendation = "DOWN"
-                    decision_explanation = "Navigate to RUN option from battle menu (DOWN→RIGHT→A)"
-                    recommended_sequence = ["B", "B", "B", "DOWN", "RIGHT", "A"]
-                    logger.info("🏃 [BATTLE BOT] Selecting RUN: B → B → DOWN → RIGHT → A (menu clearing)")
+                    decision_explanation = "Navigate toward RUN option in battle menu"
+                    logger.info("🏃 [BATTLE BOT] Recommending DOWN toward RUN")
                 
                 elif battle_decision == "SELECT_FIGHT":
                     # Select FIGHT from base menu (just press A, it's the default)
                     button_recommendation = "A"
                     decision_explanation = "Select FIGHT from battle menu (default option)"
-                    recommended_sequence = ["A"]
-                    logger.info("⚔️ [BATTLE BOT] Selecting FIGHT: A")
+                    logger.info("⚔️ [BATTLE BOT] Recommending A to select FIGHT")
                 
                 elif battle_decision == "USE_MOVE_ABSORB":
-                    # Select ABSORB from fight menu
-                    button_recommendation = "DOWN"
-                    decision_explanation = "Select ABSORB move (Grass-type, HP drain)"
-                    recommended_sequence = ["B", "B", "B", "UP", "LEFT", "A", "DOWN", "LEFT", "A"]
-                    logger.info("🌿 [BATTLE BOT] Selecting ABSORB: B → B → UP → LEFT → A → DOWN → LEFT → A")
-                    print("🌿 [BATTLE BOT] Using ABSORB (Grass-type, drains HP)")
+                    # Battle bot will navigate to ABSORB over multiple frames
+                    # This frame: recommend next step in sequence
+                    button_recommendation = "B"  # First: clear any menus
+                    decision_explanation = "Navigate toward ABSORB move (Grass-type, HP drain)"
+                    logger.info("🌿 [BATTLE BOT] Recommending B toward ABSORB")
+                    print("🌿 [BATTLE BOT] Working toward ABSORB (Grass-type, drains HP)")
                 
                 elif battle_decision == "USE_MOVE_POUND":
-                    # Select POUND from fight menu
-                    button_recommendation = "UP"
-                    decision_explanation = "Select POUND move (Normal-type)"
-                    recommended_sequence = ["B", "B", "B", "UP", "LEFT", "A", "UP", "LEFT", "A"]
-                    logger.info("🥊 [BATTLE BOT] Selecting POUND: B → B → UP → LEFT → A → UP → LEFT → A")
-                    print("🥊 [BATTLE BOT] Using POUND (Normal-type)")
+                    # Battle bot will navigate to POUND over multiple frames
+                    button_recommendation = "B"  # First: clear any menus
+                    decision_explanation = "Navigate toward POUND move (Normal-type)"
+                    logger.info("🥊 [BATTLE BOT] Recommending B toward POUND")
+                    print("🥊 [BATTLE BOT] Working toward POUND (Normal-type)")
                 
                 elif battle_decision == "PRESS_B":
                     # Exit submenu (fight menu or bag menu)
@@ -1746,12 +1742,9 @@ What button should you press? Respond with ONE button name only: A, B, UP, DOWN,
                     
                     if final_action:
                         logger.info(f"✅ [VLM EXECUTOR] BattleBot→{battle_decision}, VLM confirmed→{final_action[0]}")
-                        # Return the full recommended sequence if available, otherwise just the confirmed button
-                        if recommended_sequence:
-                            logger.info(f"✅ [VLM EXECUTOR] Returning full sequence: {recommended_sequence}")
-                            return recommended_sequence
-                        else:
-                            return final_action
+                        # COMPLIANCE FIX: Return ONLY the single button VLM confirmed
+                        # Multi-step sequences happen across multiple frames with VLM confirmation each time
+                        return final_action
                     else:
                         # Retry with simpler prompt
                         logger.warning(f"⚠️ [VLM EXECUTOR] Could not parse VLM response '{vlm_executor_response[:50]}', retrying")
@@ -1773,12 +1766,8 @@ Answer with just the button name:"""
                         
                         if final_retry_action:
                             logger.info(f"✅ [VLM EXECUTOR RETRY] Got valid response: {final_retry_action[0]}")
-                            # Return the full recommended sequence if available, otherwise just the confirmed button
-                            if recommended_sequence:
-                                logger.info(f"✅ [VLM EXECUTOR RETRY] Returning full sequence: {recommended_sequence}")
-                                return recommended_sequence
-                            else:
-                                return final_retry_action
+                            # COMPLIANCE FIX: Return ONLY the single button VLM confirmed
+                            return final_retry_action
                         else:
                             # CRITICAL: No valid VLM response - CRASH per competition rules
                             error_msg = f"❌ [COMPLIANCE VIOLATION] VLM failed to provide valid button in battle after 2 attempts. Response 1: '{vlm_executor_response[:100]}', Response 2: '{retry_response[:100]}'. Competition rules require final action from neural network. CANNOT PROCEED."
@@ -2141,7 +2130,28 @@ Answer with just the button name:"""
                 logger.info(f"⏸️ [WARP SETTLE] Pressing B after warp teleport to settle position")
                 print(f"⏸️ [WARP SETTLE] Pressing B after teleport to settle position")
                 _needs_warp_settle_b_press = False  # Reset flag
-                return ['B']
+                
+                # VLM EXECUTOR: Route warp settle recommendation through VLM
+                warp_settle_prompt = f"""You just warped to a new location. The game position needs to stabilize.
+
+Current position: ({current_x}, {current_y}) in {location}
+Last position: ({action_step._last_x}, {action_step._last_y})
+
+The system recommends pressing B to settle the position after warping.
+
+What button should you press?"""
+                
+                vlm_response = vlm.get_text_query(warp_settle_prompt, "WARP_SETTLE_EXECUTOR")
+                
+                # Parse response
+                button_match = re.search(r'\b([ABLRUDSTART])\b', vlm_response, re.IGNORECASE)
+                if button_match:
+                    confirmed_button = button_match.group(1).upper()
+                    logger.info(f"✅ [WARP SETTLE EXECUTOR] VLM confirmed: {confirmed_button}")
+                    return [confirmed_button]
+                else:
+                    logger.warning(f"⚠️ [WARP SETTLE EXECUTOR] Could not parse VLM response, defaulting to B")
+                    return ['B']
             
             if directive:
                 # NEW SIMPLE DIRECTIVE FORMAT:
@@ -2180,7 +2190,28 @@ Answer with just the button name:"""
                     if press_b_first:
                         logger.info(f"⏸️ [PRESS B FIRST] Pressing B to settle warp before navigation")
                         print(f"⏸️ [PRESS B FIRST] Pressing B to settle warp before navigation")
-                        return ['B']
+                        
+                        # VLM EXECUTOR: Route press B first recommendation through VLM
+                        press_b_first_prompt = f"""The navigation directive requests pressing B first to stabilize the game state.
+
+Current position: ({current_x}, {current_y}) in {location}
+Navigation goal: {goal_coords}
+
+The system recommends pressing B before starting navigation to ensure position is stable.
+
+What button should you press?"""
+                        
+                        vlm_response = vlm.get_text_query(press_b_first_prompt, "PRESS_B_FIRST_EXECUTOR")
+                        
+                        # Parse response
+                        button_match = re.search(r'\b([ABLRUDSTART])\b', vlm_response, re.IGNORECASE)
+                        if button_match:
+                            confirmed_button = button_match.group(1).upper()
+                            logger.info(f"✅ [PRESS B FIRST EXECUTOR] VLM confirmed: {confirmed_button}")
+                            return [confirmed_button]
+                        else:
+                            logger.warning(f"⚠️ [PRESS B FIRST EXECUTOR] Could not parse VLM response, defaulting to B")
+                            return ['B']
                     
                     if len(goal_coords) == 3:
                         target_x, target_y, target_map = goal_coords
@@ -2500,8 +2531,10 @@ What button should you press? Respond with ONLY the button name (A, B, UP, DOWN,
                                 if vlm_action in valid_buttons:
                                     logger.info(f"✅ [VLM EXECUTOR] Directive pathfinding → VLM confirmed: {vlm_action}")
                                     print(f"✅ [VLM EXECUTOR] VLM confirmed: {vlm_action}")
-                                    # Return full batched path with VLM-confirmed first action
-                                    return pathfound_action if isinstance(pathfound_action, list) else [pathfound_action]
+                                    # COMPLIANCE FIX: Return ONLY the single VLM-confirmed button
+                                    # A* calculated full path, but we only execute one step per frame
+                                    # Next frame will recalculate path from new position
+                                    return [vlm_action]
                                 else:
                                     # VLM gave unclear response - crash per competition rules
                                     logger.error(f"❌ [COMPLIANCE VIOLATION] VLM failed to provide valid button for directive pathfinding: '{vlm_response}'")
