@@ -1163,7 +1163,7 @@ class ObjectiveManager:
         # The NPC at (11, 44) blocks the direct path with a large dialogue zone
         # Blocked tiles: (11,44), (12,44), (13,44), (14,44), (15,44), (11,43), (11,42), (11,41), (11,40)
         # Strategy: Route through grass on south side via waypoints 16,45 -> 10,45
-        in_route_104_south = 'ROUTE_104' in graph_location and 'SOUTH' in graph_location
+        in_route_104_south = graph_location is not None and 'ROUTE_104' in graph_location and 'SOUTH' in graph_location
         
         if in_route_104_south:
             position = player_data.get('position', {})

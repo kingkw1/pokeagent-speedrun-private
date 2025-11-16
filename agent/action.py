@@ -1647,11 +1647,17 @@ What button should you press? Respond with ONE button name only: A"""
                     print("⚠️ [BATTLE BOT] RECOVERY: Recommending B")
                 
                 elif battle_decision == "SELECT_RUN":
-                    # Battle bot will navigate to RUN over multiple frames
-                    # This frame: just recommend the next step
-                    button_recommendation = "DOWN"
-                    decision_explanation = "Navigate toward RUN option in battle menu"
-                    logger.info("🏃 [BATTLE BOT] Recommending DOWN toward RUN")
+                    # SELECT_RUN means: press A to confirm RUN selection
+                    # (cursor should already be on RUN from previous RIGHT presses)
+                    button_recommendation = "A"
+                    decision_explanation = "Press A to confirm RUN and flee from wild battle"
+                    logger.info("🏃 [BATTLE BOT] Recommending A to confirm RUN")
+                
+                elif battle_decision == "PRESS_RIGHT":
+                    # Move cursor toward RUN option
+                    button_recommendation = "RIGHT"
+                    decision_explanation = "Navigate to RUN option in battle menu"
+                    logger.info("🏃 [BATTLE BOT] Recommending RIGHT to navigate to RUN")
                 
                 elif battle_decision == "SELECT_FIGHT":
                     # Select FIGHT from base menu (just press A, it's the default)
@@ -1660,18 +1666,63 @@ What button should you press? Respond with ONE button name only: A"""
                     logger.info("⚔️ [BATTLE BOT] Recommending A to select FIGHT")
                 
                 elif battle_decision == "USE_MOVE_ABSORB":
-                    # Battle bot will navigate to ABSORB over multiple frames
-                    # This frame: recommend next step in sequence
-                    button_recommendation = "B"  # First: clear any menus
-                    decision_explanation = "Navigate toward ABSORB move (Grass-type, HP drain)"
-                    logger.info("🌿 [BATTLE BOT] Recommending B toward ABSORB")
+                    # Battle menu navigation: base_menu → A (selects FIGHT) → fight_menu → UP (select ABSORB) → A (use move)
+                    # Track which step we're on using function attribute
+                    if not hasattr(battle_bot, '_absorb_step'):
+                        battle_bot._absorb_step = 0
+                    
+                    # Get current menu state to determine next action
+                    # Reset step counter when we're back at base_menu (new turn)
+                    latest_observation = state_data.get('latest_observation', {})
+                    visual_data = latest_observation.get('visual_data', {}) if isinstance(latest_observation, dict) else {}
+                    on_screen_text = visual_data.get('on_screen_text', {})
+                    dialogue_text = (on_screen_text.get('dialogue', '') or '').lower()
+                    
+                    if 'what will' in dialogue_text and 'do?' in dialogue_text:
+                        battle_bot._absorb_step = 0  # Reset at base menu
+                    
+                    if battle_bot._absorb_step == 0:
+                        button_recommendation = "A"
+                        decision_explanation = "Select FIGHT from base menu"
+                        battle_bot._absorb_step = 1
+                        logger.info("🌿 [BATTLE BOT] Step 1/3: Press A to select FIGHT")
+                    elif battle_bot._absorb_step == 1:
+                        button_recommendation = "UP"
+                        decision_explanation = "Navigate to ABSORB move (if available)"
+                        battle_bot._absorb_step = 2
+                        logger.info("🌿 [BATTLE BOT] Step 2/3: Press UP to select ABSORB")
+                    else:  # step 2
+                        button_recommendation = "A"
+                        decision_explanation = "Confirm ABSORB move"
+                        battle_bot._absorb_step = 0  # Reset for next turn
+                        logger.info("🌿 [BATTLE BOT] Step 3/3: Press A to use ABSORB")
                     print("🌿 [BATTLE BOT] Working toward ABSORB (Grass-type, drains HP)")
                 
                 elif battle_decision == "USE_MOVE_POUND":
-                    # Battle bot will navigate to POUND over multiple frames
-                    button_recommendation = "B"  # First: clear any menus
-                    decision_explanation = "Navigate toward POUND move (Normal-type)"
-                    logger.info("🥊 [BATTLE BOT] Recommending B toward POUND")
+                    # Battle menu navigation: base_menu → A (selects FIGHT) → fight_menu → A (use POUND - first move)
+                    # Track which step we're on
+                    if not hasattr(battle_bot, '_pound_step'):
+                        battle_bot._pound_step = 0
+                    
+                    # Get current menu state - reset at base menu
+                    latest_observation = state_data.get('latest_observation', {})
+                    visual_data = latest_observation.get('visual_data', {}) if isinstance(latest_observation, dict) else {}
+                    on_screen_text = visual_data.get('on_screen_text', {})
+                    dialogue_text = (on_screen_text.get('dialogue', '') or '').lower()
+                    
+                    if 'what will' in dialogue_text and 'do?' in dialogue_text:
+                        battle_bot._pound_step = 0  # Reset at base menu
+                    
+                    if battle_bot._pound_step == 0:
+                        button_recommendation = "A"
+                        decision_explanation = "Select FIGHT from base menu"
+                        battle_bot._pound_step = 1
+                        logger.info("🥊 [BATTLE BOT] Step 1/2: Press A to select FIGHT")
+                    else:  # step 1
+                        button_recommendation = "A"
+                        decision_explanation = "Confirm POUND move (first move, default selected)"
+                        battle_bot._pound_step = 0  # Reset for next turn
+                        logger.info("🥊 [BATTLE BOT] Step 2/2: Press A to use POUND")
                     print("🥊 [BATTLE BOT] Working toward POUND (Normal-type)")
                 
                 elif battle_decision == "PRESS_B":
@@ -2016,12 +2067,12 @@ What button should you press? Respond with ONE button name only: A, B, UP, DOWN,
                     
                     if final_action:
                         logger.info(f"✅ [VLM EXECUTOR] OpenerBot→{bot_action_str}, VLM confirmed→{final_action[0]}")
-                        # If we have a multi-button sequence, return the full sequence (like battle bot does)
-                        if recommended_sequence:
-                            logger.info(f"✅ [VLM EXECUTOR] Returning full sequence: {recommended_sequence}")
-                            return recommended_sequence
-                        else:
-                            return final_action
+                        # ✅ COMPETITION COMPLIANCE FIX:
+                        # Return ONLY the single button VLM confirmed, NOT the full sequence
+                        # Multi-step sequences happen across multiple frames with VLM confirmation each time
+                        # The old code returned recommended_sequence (multi-button) even though VLM only confirmed one button
+                        # This was a rubber-stamp violation - VLM decision was ignored
+                        return final_action  # Returns single button VLM confirmed (e.g., ['B'])
                     else:
                         # COMPETITION COMPLIANCE: VLM must provide valid response - retry with simpler prompt
                         logger.warning(f"⚠️ [VLM EXECUTOR] Could not parse VLM response '{vlm_executor_response[:50]}', retrying")
@@ -2044,12 +2095,9 @@ Answer with just the button name:"""
                         
                         if final_retry_action:
                             logger.info(f"✅ [VLM EXECUTOR RETRY] Got valid response: {final_retry_action[0]}")
-                            # If we have a multi-button sequence, return the full sequence
-                            if recommended_sequence:
-                                logger.info(f"✅ [VLM EXECUTOR RETRY] Returning full sequence: {recommended_sequence}")
-                                return recommended_sequence
-                            else:
-                                return final_retry_action
+                            # ✅ COMPETITION COMPLIANCE FIX:
+                            # Return ONLY what VLM confirmed, NOT the full multi-button sequence
+                            return final_retry_action  # Returns single button (e.g., ['START'])
                         else:
                             # CRITICAL: No valid VLM response after retry - CRASH per competition rules
                             error_msg = f"❌ [COMPLIANCE VIOLATION] VLM failed to provide valid button after 2 attempts. Response 1: '{vlm_executor_response[:100]}', Response 2: '{retry_response[:100]}'. Competition rules require final action from neural network. CANNOT PROCEED."
@@ -2132,10 +2180,11 @@ Answer with just the button name:"""
                 _needs_warp_settle_b_press = False  # Reset flag
                 
                 # VLM EXECUTOR: Route warp settle recommendation through VLM
+                last_pos_str = f"{_last_position}" if _last_position else "unknown"
                 warp_settle_prompt = f"""You just warped to a new location. The game position needs to stabilize.
 
 Current position: ({current_x}, {current_y}) in {location}
-Last position: ({action_step._last_x}, {action_step._last_y})
+Last position: {last_pos_str}
 
 The system recommends pressing B to settle the position after warping.
 
@@ -3261,7 +3310,7 @@ What button should you press? Respond with ONLY the button name (A, B, UP, DOWN,
                             # Determine which direction to move based on map transition
                             # Usually moving UP from Littleroot Town transitions to Route 101
                             # We'll use the goal_direction if available, or try UP as default
-                            directive_details = self.objective_manager.get_current_directive()
+                            directive_details = planning_step.objective_manager.get_current_directive() if hasattr(planning_step, 'objective_manager') else None
                             goal_direction = directive_details.get('goal_direction', 'north') if directive_details else 'north'
                             
                             # Map direction strings to actions

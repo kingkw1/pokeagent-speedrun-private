@@ -262,6 +262,27 @@ class BattleBot:
             
             # ⭐ CHECK BIRCH RESCUE BATTLE ONCE AT BATTLE START ⭐
             # This flag is set ONCE and never rechecked during the battle
+            
+            # BETTER DETECTION: Use has_pokedex flag instead of milestones
+            # Before you get the Pokedex, the ONLY battle is the Birch rescue battle
+            # You can't get into wild battles because you don't have Pokemon yet
+            # So: if no Pokedex → must be Birch rescue → FIGHT (don't run)
+            
+            game_flags = game_data.get('flags', {})
+            has_pokedex = game_flags.get('has_pokedex', False)
+            
+            # If player doesn't have Pokedex yet, this MUST be the Birch rescue battle
+            # (You can't encounter wild Pokemon without having your own Pokemon)
+            if not has_pokedex:
+                self._is_birch_rescue_battle = True
+                logger.info(f"🆘 [BIRCH RESCUE] No Pokedex yet - this is the Birch rescue battle!")
+                print(f"🆘 [BIRCH RESCUE] No Pokedex - must fight (cannot run)!")
+            else:
+                # Player has Pokedex - this is a normal battle (can run if wild)
+                self._is_birch_rescue_battle = False
+                logger.info(f"✅ [BATTLE CHECK] Player has Pokedex - normal battle rules apply")
+            
+            # Fallback: check milestones if flag isn't available
             milestones_completed = game_data.get('milestones_completed', [])
             post_rescue_milestones = [
                 'BIRCH_LAB_VISITED', 'OLDALE_TOWN', 'ROUTE_103', 'RIVAL_BATTLE_1',
@@ -269,18 +290,16 @@ class BattleBot:
             ]
             has_post_rescue_milestone = any(m in milestones_completed for m in post_rescue_milestones)
             
-            # CRITICAL FIX: If milestones list is empty, we can't determine if it's a rescue battle
-            # Empty list likely means milestones aren't being tracked or we're past the opening.
-            # Default to NOT a rescue battle (safer - allows running from wild battles).
-            # Only mark as rescue battle if we have milestones AND none are post-rescue.
-            if not milestones_completed:
-                # No milestones data available - assume NOT rescue battle (default to WILD)
-                self._is_birch_rescue_battle = False
-                logger.warning(f"⚠️ [BIRCH RESCUE CHECK] Milestones list is empty - defaulting to normal battle")
-                print(f"⚠️ [BATTLE START] No milestone data - treating as normal wild battle")
-            else:
-                # We have milestone data - check if we're in the rescue battle window
+            # If no flag data but we have milestones, use milestone logic
+            if not game_flags and milestones_completed:
                 self._is_birch_rescue_battle = not has_post_rescue_milestone
+                logger.info(f"📋 [BIRCH RESCUE] Using milestone fallback - rescue battle: {self._is_birch_rescue_battle}")
+            elif not game_flags and not milestones_completed:
+                # No data at all - conservative default to FIGHT (safer)
+                # Better to fight unnecessarily than try to run from scripted battle
+                self._is_birch_rescue_battle = True
+                logger.warning(f"⚠️ [BIRCH RESCUE CHECK] No flag or milestone data - defaulting to FIGHT mode (safer)")
+                print(f"⚠️ [BATTLE START] No game data - treating as rescue battle (will FIGHT)")
             
             # Detailed logging for debugging
             matching_milestones = [m for m in post_rescue_milestones if m in milestones_completed]
@@ -290,12 +309,14 @@ class BattleBot:
             logger.info(f"   _last_overworld_tile: '{self._last_overworld_tile}'")
             logger.info(f"   _battle_start_tile: '{self._battle_start_tile}'")
             logger.info(f"   current_tile_behavior (in battle): '{player_data.get('current_tile_behavior', 'N/A')}'")
+            logger.info(f"   has_pokedex: {has_pokedex}")
             logger.info(f"   All milestones completed: {milestones_completed}")
             logger.info(f"   Post-rescue milestones we check: {post_rescue_milestones}")
             logger.info(f"   Matching post-rescue milestones: {matching_milestones}")
             logger.info(f"   has_post_rescue_milestone: {has_post_rescue_milestone}")
             logger.info(f"   Is Birch rescue battle: {self._is_birch_rescue_battle}")
             logger.info(f"=" * 80)
+            print(f"🥊 [BATTLE START DEBUG] has_pokedex: {has_pokedex}")
             print(f"🥊 [BATTLE START DEBUG] Milestones: {milestones_completed}")
             print(f"🥊 [BATTLE START DEBUG] Matching: {matching_milestones}")
             print(f"🥊 [BATTLE START DEBUG] Is Birch rescue: {self._is_birch_rescue_battle}")
@@ -1283,12 +1304,21 @@ class BattleBot:
                 
                 # Navigate based on current menu state
                 if menu_state == "base_menu":
-                    # At "What will [POKEMON] do?" - navigate to RUN
-                    # From FIGHT (default): DOWN → RIGHT → A
+                    # At "What will [POKEMON] do?" - navigate to RUN and select it
+                    # Pokemon Emerald battle menu is 2x2 grid:
+                    #   FIGHT    BAG
+                    #   POKEMON  RUN
+                    # From FIGHT (default position): Press A to select RUN immediately
+                    # NOTE: In Gen 3, RUN is accessed by pressing RIGHT twice from FIGHT
+                    # But for competition compliance, we return single button per frame
+                    # So: return RIGHT this frame, and on next frame when still at base_menu, return RIGHT again, then A
                     self._unknown_state_count = 0  # Reset counter
-                    logger.info("🏃 [BATTLE BOT] At base menu - navigating to RUN")
-                    print(f"🏃 [BATTLE BOT] Selecting RUN (attempt #{self._run_attempts + 1})")
-                    return "SELECT_RUN"  # Special action for navigating DOWN → RIGHT → A
+                    
+                    # Simple strategy: just press A repeatedly 
+                    # The game will advance through menu naturally
+                    logger.info("🏃 [BATTLE BOT] At base menu - pressing A to advance toward RUN")
+                    print(f"🏃 [BATTLE BOT] Pressing A to run (attempt #{self._run_attempts + 1})")
+                    return "PRESS_A_ONLY"
                 
                 elif menu_state == "fight_menu":
                     # Accidentally entered fight menu - press B to go back
