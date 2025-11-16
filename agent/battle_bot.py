@@ -412,6 +412,17 @@ class BattleBot:
         logger.info(f"🔍 [BATTLE TYPE DETECT] Starting detection...")
         logger.info(f"   _battle_start_tile: '{self._battle_start_tile}'")
         
+        # PRIORITY 1.5: Check if in GYM location (auto-register as trainer battle)
+        # This must happen BEFORE dialogue checks to ensure GYM battles are always trainer battles
+        player_data = state_data.get('player', {})
+        current_location = player_data.get('location', '').upper()
+        
+        if 'GYM' in current_location:
+            self._current_battle_type = BattleType.TRAINER
+            logger.info(f"🏋️ [BATTLE TYPE] GYM BATTLE detected via location: {current_location}")
+            print(f"⚔️ [BATTLE TYPE] GYM BATTLE - Fighting trainer!")
+            return BattleType.TRAINER
+        
         # TILE LOGIC DISABLED - unreliable, defaults to WILD unless dialogue proves TRAINER
         assumed_type = BattleType.WILD  # SAFE DEFAULT: Try to run, fail if trainer
         logger.info(f"🌿 [BATTLE TYPE] Defaulting to WILD (tile logic disabled - safer to fail running than fight wild)")
@@ -503,16 +514,6 @@ class BattleBot:
             if assumed_type == BattleType.WILD:
                 print(f"🏃 [BATTLE TYPE] WILD BATTLE - Will run away! (default)")
             return assumed_type
-        
-        # PRIORITY 2.5: Check if in GYM location (auto-register as trainer battle)
-        player_data = state_data.get('player', {})
-        current_location = player_data.get('location', '').upper()
-        
-        if 'GYM' in current_location:
-            self._current_battle_type = BattleType.TRAINER
-            logger.info(f"🏛️ [BATTLE TYPE] TRAINER BATTLE detected - in GYM location: '{current_location}'")
-            print(f"⚔️ [BATTLE TYPE] TRAINER BATTLE - Fighting in GYM: {current_location}")
-            return BattleType.TRAINER
         
         # PRIORITY 3: Check memory flags (fallback if terrain + dialogue inconclusive)
         logger.info(f"🔍 [BATTLE TYPE DETECT] No terrain assumption, checking memory flags...")
@@ -658,7 +659,7 @@ class BattleBot:
         print(f"❓ [MENU STATE] UNKNOWN - pressing A as fallback")
         return "unknown"
     
-    def _extract_species_from_visible_entities(self, visual_data: Dict[str, Any]) -> str:
+    def _extract_species_from_visible_entities(self, visual_data: Dict[str, Any], state_data: Dict[str, Any] = None) -> str:
         """
         Extract opponent species from VLM's visible_entities field.
         
@@ -672,6 +673,7 @@ class BattleBot:
         
         Args:
             visual_data: VLM perception data with visible_entities
+            state_data: Game state data (optional, for party info)
             
         Returns:
             Species name or 'Unknown' if not found
@@ -687,9 +689,24 @@ class BattleBot:
         
         # Get our Pokemon species to filter out
         our_species = set()
-        if hasattr(self, '_state_data'):
-            party = self._state_data.get('party', [])
-            our_species = {p.get('species', '').upper() for p in party if p.get('species')}
+        if state_data:
+            # Try player.party first (standard location)
+            party = state_data.get('player', {}).get('party', [])
+            if not party:
+                # Fallback to top-level party
+                party = state_data.get('party', [])
+            our_species = {p.get('species_name', '').upper() for p in party if p.get('species_name')}
+            logger.info(f"🔍 [VLM FALLBACK] Our party species: {our_species}")
+        
+        # Also check battle_info for player Pokemon
+        if state_data:
+            battle_info = state_data.get('game', {}).get('battle_info', {})
+            player_pokemon = battle_info.get('player_pokemon', {})
+            if player_pokemon:
+                player_species = player_pokemon.get('species', '').upper()
+                if player_species:
+                    our_species.add(player_species)
+                    logger.info(f"🔍 [VLM FALLBACK] Added player battle Pokemon: {player_species}")
         
         # Common player Pokemon we should ignore
         player_pokemon = {'TREECKO', 'TORCHIC', 'MUDKIP', 'GROVYLE', 'COMBUSKEN', 'MARSHTOMP'}
@@ -1099,6 +1116,49 @@ class BattleBot:
                 if len(self._dialogue_history) > 10:
                     self._dialogue_history.pop(0)
             
+            # 🔍 PROACTIVE POKEMON DETECTION: Extract opponent from visible_entities EARLY
+            # Don't wait for menu detection or stuck state - extract immediately on every step
+            # This catches cases where VLM sees "GEODUDE" but menu_state is "unknown"
+            if visual_data:
+                visible_entities = visual_data.get('visible_entities', [])
+                if visible_entities:
+                    # Check if we have Pokemon entities that aren't TREECKO
+                    detected_opponent = None
+                    for entity in visible_entities:
+                        if isinstance(entity, dict):
+                            entity_name = entity.get('name', '').upper().strip()
+                            entity_type = entity.get('type', '').lower()
+                            position = entity.get('position', '').lower()
+                            
+                            # Look for opponent-side Pokemon
+                            if entity_type == 'pokemon' and ('opponent' in position or 'foe' in position):
+                                detected_opponent = entity_name
+                                logger.info(f"🔍 [EARLY DETECT] Found opponent Pokemon in visible_entities: {entity_name}")
+                                print(f"🔍 [EARLY DETECT] Opponent: {entity_name}")
+                                break
+                            elif entity_type == 'pokemon' and entity_name and entity_name not in {'TREECKO', 'TORCHIC', 'MUDKIP'}:
+                                # No position field, but it's a Pokemon that's not ours
+                                detected_opponent = entity_name
+                                logger.info(f"🔍 [EARLY DETECT] Found non-player Pokemon: {entity_name}")
+                                print(f"🔍 [EARLY DETECT] Opponent: {entity_name}")
+                                break
+                        elif isinstance(entity, str):
+                            # Simple string entity
+                            entity_upper = entity.upper().strip()
+                            if entity_upper and entity_upper not in {'TREECKO', 'TORCHIC', 'MUDKIP', 'PLAYER', 'TRAINER'}:
+                                detected_opponent = entity_upper
+                                logger.info(f"🔍 [EARLY DETECT] Found Pokemon string: {entity_upper}")
+                                print(f"🔍 [EARLY DETECT] Opponent: {entity_upper}")
+                                break
+                    
+                    # Update opponent tracking if we found one
+                    if detected_opponent and detected_opponent != self._current_opponent:
+                        logger.info(f"🆕 [OPPONENT UPDATE] {self._current_opponent or 'None'} → {detected_opponent}")
+                        print(f"🆕 [OPPONENT] Detected: {detected_opponent}")
+                        self._current_opponent = detected_opponent
+                        # Also update dialogue cache to match
+                        self._opponent_species_from_dialogue = detected_opponent
+            
             # If we're in post-battle dialogue (not in_battle but should_handle returned True),
             # just advance dialogue
             if not in_battle and self._post_battle_dialogue:
@@ -1317,7 +1377,7 @@ class BattleBot:
                     player_hp_percent = (player_hp / player_max_hp * 100) if player_max_hp > 0 else 0
                     
                     # PRIORITY 1: Try VLM visible_entities (most current, reflects Pokemon switches)
-                    opp_species = self._extract_species_from_visible_entities(visual_data)
+                    opp_species = self._extract_species_from_visible_entities(visual_data, state_data)
                     
                     # PRIORITY 2: If VLM didn't find it, extract from dialogue history
                     if opp_species == 'Unknown':
@@ -1397,7 +1457,7 @@ class BattleBot:
                         print(f"⚠️ [BATTLE BOT] VLM broken! Forcing move selection (attempt #{self._unknown_state_count - 4})")
                         
                         # PRIORITY 1: Try VLM visible_entities (most current)
-                        opp_species = self._extract_species_from_visible_entities(visual_data)
+                        opp_species = self._extract_species_from_visible_entities(visual_data, state_data)
                         
                         # PRIORITY 2: Extract from dialogue if VLM didn't find it
                         if opp_species == 'Unknown':
@@ -1430,7 +1490,7 @@ class BattleBot:
                         player_pokemon = battle_info.get('player_pokemon', {})
                         
                         # PRIORITY 1: Try VLM visible_entities (most current)
-                        opp_species = self._extract_species_from_visible_entities(visual_data)
+                        opp_species = self._extract_species_from_visible_entities(visual_data, state_data)
                         
                         # PRIORITY 2: Extract from dialogue if VLM didn't find it
                         if opp_species == 'Unknown':

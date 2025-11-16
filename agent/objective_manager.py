@@ -948,6 +948,29 @@ class ObjectiveManager:
                                 'journey_reason': 'Move to stable map region before Pokemon Center navigation'
                             }
                         
+                        # RUSTBORO CITY WAYPOINT: Navigate to (23, 29) when in trigger zone
+                        # Trigger zone: X between 12-35 AND Y between 28-38
+                        if graph_location == 'RUSTBORO_CITY':
+                            in_waypoint_zone = (12 <= current_x <= 35) and (28 <= current_y <= 38)
+                            
+                            if in_waypoint_zone:
+                                WAYPOINT = (23, 29)
+                                current_pos = (current_x, current_y)
+                                
+                                if current_pos != WAYPOINT:
+                                    logger.info(f"🏙️ [RUSTBORO WAYPOINT] In zone at ({current_x}, {current_y}), routing to {WAYPOINT}")
+                                    print(f"🏙️ [RUSTBORO WAYPOINT] Detected at ({current_x}, {current_y}) - navigating to {WAYPOINT}")
+                                    
+                                    return {
+                                        'goal_coords': (23, 29, 'RUSTBORO_CITY'),
+                                        'should_interact': False,
+                                        'description': 'Navigate to (23, 29) waypoint in Rustboro City',
+                                        'journey_reason': 'Rustboro City navigation waypoint'
+                                    }
+                                else:
+                                    logger.info(f"✅ [RUSTBORO WAYPOINT] At waypoint {WAYPOINT} - continuing")
+                                    print(f"✅ [RUSTBORO WAYPOINT] Waypoint reached - resuming navigation")
+                        
                         # Use navigation planner to create journey
                         success = self.navigation_planner.plan_journey(
                             start_location=graph_location,
