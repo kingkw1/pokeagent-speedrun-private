@@ -1653,6 +1653,45 @@ What button should you press? Respond with ONE button name only: A"""
                     decision_explanation = "Press A to confirm RUN and flee from wild battle"
                     logger.info("🏃 [BATTLE BOT] Recommending A to confirm RUN")
                 
+                elif battle_decision == "VLM_SELECT_RUN":
+                    # Ask VLM to navigate to and select RUN option
+                    # VLM can see the menu options and navigate correctly
+                    vision_prompt = """You are controlling a Pokemon game battle menu.
+
+Current screen shows a battle menu with options:
+- FIGHT
+- BAG  
+- POKEMON
+- RUN
+
+Your task: Navigate to and select the RUN option to flee from this wild Pokemon battle.
+
+What button should you press RIGHT NOW (this frame) to move toward selecting RUN?
+- If cursor is on FIGHT: press DOWN (to move to POKEMON row)
+- If cursor is on BAG: press DOWN (to move to RUN)
+- If cursor is on POKEMON: press RIGHT (to move to RUN)
+- If cursor is on RUN: press A (to select it)
+
+Return ONLY the button name: UP, DOWN, LEFT, RIGHT, A, or B"""
+                    
+                    # Get VLM to select the button
+                    vlm_button = self._call_vlm_for_button(
+                        screenshot_base64,
+                        vision_prompt
+                    )
+                    
+                    if vlm_button and vlm_button in ['UP', 'DOWN', 'LEFT', 'RIGHT', 'A', 'B']:
+                        button_recommendation = vlm_button
+                        decision_explanation = f"VLM navigating to RUN option: {vlm_button}"
+                        logger.info(f"🏃 [BATTLE BOT VLM] Recommending {vlm_button} to navigate to RUN")
+                        print(f"🏃 [BATTLE BOT VLM] {vlm_button} → RUN")
+                    else:
+                        # Fallback if VLM fails
+                        button_recommendation = "DOWN"
+                        decision_explanation = "VLM failed - defaulting to DOWN to navigate to RUN"
+                        logger.warning("⚠️ [BATTLE BOT VLM] Failed to get valid button, defaulting to DOWN")
+                        print("⚠️ [BATTLE BOT VLM] Failed - pressing DOWN as fallback")
+                
                 elif battle_decision == "PRESS_RIGHT":
                     # Move cursor toward RUN option
                     button_recommendation = "RIGHT"
