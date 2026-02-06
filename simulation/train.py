@@ -52,12 +52,12 @@ OBS_NORM_FACTOR = 20.0
 NUM_ENVS = 4
 
 # 5. TRAINING HYPERPARAMETERS
-TOTAL_TIMESTEPS = 50_000
+TOTAL_TIMESTEPS = 128
 PPO_LEARNING_RATE = 0.0003
-PPO_N_STEPS = 512
+PPO_N_STEPS = 64
 PPO_BATCH_SIZE = 64
 MODELS_DIR = "models/PPO"
-LOG_DIR = "logs"
+LOG_DIR = "simulation/data/logs"
 MODEL_SAVE_NAME = "emerald_battle_v1"
 
 # ==================================================================================
@@ -197,7 +197,9 @@ class EmeraldBattleWrapper(gym.Wrapper):
             self.env.step(no_op)
 
 def make_env():
-    env = retro.make(game=GAME_ID, state=STATE_NAME)
+    # adding render_mode='rgb_array' here prevents the white windows from spawning and speeds up training.
+    env = retro.make(game=GAME_ID, state=STATE_NAME, render_mode='rgb_array')
+    
     env = EmeraldBattleWrapper(env)
     return Monitor(env)
 
@@ -216,7 +218,8 @@ def main():
         tensorboard_log=LOG_DIR,
         learning_rate=PPO_LEARNING_RATE,
         n_steps=PPO_N_STEPS, # Lower n_steps because 1 step = ~300 frames now
-        batch_size=PPO_BATCH_SIZE
+        batch_size=PPO_BATCH_SIZE,
+        device="cpu"
     )
     
     print("Starting Training...")

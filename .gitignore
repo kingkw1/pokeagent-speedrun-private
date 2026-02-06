@@ -199,6 +199,7 @@ docs/development/
 models/
 screenshots/
 docs/archive/
+/simulation/data/logs/
 
 # Stable Retro recordings
 *.bk2
