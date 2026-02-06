@@ -6,7 +6,62 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
 
-# Define the custom environment wrapper
+# ==================================================================================
+# ⚙️  TUNING CONFIGURATION
+# ==================================================================================
+
+# 1. TIMING (Frames)
+# How long to wait after confirming an attack for animations to finish.
+# Too short = Agent doesn't see HP drop. Too long = Wasted training time.
+POST_ATTACK_WAIT_FRAMES = 900 
+
+# How long to wait for the "Fight/Bag" menu to slide away.
+MENU_SLIDE_WAIT_FRAMES = 30
+
+# How long to hold a button for it to register on GBA.
+BUTTON_HOLD_FRAMES = 6
+BUTTON_RELEASE_FRAMES = 6
+
+# Small pause between cursor movements.
+CURSOR_WAIT_FRAMES = 6
+
+# 2. REWARDS & PENALTIES
+REWARD_WIN_BONUS = 20.0
+REWARD_DMG_MULTIPLIER = 2.0
+PENALTY_DMG_TAKEN = 1.0
+PENALTY_INVALID_MOVE = -5.0  # Penalty for choosing a move with 0 PP
+
+# 3. BUTTON MAPPING (Indices based on play_and_save.py)
+BTN_INDICES = {
+    'B': 0, 
+    'A': 8, 
+    'SELECT': 2, 
+    'START': 3,  # Doesn't work currently due to how the emulator handles state saving, but included for completeness
+    'UP': 4, 
+    'DOWN': 5, 
+    'LEFT': 6, 
+    'RIGHT': 7,
+    'L': 10, 
+    'R': 11
+}
+
+# 4. ENVIRONMENT SETUP
+GAME_ID = 'PokemonEmerald-GBA'
+STATE_NAME = 'BattleLevel5'
+OBS_NORM_FACTOR = 20.0
+NUM_ENVS = 4
+
+# 5. TRAINING HYPERPARAMETERS
+TOTAL_TIMESTEPS = 50_000
+PPO_LEARNING_RATE = 0.0003
+PPO_N_STEPS = 512
+PPO_BATCH_SIZE = 64
+MODELS_DIR = "models/PPO"
+LOG_DIR = "logs"
+MODEL_SAVE_NAME = "emerald_battle_v1"
+
+# ==================================================================================
+
 class EmeraldBattleWrapper(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
@@ -14,24 +69,8 @@ class EmeraldBattleWrapper(gym.Wrapper):
         # Action Space: 4 Discrete Actions (Move 1, Move 2, Move 3, Move 4)
         self.action_space = gym.spaces.Discrete(4)
         
-        # Observation Space: [MyHP, EnemyHP, PP1, PP2, PP3, PP4]
-        # Normalized 0.0 to 1.0
+        # Observation Space: [MyHP, EnemyHP, PP1, PP2, PP3, PP4] (Normalized)
         self.observation_space = gym.spaces.Box(low=0, high=1, shape=(6,), dtype=np.float32)
-
-        # RETRO BUTTON MAP (Corrected based on play_and_save.py)
-        # 0=B, 1=Y/Mode, 2=Select, 3=Start, 4=Up, 5=Down, 6=Left, 7=Right, 8=A, 9=X, 10=L, 11=R
-        self.btn_indices = {
-            'B': 0, 
-            'A': 8,      # FIXED: 'A' is Index 8, not 1
-            'SELECT': 2,
-            'START': 3, 
-            'UP': 4, 
-            'DOWN': 5, 
-            'LEFT': 6, 
-            'RIGHT': 7,
-            'L': 10,
-            'R': 11
-        }
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
@@ -40,128 +79,116 @@ class EmeraldBattleWrapper(gym.Wrapper):
         return self._get_obs(info), info
 
     def step(self, action):
-        # Retrieve current state for validation
-        # Check keys against your data.json
-        current_pp = 0
-        if action == 0: current_pp = self.env.data.lookup_value('move_1_pp') or 0
-        elif action == 1: current_pp = self.env.data.lookup_value('move_2_pp') or 0
-        elif action == 2: current_pp = self.env.data.lookup_value('move_3_pp') or 0
-        elif action == 3: current_pp = self.env.data.lookup_value('move_4_pp') or 0
-
-        # --- PP CHECK ---
-        # If the agent tries to use a move with 0 PP, penalize it and do NOT press buttons.
-        if current_pp <= 0:
-            # FIXED: Create a dictionary manually because env.data is not a dict
-            temp_info = {
-                'my_hp': self.env.data.lookup_value('my_hp'),
-                'enemy_hp': self.env.data.lookup_value('enemy_hp'),
-                'move_1_pp': self.env.data.lookup_value('move_1_pp'),
-                'move_2_pp': self.env.data.lookup_value('move_2_pp'),
-                'move_3_pp': self.env.data.lookup_value('move_3_pp'),
-                'move_4_pp': self.env.data.lookup_value('move_4_pp'),
-            }
-            obs = self._get_obs(temp_info) 
-            self._wait(1) 
-            return obs, -5.0, False, False, {}
-
-        # --- 1. EXECUTE MACRO ---
-        # Perform the button sequence to select the move
-        self._perform_move_macro(action)
-        
-        # --- 2. FAST FORWARD (The "Wait") ---
-        # Wait 4 seconds (240 frames) for animations/text to finish
-        self._wait(240) 
-
-        # --- 3. OBSERVE & REWARD ---
-        # Get fresh info after the turn
+        # 1. GET DATA (Robust Lookup)
+        # We perform a manual lookup because env.data is not a standard dict
+        data = self.env.data
         info = {
-            'my_hp': self.env.data.lookup_value('my_hp'),
-            'enemy_hp': self.env.data.lookup_value('enemy_hp'),
-            'move_1_pp': self.env.data.lookup_value('move_1_pp'),
-            'move_2_pp': self.env.data.lookup_value('move_2_pp'),
-            'move_3_pp': self.env.data.lookup_value('move_3_pp'),
-            'move_4_pp': self.env.data.lookup_value('move_4_pp'),
+            'my_hp': data.lookup_value('my_hp') or 0,
+            'enemy_hp': data.lookup_value('enemy_hp') or 0,
+            'move_1_pp': data.lookup_value('move_1_pp') or 0,
+            'move_2_pp': data.lookup_value('move_2_pp') or 0,
+            'move_3_pp': data.lookup_value('move_3_pp') or 0,
+            'move_4_pp': data.lookup_value('move_4_pp') or 0,
         }
 
-        # Calculate HP change
-        my_hp = info.get('my_hp', 0)
-        enemy_hp = info.get('enemy_hp', 0)
+        # 2. ACTION MASKING (Soft Mask / Penalty)
+        # Check if the chosen move has PP
+        move_pp = 0
+        if action == 0: move_pp = info['move_1_pp']
+        elif action == 1: move_pp = info['move_2_pp']
+        elif action == 2: move_pp = info['move_3_pp']
+        elif action == 3: move_pp = info['move_4_pp']
+
+        if move_pp <= 0:
+            # INVALID MOVE: Penalize and skip turn logic to prevent getting stuck
+            obs = self._get_obs(info)
+            # We step 1 frame just to tick the clock slightly
+            self._wait(1) 
+            return obs, PENALTY_INVALID_MOVE, False, False, info
+
+        # 3. EXECUTE MACRO
+        self._perform_move_macro(action)
         
-        damage_dealt = self.prev_enemy_hp - enemy_hp
-        damage_taken = self.prev_my_hp - my_hp
+        # 4. FAST FORWARD (Wait for animation)
+        self._wait(POST_ATTACK_WAIT_FRAMES) 
+
+        # 5. CALCULATE REWARD
+        # Refresh info after the turn to see the damage result
+        new_my_hp = data.lookup_value('my_hp') or 0
+        new_enemy_hp = data.lookup_value('enemy_hp') or 0
         
+        damage_dealt = self.prev_enemy_hp - new_enemy_hp
+        damage_taken = self.prev_my_hp - new_my_hp
+        
+        # Clamp negative damage (healing/reset noise)
         if damage_dealt < 0: damage_dealt = 0
         if damage_taken < 0: damage_taken = 0
         
-        reward = (damage_dealt * 2.0) - (damage_taken * 1.0)
+        reward = (damage_dealt * REWARD_DMG_MULTIPLIER) - (damage_taken * PENALTY_DMG_TAKEN)
         
-        if enemy_hp == 0 and self.prev_enemy_hp > 0:
-            reward += 20.0 
+        # Win Bonus
+        terminated = False
+        if new_enemy_hp == 0 and self.prev_enemy_hp > 0:
+            reward += REWARD_WIN_BONUS
+            terminated = True
+        elif new_my_hp == 0:
+            terminated = True
             
-        self.prev_my_hp = my_hp
-        self.prev_enemy_hp = enemy_hp
+        # Update tracking
+        self.prev_my_hp = new_my_hp
+        self.prev_enemy_hp = new_enemy_hp
         
-        terminated = enemy_hp == 0 or my_hp == 0
-        truncated = False
-        
-        obs = self._get_obs(info)
-        return obs, reward, terminated, truncated, info
+        # Update Info for return
+        info['my_hp'] = new_my_hp
+        info['enemy_hp'] = new_enemy_hp
+
+        return self._get_obs(info), reward, terminated, False, info
 
     def _get_obs(self, info):
-        # Normalize assuming max HP ~20 (Level 5)
-        my_hp = info.get('my_hp', 0) or 0
-        enemy_hp = info.get('enemy_hp', 0) or 0
-        
-        pp1 = info.get('move_1_pp', 0) or 0
-        pp2 = info.get('move_2_pp', 0) or 0
-        pp3 = info.get('move_3_pp', 0) or 0
-        pp4 = info.get('move_4_pp', 0) or 0
-
+        # Normalize Data (Assuming Level 5 stats ~20 HP)
         return np.array([
-            my_hp / 20.0, 
-            enemy_hp / 20.0,
-            pp1 / 20.0,
-            pp2 / 20.0,
-            pp3 / 20.0,
-            pp4 / 20.0
+            info.get('my_hp', 0) / OBS_NORM_FACTOR, 
+            info.get('enemy_hp', 0) / OBS_NORM_FACTOR,
+            info.get('move_1_pp', 0) / OBS_NORM_FACTOR,
+            info.get('move_2_pp', 0) / OBS_NORM_FACTOR,
+            info.get('move_3_pp', 0) / OBS_NORM_FACTOR,
+            info.get('move_4_pp', 0) / OBS_NORM_FACTOR
         ], dtype=np.float32)
 
     def _perform_move_macro(self, move_index):
         """
         Navigates the Battle Menu.
-        Assumes cursor starts at 'FIGHT' (Top-Left of main menu).
+        Assumes cursor starts at 'FIGHT' (Top-Left).
         """
-        # Step 1: Select 'FIGHT'
+        # Select 'FIGHT'
         self._press_button('A')
-        self._wait(30) # Wait for "Fight/Bag" menu to slide away
+        self._wait(MENU_SLIDE_WAIT_FRAMES)
 
-        # Step 2: Navigate to Move
-        if move_index == 1: # Top-Right
+        # Navigate Grid
+        if move_index == 1: # TR
             self._press_button('RIGHT')
-        elif move_index == 2: # Bottom-Left
+        elif move_index == 2: # BL
             self._press_button('DOWN')
-        elif move_index == 3: # Bottom-Right
+        elif move_index == 3: # BR
             self._press_button('DOWN') 
-            self._wait(5) 
+            self._wait(CURSOR_WAIT_FRAMES) 
             self._press_button('RIGHT')
 
-        self._wait(5) 
+        if move_index != 0:
+            self._wait(CURSOR_WAIT_FRAMES)
 
-        # Step 3: Confirm Move
+        # Confirm Move
         self._press_button('A')
 
-    def _press_button(self, btn_name, hold_frames=4):
-        """
-        Presses a button for `hold_frames` and then releases.
-        """
+    def _press_button(self, btn_name):
         action_arr = np.zeros(12, dtype=np.int8)
-        action_arr[self.btn_indices[btn_name]] = 1
+        action_arr[BTN_INDICES[btn_name]] = 1
         
-        for _ in range(hold_frames):
+        for _ in range(BUTTON_HOLD_FRAMES):
             self.env.step(action_arr)
             
         no_op = np.zeros(12, dtype=np.int8)
-        for _ in range(4):
+        for _ in range(BUTTON_RELEASE_FRAMES):
             self.env.step(no_op)
 
     def _wait(self, frames):
@@ -170,31 +197,33 @@ class EmeraldBattleWrapper(gym.Wrapper):
             self.env.step(no_op)
 
 def make_env():
-    env = retro.make(game='PokemonEmerald-GBA', state='BattleLevel5')
+    env = retro.make(game=GAME_ID, state=STATE_NAME)
     env = EmeraldBattleWrapper(env)
     return Monitor(env)
 
 def main():
-    models_dir = "models/PPO"
-    log_dir = "logs"
-    os.makedirs(models_dir, exist_ok=True)
-    os.makedirs(log_dir, exist_ok=True)
+    os.makedirs(MODELS_DIR, exist_ok=True)
+    os.makedirs(LOG_DIR, exist_ok=True)
 
-    env = SubprocVecEnv([make_env for _ in range(4)]) 
+    # Parallel Environments
+    # If on Windows, set n_envs=1. On Linux/Mac, 4 is usually safe.
+    env = SubprocVecEnv([make_env for _ in range(NUM_ENVS)]) 
     
     model = PPO(
         "MlpPolicy", 
         env, 
         verbose=1, 
-        tensorboard_log=log_dir,
-        learning_rate=0.0003,
-        n_steps=512,
-        batch_size=64
+        tensorboard_log=LOG_DIR,
+        learning_rate=PPO_LEARNING_RATE,
+        n_steps=PPO_N_STEPS, # Lower n_steps because 1 step = ~300 frames now
+        batch_size=PPO_BATCH_SIZE
     )
     
     print("Starting Training...")
-    model.learn(total_timesteps=50_000, progress_bar=True)
-    model.save(f"{models_dir}/emerald_battle_v1")
+    # 50k steps is actually quite a lot of gameplay given the macro length
+    model.learn(total_timesteps=TOTAL_TIMESTEPS, progress_bar=True)
+    
+    model.save(f"{MODELS_DIR}/{MODEL_SAVE_NAME}")
     print("Training Complete. Model saved.")
 
 if __name__ == "__main__":
