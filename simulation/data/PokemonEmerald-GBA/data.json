@@ -1,0 +1,12 @@
+{
+  "info": {
+    "my_hp": {
+      "address": 33702060,
+      "type": "|u1"
+    },
+    "enemy_hp": {
+      "address": 33702148,
+      "type": "|u1"
+    }
+  }
+}

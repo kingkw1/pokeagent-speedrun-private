@@ -1,0 +1,5 @@
+{
+  "default_state": "BattleLevel5", 
+  "system": "GBA",
+  "buttons": ["B", "Y", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT", "A", "X", "L", "R"]
+}
