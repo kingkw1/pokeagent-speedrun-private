@@ -5,8 +5,31 @@ import stable_retro as retro
 import pygame
 import sys
 
-# Import your existing wrapper from train.py
+# Import existing wrapper
 from train import EmeraldBattleWrapper 
+
+# ==================================================================================
+# ⚙️  TUNING CONFIGURATION (Edit these values!)
+# ==================================================================================
+
+# 1. TURN DURATION
+# How long to wait after confirming an attack for the animation to play out.
+# If this is too short, the agent won't see the HP bar drop.
+POST_ATTACK_WAIT_FRAMES = 900  
+
+# 2. BUTTON TIMING
+# How long to hold a button down (GBA needs ~4-8 frames to register reliably).
+BUTTON_HOLD_FRAMES = 6
+# How long to wait between presses (neutral input).
+BUTTON_RELEASE_FRAMES = 6
+
+# 3. MENU DELAYS
+# How long to wait for the "Fight/Bag" menu to slide away after pressing 'Fight'.
+MENU_SLIDE_WAIT_FRAMES = 30
+# Small pause between cursor movements to ensure accuracy.
+CURSOR_WAIT_FRAMES = 6
+
+# ==================================================================================
 
 class VisualBattleWrapper(EmeraldBattleWrapper):
     """
@@ -19,63 +42,59 @@ class VisualBattleWrapper(EmeraldBattleWrapper):
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("Arial", 18)
 
-    def _render_frame(self, unused_obs, info, action_name="Wait"):
+    # --- OVERRIDES TO USE CONFIG VARIABLES ---
+    
+    def step(self, action):
         """
-        Manually draws the observation to the Pygame window.
-        CRITICAL FIX: We ignore 'unused_obs' because it might be the 
-        RL feature vector (HP/PP). We fetch the raw screen directly.
+        Overriding step to use POST_ATTACK_WAIT_FRAMES from config
         """
-        # 1. Check for Quit events (keeps window responsive)
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
+        # (Standard PP Check omitted for visual debug simplicity, but we keep the logic)
+        
+        # 1. EXECUTE MACRO
+        self._perform_move_macro(action)
+        
+        # 2. FAST FORWARD (Using our Tunable Variable)
+        self._wait(POST_ATTACK_WAIT_FRAMES) 
 
-        # 2. Fetch the RAW SCREEN from the emulator backend
-        # This bypasses the wrapper's observation processing
-        raw_screen = self.env.get_screen()
+        # 3. OBSERVE & REWARD (Standard Logic)
+        info = {
+            'my_hp': self.env.data.lookup_value('my_hp'),
+            'enemy_hp': self.env.data.lookup_value('enemy_hp'),
+        }
+        
+        # ... (We skip the full reward calculation for debug, we just want to see it run) ...
+        obs = self._get_obs(info)
+        return obs, 0, False, False, info
 
-        # 3. Convert (H, W, 3) -> Pygame Surface (W, H, 3)
-        surf = pygame.surfarray.make_surface(raw_screen.swapaxes(0, 1))
-        
-        # 4. Scale up (2x)
-        surf = pygame.transform.scale(surf, (480, 320))
-        
-        # 5. Draw to Screen
-        self.screen.blit(surf, (0, 0))
-        
-        # 6. Draw Debug Overlay
-        hp_text = f"HP: {info.get('my_hp', '?')} vs {info.get('enemy_hp', '?')}"
-        act_text = f"Action: {action_name}"
-        
-        # Simple text shadow for readability
-        self.screen.blit(self.font.render(hp_text, True, (0, 0, 0)), (12, 12))
-        self.screen.blit(self.font.render(hp_text, True, (255, 255, 255)), (10, 10))
-        
-        self.screen.blit(self.font.render(act_text, True, (0, 0, 0)), (12, 32))
-        self.screen.blit(self.font.render(act_text, True, (255, 255, 255)), (10, 30))
+    def _perform_move_macro(self, move_index):
+        """
+        Overriding macro to use MENU variables from config
+        """
+        # Step 1: Select 'FIGHT'
+        self._press_button('A')
+        self._wait(MENU_SLIDE_WAIT_FRAMES)
 
-        pygame.display.flip()
-        
-        # 7. Cap Framerate to normal speed (60 FPS)
-        self.clock.tick(60)
+        # Step 2: Navigate to Move
+        if move_index == 1: # Top-Right
+            self._press_button('RIGHT')
+        elif move_index == 2: # Bottom-Left
+            self._press_button('DOWN')
+        elif move_index == 3: # Bottom-Right
+            self._press_button('DOWN') 
+            self._wait(CURSOR_WAIT_FRAMES) 
+            self._press_button('RIGHT')
 
-    def _wait(self, frames):
-        """
-        Overrides the fast-forward to render frames slowly.
-        """
-        print(f"   [DEBUG] Waiting {frames} frames (Animation)...")
-        no_op = np.zeros(12, dtype=np.int8)
-        
-        for i in range(frames):
-            # We step the internal env to keep time moving
-            _, _, _, _, info = self.env.step(no_op)
-            self._render_frame(None, info, action_name="Waiting...")
+        self._wait(CURSOR_WAIT_FRAMES) 
 
-    def _press_button(self, btn_name, hold_frames=4):
+        # Step 3: Confirm Move
+        self._press_button('A')
+
+    def _press_button(self, btn_name, hold_frames=None):
         """
-        Overrides button press to log and render.
+        Overriding to use BUTTON_HOLD/RELEASE variables
         """
+        if hold_frames is None: hold_frames = BUTTON_HOLD_FRAMES
+        
         print(f"   [DEBUG] Pressing Button: {btn_name}")
         
         action_arr = np.zeros(12, dtype=np.int8)
@@ -88,69 +107,99 @@ class VisualBattleWrapper(EmeraldBattleWrapper):
             
         # Release (Gap)
         no_op = np.zeros(12, dtype=np.int8)
-        for _ in range(4):
+        for _ in range(BUTTON_RELEASE_FRAMES):
             _, _, _, _, info = self.env.step(no_op)
             self._render_frame(None, info, action_name="Release")
 
+    # --- RENDERING LOGIC ---
+
+    def _render_frame(self, unused_obs, info, action_name="Wait"):
+        # 1. Check for Quit
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+        # 2. Fetch RAW SCREEN
+        raw_screen = self.env.get_screen()
+
+        # 3. Convert & Scale
+        surf = pygame.surfarray.make_surface(raw_screen.swapaxes(0, 1))
+        surf = pygame.transform.scale(surf, (480, 320))
+        
+        # 4. Draw to Screen
+        self.screen.blit(surf, (0, 0))
+        
+        # 5. Draw Debug Overlay (TOP RIGHT)
+        hp_text = f"HP: {info.get('my_hp', '?')} vs {info.get('enemy_hp', '?')}"
+        act_text = f"Action: {action_name}"
+        
+        # Create text surfaces
+        hp_surf = self.font.render(hp_text, True, (255, 255, 255))
+        act_surf = self.font.render(act_text, True, (255, 255, 255))
+        hp_shadow = self.font.render(hp_text, True, (0, 0, 0))
+        act_shadow = self.font.render(act_text, True, (0, 0, 0))
+
+        # Calculate Positions (Right aligned with 10px padding)
+        # Screen Width is 480
+        hp_x = 480 - hp_surf.get_width() - 10
+        act_x = 480 - act_surf.get_width() - 10
+        
+        # Draw Shadow then Text
+        self.screen.blit(hp_shadow, (hp_x + 2, 12))
+        self.screen.blit(hp_surf, (hp_x, 10))
+        
+        self.screen.blit(act_shadow, (act_x + 2, 32))
+        self.screen.blit(act_surf, (act_x, 30))
+
+        pygame.display.flip()
+        self.clock.tick(60)
+
+    def _wait(self, frames):
+        print(f"   [DEBUG] Waiting {frames} frames (Animation)...")
+        no_op = np.zeros(12, dtype=np.int8)
+        
+        for i in range(frames):
+            _, _, _, _, info = self.env.step(no_op)
+            self._render_frame(None, info, action_name="Waiting...")
+
 def main():
-    # 1. Setup Pygame Window
     pygame.init()
     pygame.font.init()
     screen = pygame.display.set_mode((480, 320))
-    pygame.display.set_caption("Pokemon Emerald - Macro Debugger")
+    pygame.display.set_caption("Pokemon Emerald - Macro Tuner")
     
-    # 2. Load Environment
     print("Loading Pokemon Emerald...")
-    # render_mode='rgb_array' ensures get_screen() works
     raw_env = retro.make(game='PokemonEmerald-GBA', state='BattleLevel5', render_mode='rgb_array')
-    
-    # 3. Wrap with Visual Debugger
     env = VisualBattleWrapper(raw_env, screen)
     
-    # Reset returns the STATS vector (obs), but we ignore it in _render_frame
     obs, info = env.reset()
-    
-    # Initial Draw
     env._render_frame(obs, info, "READY")
     
-    print("Environment Ready. Starting Battle Loop...")
-    print("-" * 50)
+    print("Environment Ready.")
+    print(f"Post-Attack Wait set to: {POST_ATTACK_WAIT_FRAMES} frames")
 
     try:
         while True:
-            # 4. Interactive Loop
             pygame.event.pump() 
-            
             print(f"\n[TURN START] HP: {info.get('my_hp')} vs {info.get('enemy_hp')}")
-            print("Select a Move to Test (Focus on Terminal):")
-            print("  1: Top-Left  (Move 1)")
-            print("  2: Top-Right (Move 2)")
-            print("  3: Bot-Left  (Move 3)")
-            print("  4: Bot-Right (Move 4)")
+            print("Select Move (1-4) or 'q' to quit:")
             
             try:
-                user_input = input(">> Enter 1-4 (or 'q' to quit): ")
+                user_input = input(">> ")
                 if user_input.lower() == 'q': break
-                
                 action_idx = int(user_input) - 1
                 if action_idx not in [0, 1, 2, 3]: raise ValueError
-                
             except ValueError:
-                print("Invalid input. Defaulting to Move 1.")
+                print("Invalid input. Using Move 1.")
                 action_idx = 0
 
-            # 5. Run the Macro Step (This will animate in the window)
-            # step() returns the STATS vector, which is fine for RL but we don't draw it.
             obs, reward, terminated, truncated, info = env.step(action_idx)
             
-            print(f"[TURN END] Reward: {reward:.2f}")
-
             if terminated:
                 print("\n!!! BATTLE ENDED !!!")
-                # Wait a moment to see the result
                 env._wait(120) 
                 obs, info = env.reset()
-                print("Resetting environment...\n")
 
     except KeyboardInterrupt:
         print("\nExiting...")

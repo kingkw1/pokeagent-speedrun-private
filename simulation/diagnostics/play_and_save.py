@@ -102,21 +102,6 @@ def main():
         
         # Let's try a standard mapping array (12 buttons max usually)
         # Action space is usually MultiBinary(10) or similar for GBA
-        
-        # buttons = [0] * env.action_space.shape[0]
-        
-        # Mapping (Adjust as needed based on feel)
-        # if keys[pygame.K_z]: buttons[0] = 1 # A
-        # if keys[pygame.K_x]: buttons[1] = 1 # B
-        # if keys[pygame.K_RSHIFT]: buttons[2] = 1 # Select
-        # if keys[pygame.K_RETURN]: buttons[3] = 1 # Start
-        # if keys[pygame.K_RIGHT]: buttons[4] = 1
-        # if keys[pygame.K_LEFT]: buttons[5] = 1
-        # if keys[pygame.K_UP]: buttons[6] = 1
-        # if keys[pygame.K_DOWN]: buttons[7] = 1
-        # if keys[pygame.K_a]: buttons[8] = 1 # R
-        # if keys[pygame.K_s]: buttons[9] = 1 # L
-
 
         # [B, None, SELECT, START, UP, DOWN, LEFT, RIGHT, A, None, L, R]
         buttons = [0] * 12
@@ -155,8 +140,8 @@ def main():
             if keys[pygame.K_s]: buttons[11] = 1     # R Index 11
         
         # 2. Step Environment
-        if any(buttons):
-             print(f"Buttons pressed: {[i for i, x in enumerate(buttons) if x]}")
+        # if any(buttons):
+        #      print(f"Buttons pressed: {[i for i, x in enumerate(buttons) if x]}")
              
         obs, rew, terminated, truncated, info = env.step(buttons)
         done = terminated or truncated
