@@ -194,8 +194,14 @@ mGBA-*/
 
 # Screenshots folder
 data/screenshots/
-data/
+/data/
 docs/development/
 models/
 screenshots/
 docs/archive/
+
+# Stable Retro recordings
+*.bk2
+
+# State files
+*.state
