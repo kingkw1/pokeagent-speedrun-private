@@ -7,6 +7,22 @@
     "enemy_hp": {
       "address": 33702148,
       "type": "|u1"
+    },
+    "move_1_pp": {
+      "address": 33702056,
+      "type": "|u1"
+    },
+    "move_2_pp": {
+      "address": 33702057,
+      "type": "|u1"
+    },
+    "move_3_pp": {
+      "address": 33702058,
+      "type": "|u1"
+    },
+    "move_4_pp": {
+      "address": 33702059,
+      "type": "|u1"
     }
   }
 }

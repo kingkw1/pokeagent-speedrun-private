@@ -33,11 +33,22 @@ def main():
         # SENSOR CHECK
         curr_my_hp = info.get('my_hp', 0)
         curr_enemy_hp = info.get('enemy_hp', 0)
+        curr_move_1_pp = info.get('move_1_pp', 0)
+        curr_move_2_pp = info.get('move_2_pp', 0)
+        curr_move_3_pp = info.get('move_3_pp', 0)
+        curr_move_4_pp = info.get('move_4_pp', 0)
         
-        if curr_my_hp != prev_my_hp or curr_enemy_hp != prev_enemy_hp:
+        if (curr_my_hp != prev_my_hp or curr_enemy_hp != prev_enemy_hp or
+            curr_move_1_pp != prev_move_1_pp or curr_move_2_pp != prev_move_2_pp or
+            curr_move_3_pp != prev_move_3_pp or curr_move_4_pp != prev_move_4_pp):
             print(f"Update -> My HP: {curr_my_hp} | Enemy HP: {curr_enemy_hp}")
+            print(f"Move PP -> 1: {curr_move_1_pp} | 2: {curr_move_2_pp} | 3: {curr_move_3_pp} | 4: {curr_move_4_pp}")
             prev_my_hp = curr_my_hp
             prev_enemy_hp = curr_enemy_hp
+            prev_move_1_pp = curr_move_1_pp
+            prev_move_2_pp = curr_move_2_pp
+            prev_move_3_pp = curr_move_3_pp
+            prev_move_4_pp = curr_move_4_pp
             
         # Render
         surf = pygame.surfarray.make_surface(obs.swapaxes(0, 1))
