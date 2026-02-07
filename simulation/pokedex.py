@@ -64,18 +64,23 @@ SPECIES_DATA = {
     299: {"name": "Nuzleaf",   "types": [12, 17]},
     300: {"name": "Shiftry",   "types": [12, 17]},
     
-    301: {"name": "Taillow",   "types": [0, 2]},
+    # 301: {"name": "Taillow",   "types": [0, 2]},
     302: {"name": "Swellow",   "types": [0, 2]},
     
-    303: {"name": "Wingull",   "types": [11, 2]}, # Standard ID
-    304: {"name": "Pelipper",  "types": [11, 2]},
+    # 303: {"name": "Wingull",   "types": [11, 2]}, # Standard ID
+    # 304: {"name": "Pelipper",  "types": [11, 2]},
     
-    305: {"name": "Ralts",     "types": [14, None]}, # Often 305 or 309 depending on gap
-    306: {"name": "Kirlia",    "types": [14, None]},
-    307: {"name": "Gardevoir", "types": [14, None]},
+    # 305: {"name": "Ralts",     "types": [14, None]}, # Often 305 or 309 depending on gap
+    # 306: {"name": "Kirlia",    "types": [14, None]},
+    # 307: {"name": "Gardevoir", "types": [14, None]},
     
     # User Reported Drift:
-    309: {"name": "Wingull?",  "types": [11, 2]},    # User observed Wingull here
+    304: {"name": "Taillow",  "types": [11, 2]},
+    305: {"name": "Swellow",   "types": [0, 2]},  # Unverified, but observed Taillow's HP bar here
+    306: {"name": "Shroomish", "types": [12, None]}, 
+    307: {"name": "Breloom",   "types": [12, 1]}, # Unverified, but observed Shroomish's HP bar here
+    309: {"name": "Wingull",  "types": [11, 2]},    
+    310: {"name": "Pelipper",  "types": [11, 2]},  # Unverified, but observed Wingull's HP bar here
 }
 
 # ----------------------------------------------------------------------------------
@@ -88,22 +93,21 @@ MOVES_DATA = {
     33: {"name": "Tackle",       "type": 0,  "power": 35},
     98: {"name": "Quick Attack", "type": 0,  "power": 40},
     
-    # SPECIAL / ELEMENTAL (Early Game)
+    # SPECIAL / ELEMENTAL
     52: {"name": "Ember",        "type": 10, "power": 40},
     55: {"name": "Water Gun",    "type": 11, "power": 40},
     71: {"name": "Absorb",       "type": 12, "power": 20},
+    72: {"name": "Mega Drain",   "type": 12, "power": 40},
     64: {"name": "Peck",         "type": 2,  "power": 35},
-    122:{"name": "Lick",         "type": 7,  "power": 20},
     40: {"name": "Poison Sting", "type": 3,  "power": 15},
-    310:{"name": "Astonish",     "type": 7,  "power": 30},
     
     # STATUS / NON-DAMAGING
     45: {"name": "Growl",        "type": 0,  "power": 0},
     39: {"name": "Tail Whip",    "type": 0,  "power": 0},
     43: {"name": "Leer",         "type": 0,  "power": 0},
+    116:{"name": "Focus Energy", "type": 0,  "power": 0}, # The "Unknown" Move
     81: {"name": "String Shot",  "type": 6,  "power": 0},
-    106:{"name": "Harden",       "type": 0,  "power": 0},
-    103:{"name": "Screech",      "type": 0,  "power": 0},
+    74: {"name": "Growth",       "type": 0,  "power": 0},
 }
 
 def get_effectiveness(move_type, target_types):
