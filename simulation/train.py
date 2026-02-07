@@ -15,7 +15,8 @@ except ImportError:
     # Fallback if running from root without package structure
     from simulation.pokedex import MOVES_DATA, SPECIES_DATA, get_effectiveness
 
-from stable_baselines3 import PPO
+from sb3_contrib import MaskablePPO
+from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
 
@@ -92,6 +93,37 @@ class EmeraldBattleWrapper(gym.Wrapper):
         self.prev_my_hp = info.get('my_hp', 0)
         self.prev_enemy_hp = info.get('enemy_hp', 0)
         return self._get_obs(info), info
+
+    def action_masks(self):
+        """
+        Returns a boolean mask of valid actions based on PP.
+        True = Valid, False = Invalid (Masked).
+        """
+        # We need direct access to data here because this is called by the Agent 
+        # before the step() function.
+        # Note: data.lookup_value is a direct RAM read.
+        data = self.env.data
+        
+        # Read PP values (default to 0 if missing)
+        pp_values = [
+            data.lookup_value('move_1_pp') or 0,
+            data.lookup_value('move_2_pp') or 0,
+            data.lookup_value('move_3_pp') or 0,
+            data.lookup_value('move_4_pp') or 0
+        ]
+        
+        # Create mask: True if PP > 0
+        mask = [pp > 0 for pp in pp_values]
+        
+        # FAILSAFE: If all moves have 0 PP (Struggle), allow all actions? 
+        # Or maybe just Action 0? 
+        # In Gen 3, if you have no PP, you automatically Struggle when you select Fight.
+        # But we are selecting Move 1, 2, 3, 4 menus.
+        # If we mask ALL, the agent crashes. So if all 0, unmask all.
+        if not any(mask):
+            return np.array([True, True, True, True], dtype=bool)
+            
+        return np.array(mask, dtype=bool)
 
     def step(self, action):
         # 1. GET DATA (Robust Lookup)
@@ -241,11 +273,15 @@ class EmeraldBattleWrapper(gym.Wrapper):
         for _ in range(frames):
             self.env.step(no_op)
 
+def mask_fn(env):
+    return env.action_masks()
+
 def make_env():
     # adding render_mode='rgb_array' here prevents the white windows from spawning and speeds up training.
     env = retro.make(game=GAME_ID, state=STATE_NAME, render_mode='rgb_array')
     
     env = EmeraldBattleWrapper(env)
+    env = ActionMasker(env, mask_fn)
     return Monitor(env)
 
 def main():
@@ -256,7 +292,7 @@ def main():
     # If on Windows, set n_envs=1. On Linux/Mac, 4 is usually safe.
     env = SubprocVecEnv([make_env for _ in range(NUM_ENVS)]) 
     
-    model = PPO(
+    model = MaskablePPO(
         "MlpPolicy", 
         env, 
         verbose=1, 

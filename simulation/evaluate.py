@@ -4,7 +4,7 @@ import numpy as np
 import stable_retro as retro
 import pygame
 import sys
-from stable_baselines3 import PPO
+from sb3_contrib import MaskablePPO
 
 # Reuse the wrapper structure from training to ensure inputs match exactly
 from train import EmeraldBattleWrapper, STATE_NAME, GAME_ID, BTN_INDICES
@@ -143,7 +143,7 @@ def main():
     print(f"Loading Model from: {model_path}")
     
     try:
-        model = PPO.load(model_path)
+        model = MaskablePPO.load(model_path)
     except FileNotFoundError:
         print("❌ Model not found! Did you finish training?")
         return
@@ -158,8 +158,10 @@ def main():
     
     while True:
         # GET ACTION FROM AI
+        # Retrieve valid action masks to prevent invalid moves
+        action_masks = env.action_masks()
         # deterministic=True means "Pick the absolute best move", no randomness
-        action, _states = model.predict(obs, deterministic=True)
+        action, _states = model.predict(obs, action_masks=action_masks, deterministic=True)
         
         # STEP ENV
         obs, reward, terminated, truncated, info = env.step(action)
