@@ -5,10 +5,12 @@ import os
 import gzip
 
 import json
+from datetime import datetime
 
 # Configuration
 GAME = 'PokemonEmerald-GBA'
-STATE_NAME = 'BattleLevel5'
+# LOAD_STATE_NAME = 'starter'
+LOAD_STATE_NAME = 'BattleLevel5'  # IGNORE
 
 # Load custom buttons if exists
 BUTTONS_JSON_PATH = os.path.join(os.path.dirname(__file__), 'data', GAME, 'buttons.json')
@@ -46,7 +48,7 @@ def force_button_test(env, idx, screen, btn_name):
 def main():
     # Initialize Retro with NO state (boot from ROM)
     # render_mode='rgb_array' tells Retro: "Don't open a window, just give me the pixels"
-    env = retro.make(game=GAME, state='starter', render_mode='rgb_array')
+    env = retro.make(game=GAME, state=LOAD_STATE_NAME, render_mode='rgb_array')
 
     obs = env.reset()
 
@@ -56,12 +58,12 @@ def main():
     # Scale up 2x for visibility
     scale = 2
     screen = pygame.display.set_mode((screen_width * scale, screen_height * scale))
-    pygame.display.set_caption(f"Playing {GAME} - Press S to Save '{STATE_NAME}'")
+    pygame.display.set_caption(f"Playing {GAME} - Press S to Save '{LOAD_STATE_NAME}'")
     
     clock = pygame.time.Clock()
     
     print(f"Controls: Arrows = D-Pad, Z=A, X=B, Enter=Start, Shift=Select")
-    print(f"PRESS 'S' TO SAVE STATE: {STATE_NAME}.state")
+    print(f"PRESS 'S' TO SAVE STATE: {LOAD_STATE_NAME}.state")
     print(f"PRESS 'ESC' TO QUIT")
     
     # Define our Pygame -> Retro mapping for clarity
@@ -88,7 +90,7 @@ def main():
     
     print(f"DEBUG: Core Button Mapping: {env.unwrapped.buttons}")
     # output:   DEBUG: Core Button Mapping: ['B', None, 'SELECT', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'A', None, 'L', 'R']
-    print(f"Target Save File: {STATE_NAME}.state")
+    print(f"Target Save File: {LOAD_STATE_NAME}.state")
 
     running = True
     while running:
@@ -162,12 +164,14 @@ def main():
                     running = False
 
                 elif event.key == pygame.K_m:
-                    print(f"SAVING STATE TO: {STATE_NAME}.state")
+
+                    this_state_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    print(f"SAVING STATE TO: {this_state_name}.state")
                     content = env.em.get_state()
                     
                     save_path = os.path.join(
                         os.path.dirname(retro.data.get_romfile_path(GAME)),
-                        f"{STATE_NAME}.state"
+                        f"{this_state_name}.state"
                     )
                     
                     # CHANGED: Use gzip.open instead of open
