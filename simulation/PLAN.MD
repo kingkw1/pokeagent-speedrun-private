@@ -43,44 +43,49 @@
 *   **Action:** Load the model and watch it play 10 battles in `render_mode='human'`.
 *   **VCC:** The agent wins >80% of battles against the Level 5 rival.
 
-### **Phase 3: Scaling Intelligence (Future Roadmap)**
+### **Phase 3: The "Smart" Agent****
 **Goal:** Once the baseline HP-based agent is trained, we will incrementally restore complexity to the observation space to enable type-matching and advanced strategy.
 
-#### **3.1 Expanding the Sensor Suite**
-We will use `diagnostics/find_memory.py` to locate the following static addresses relative to the Battle Structure.
+**Step 3.1: The "Eye" (Memory Hunting)**
+* **Goal:** Read **Move IDs** (e.g., Water Gun = 55) and **Enemy Species** (e.g., Geodude = 74) from RAM.
+* **Action:**
+* Use `find_memory.py` or standard Gen 3 offsets to locate:
+* `Player_Move_1`, `Player_Move_2`, etc. (Usually `0x20241E4` + offset 12).
+* `Enemy_Species_ID` (Usually `0x2024448`).
 
-| Feature | RAM Type | Purpose | Implementation Strategy |
-| :--- | :--- | :--- | :--- |
-| **Move 1 ID** | `u16` | Identify move type (Water, Fire). | Lookup table in wrapper: `ID -> {Type, Power}`. |
-| **Move PP** | `u8` | Resource management. | Normalize `current_pp / max_pp`. |
-| **Enemy Species** | `u16` | Identify enemy type. | Lookup table: `SpeciesID -> {Type1, Type2}`. |
-| **Status Condition** | `u8` | Detect Sleep/Poison. | One-hot encoding (e.g., `[is_sleep, is_poison]`). |
 
-*Note: In Gen 3, Move 1 is typically at offset `+12` bytes from the start of the Pokémon struct. PP is at `+20`.*
+* **VCC:** The script prints: `Enemy: Torchic (ID 4), Move 1: Scratch (ID 10)`.
 
-#### **3.2 Knowledge Injection (The Lookup Tables)**
-Instead of forcing the agent to learn the entire type chart from scratch (which takes millions of steps), we will inject **domain knowledge** directly into the observation space.
+**Step 3.2: The "Brain" (Knowledge Injection)**
 
-**New Observation Vector:**
+* **Goal:** Instead of forcing the RL agent to memorize the Type Chart (which takes millions of steps), we give it a "Cheat Sheet."
+* **Action:**
+* Create a `pokedex.py` file with dictionaries: `MOVES_INFO` and `TYPE_CHART`.
+* Update `EmeraldBattleWrapper` to look up the current moves and calculate effectiveness.
+
+
+* **New Observation Space:**
 ```python
 [
-  # HP (Existing)
-  my_hp_norm, enemy_hp_norm,
-  
-  # Type Effectiveness (Calculated in Wrapper)
-  move_1_effectiveness, # e.g., 2.0 (Super Effective), 0.5 (Not Very)
-  move_2_effectiveness,
-  move_3_effectiveness,
-  move_4_effectiveness,
-
-  # Resources
-  move_1_has_pp, # Boolean (1.0 or 0.0)
+  MyHP, EnemyHP, 
+  Move1_Power, Move1_Effectiveness, # e.g., 40, 2.0 (Super Effective)
+  Move2_Power, Move2_Effectiveness,
   ...
 ]
-```
-*Why this wins:* This reduces the problem from "Memorize all 386 Pokémon types" to "Pick the move with the highest effectiveness number."
 
-#### **3.3 Action Masking (Safety)**
+```
+
+**Step 3.3: The "Gym" (Mass State Generation)**
+
+* **Goal:** *Now* that the agent can see effectiveness, we train it on variety.
+* **Action:**
+* Create 3 distinct Save States:
+1. `State_Grass`: Advantageous matchup (Fire vs Grass).
+2. `State_Rock`: Disadvantageous matchup (Normal vs Rock).
+3. `State_Ghost`: Immunity matchup (Normal vs Ghost).
+
+
+#### **3.4 Action Masking (Safety)**
 To prevent the agent from selecting Move 3 when it has 0 PP (which wastes a turn struggling), we will implement **Action Masking**.
 *   **Technique:** Use `ActionMasker` from `sb3-contrib`.
 *   **Logic:** If `pp[i] == 0`, mask Action `i`.
