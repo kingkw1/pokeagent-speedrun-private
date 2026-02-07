@@ -24,55 +24,41 @@ from stable_baselines3.common.monitor import Monitor
 # ⚙️  TUNING CONFIGURATION
 # ==================================================================================
 
-# 1. TIMING (Frames)
-# How long to wait after confirming an attack for animations to finish.
-# Too short = Agent doesn't see HP drop. Too long = Wasted training time.
-POST_ATTACK_WAIT_FRAMES = 900 
+# 1. ENVIRONMENT & CURRICULUM
+GAME_ID = 'PokemonEmerald-GBA'
+# The agent will cycle through these states in parallel
+TRAIN_STATES = [
+    'BattleLevel5',       # Original (Torchic vs Wurmple)
+    'State_Advantage',    # e.g., Fire vs Grass (Should learn Ember)
+    'State_Disadvantage'  # e.g., Fire vs Water (Should learn Scratch)
+]
+NUM_ENVS = 4 # Must be at least len(TRAIN_STATES) to see all scenarios
 
-# How long to wait for the "Fight/Bag" menu to slide away.
+# 2. TIMING (Frames)
+POST_ATTACK_WAIT_FRAMES = 900 # Reduced from 900 for speed (900 is ~15s, too slow)
 MENU_SLIDE_WAIT_FRAMES = 30
-
-# How long to hold a button for it to register on GBA.
 BUTTON_HOLD_FRAMES = 6
 BUTTON_RELEASE_FRAMES = 6
-
-# Small pause between cursor movements.
 CURSOR_WAIT_FRAMES = 6
 
-# 2. REWARDS & PENALTIES
+# 3. REWARDS
 REWARD_WIN_BONUS = 20.0
 REWARD_DMG_MULTIPLIER = 2.0
 PENALTY_DMG_TAKEN = 1.0
-PENALTY_INVALID_MOVE = -5.0  # Penalty for choosing a move with 0 PP
+PENALTY_INVALID_MOVE = -5.0
 
-# 3. BUTTON MAPPING (Indices based on play_and_save.py)
-BTN_INDICES = {
-    'B': 0, 
-    'A': 8, 
-    'SELECT': 2, 
-    'START': 3,  # Doesn't work currently due to how the emulator handles state saving, but included for completeness
-    'UP': 4, 
-    'DOWN': 5, 
-    'LEFT': 6, 
-    'RIGHT': 7,
-    'L': 10, 
-    'R': 11
-}
-
-# 4. ENVIRONMENT SETUP
-GAME_ID = 'PokemonEmerald-GBA'
-STATE_NAME = 'BattleLevel5'
-OBS_NORM_FACTOR = 20.0
-NUM_ENVS = 4
-
-# 5. TRAINING HYPERPARAMETERS
-TOTAL_TIMESTEPS = 256
+# 4. TRAINING HYPERPARAMETERS
+TOTAL_TIMESTEPS = 100000 # Increased for multi-scenario learning
 PPO_LEARNING_RATE = 0.0003
-PPO_N_STEPS = 64
+PPO_N_STEPS = 128
 PPO_BATCH_SIZE = 64
-MODELS_DIR = "models/PPO"
+MODELS_DIR = "models/PPO_Masked"
 LOG_DIR = "simulation/data/logs"
-MODEL_SAVE_NAME = "emerald_battle_v1"
+MODEL_SAVE_NAME = "emerald_curriculum_v1"
+
+# 5. BUTTON MAPPING
+BTN_INDICES = {'B': 0, 'A': 8, 'SELECT': 2, 'START': 3, 'UP': 4, 'DOWN': 5, 'LEFT': 6, 'RIGHT': 7, 'L': 10, 'R': 11}
+OBS_NORM_FACTOR = 20.0
 
 # ==================================================================================
 
@@ -198,39 +184,39 @@ class EmeraldBattleWrapper(gym.Wrapper):
         return self._get_obs(info), reward, terminated, False, info
 
     def _get_obs(self, info):
-        # 1. Base Stats
-        obs = [
-            info.get('my_hp', 0) / OBS_NORM_FACTOR, 
-            info.get('enemy_hp', 0) / OBS_NORM_FACTOR,
-        ]
+            # 1. Base Stats
+            obs = [
+                info.get('my_hp', 0) / OBS_NORM_FACTOR, 
+                info.get('enemy_hp', 0) / OBS_NORM_FACTOR,
+            ]
 
-        # 2. Parse Enemy Types
-        enemy_id = info.get('enemy_species', 0)
-        enemy_data = SPECIES_DATA.get(enemy_id, {"types": [None, None]})
-        enemy_types = enemy_data.get("types", [None, None])
+            # 2. Parse Enemy Types (The "Eye")
+            enemy_id = info.get('enemy_species', 0)
+            enemy_data = SPECIES_DATA.get(enemy_id, {"types": [None, None]})
+            enemy_types = enemy_data.get("types", [None, None])
 
-        # 3. Enriched Move Data
-        for i in range(1, 5):
-            # PP
-            pp = info.get(f'move_{i}_pp', 0)
-            norm_pp = pp / OBS_NORM_FACTOR
-            
-            # Pokedex Info
-            move_id = info.get(f'move_{i}', 0)
-            move_info = MOVES_DATA.get(move_id, {"type": 0, "power": 0})
-            
-            # Power
-            power = move_info.get("power", 0)
-            norm_power = power / 100.0 # Normalize 100 power -> 1.0 (some moves are 120+, but rare early game)
-            
-            # Effectiveness
-            move_type = move_info.get("type", 0)
-            eff = get_effectiveness(move_type, enemy_types)
-            norm_eff = eff / 4.0 # Normalize 4x -> 1.0
-            
-            obs.extend([norm_pp, norm_power, norm_eff])
+            # 3. Enriched Move Data (The "Brain")
+            for i in range(1, 5):
+                # PP Norm
+                pp = info.get(f'move_{i}_pp', 0)
+                norm_pp = 1.0 if pp > 0 else 0.0 # Binary availability is clearer for the AI than 0.35
+                
+                # Pokedex Info
+                move_id = info.get(f'move_{i}', 0)
+                move_info = MOVES_DATA.get(move_id, {"type": 0, "power": 0})
+                
+                # Power Norm
+                power = move_info.get("power", 0)
+                norm_power = power / 100.0 
+                
+                # Effectiveness Norm
+                move_type = move_info.get("type", 0)
+                eff = get_effectiveness(move_type, enemy_types)
+                norm_eff = eff / 4.0 # Normalize so 4.0x becomes 1.0
+                
+                obs.extend([norm_pp, norm_power, norm_eff])
 
-        return np.array(obs, dtype=np.float32)
+            return np.array(obs, dtype=np.float32)
 
     def _perform_move_macro(self, move_index):
         """
@@ -272,25 +258,35 @@ class EmeraldBattleWrapper(gym.Wrapper):
         no_op = np.zeros(12, dtype=np.int8)
         for _ in range(frames):
             self.env.step(no_op)
-
+            
 def mask_fn(env):
     return env.action_masks()
 
-def make_env():
-    # adding render_mode='rgb_array' here prevents the white windows from spawning and speeds up training.
-    env = retro.make(game=GAME_ID, state=STATE_NAME, render_mode='rgb_array')
-    
-    env = EmeraldBattleWrapper(env)
-    env = ActionMasker(env, mask_fn)
-    return Monitor(env)
+def make_env(rank):
+    """
+    Factory function that assigns a DIFFERENT state to each environment rank.
+    Rank 0 -> BattleLevel5
+    Rank 1 -> State_Advantage
+    Rank 2 -> State_Disadvantage
+    """
+    def _init():
+        # Cycle through the available states based on the Rank ID
+        state_to_load = TRAIN_STATES[rank % len(TRAIN_STATES)]
+        # print(f"Worker {rank} loading scenario: {state_to_load}")
+        
+        env = retro.make(game=GAME_ID, state=state_to_load, render_mode='rgb_array')
+        env = EmeraldBattleWrapper(env)
+        env = ActionMasker(env, mask_fn) # Apply Safety Mask
+        return Monitor(env)
+    return _init
 
 def main():
     os.makedirs(MODELS_DIR, exist_ok=True)
     os.makedirs(LOG_DIR, exist_ok=True)
 
-    # Parallel Environments
-    # If on Windows, set n_envs=1. On Linux/Mac, 4 is usually safe.
-    env = SubprocVecEnv([make_env for _ in range(NUM_ENVS)]) 
+    # Parallel Environments with Curriculum
+    # We pass the index 'i' to make_env so it knows which State to load
+    env = SubprocVecEnv([make_env(i) for i in range(NUM_ENVS)]) 
     
     model = MaskablePPO(
         "MlpPolicy", 
@@ -298,13 +294,12 @@ def main():
         verbose=1, 
         tensorboard_log=LOG_DIR,
         learning_rate=PPO_LEARNING_RATE,
-        n_steps=PPO_N_STEPS, # Lower n_steps because 1 step = ~300 frames now
+        n_steps=PPO_N_STEPS,
         batch_size=PPO_BATCH_SIZE,
         device="cpu"
     )
     
-    print("Starting Training...")
-    # 50k steps is actually quite a lot of gameplay given the macro length
+    print(f"🚀 Starting Curriculum Training on {len(TRAIN_STATES)} Scenarios...")
     model.learn(total_timesteps=TOTAL_TIMESTEPS, progress_bar=True)
     
     model.save(f"{MODELS_DIR}/{MODEL_SAVE_NAME}")

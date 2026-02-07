@@ -4,15 +4,27 @@ import numpy as np
 import stable_retro as retro
 import pygame
 import sys
+import os
+
+# SB3 Contrib for Masking
 from sb3_contrib import MaskablePPO
 
-# Reuse the wrapper structure from training to ensure inputs match exactly
-from train import EmeraldBattleWrapper, STATE_NAME, GAME_ID, BTN_INDICES
+# Reuse wrapper and config from train.py
+# Ensure train.py is in the same folder or python path
+try:
+    from train import EmeraldBattleWrapper, GAME_ID, BTN_INDICES, TRAIN_STATES
+except ImportError:
+    # Fallback if TRAIN_STATES isn't found (if you haven't fully updated train.py yet)
+    from train import EmeraldBattleWrapper, GAME_ID, BTN_INDICES
+    TRAIN_STATES = ['BattleLevel5', 'State_Advantage', 'State_Disadvantage']
 
 # ==================================================================================
-# ⚙️  EVALUATION CONFIG (Must match Training!)
+# ⚙️  EVALUATION CONFIG
 # ==================================================================================
-POST_ATTACK_WAIT_FRAMES = 200  # Matches train.py (or whatever you set it to)
+# Model to Load
+MODEL_PATH = "models/PPO_Masked/emerald_curriculum_v1"
+
+# Visual Timing
 MENU_SLIDE_WAIT_FRAMES = 30
 BUTTON_HOLD_FRAMES = 6
 BUTTON_RELEASE_FRAMES = 6
@@ -23,18 +35,17 @@ class VisualEvaluationWrapper(EmeraldBattleWrapper):
     """
     Wraps the environment to DRAW the game to a window while the Agent plays.
     """
-    def __init__(self, env, screen):
+    def __init__(self, env, screen, scenario_name):
         super().__init__(env)
         self.screen = screen
+        self.scenario_name = scenario_name
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("Arial", 18, bold=True)
+        self.hud_font = pygame.font.SysFont("Arial", 14, bold=True)
 
-    # --- OVERRIDE TIMING & RENDERING ---
-    # We override these methods to inject "Rendering" into the wait loops
-    
     def step(self, action):
-        # 1. ACTION MASKING VISUALIZATION
-        # (We duplicate the check here just to print it to the screen if needed)
+        # Visual Check for Invalid Moves (Debug only)
+        # We peek at data before the step to see if the agent messed up
         info = {
             'move_1_pp': self.env.data.lookup_value('move_1_pp'),
             'move_2_pp': self.env.data.lookup_value('move_2_pp'),
@@ -42,7 +53,6 @@ class VisualEvaluationWrapper(EmeraldBattleWrapper):
             'move_4_pp': self.env.data.lookup_value('move_4_pp'),
         }
         
-        # Check for invalid move (visual feedback only)
         move_pp = 0
         if action == 0: move_pp = info['move_1_pp']
         elif action == 1: move_pp = info['move_2_pp']
@@ -50,15 +60,12 @@ class VisualEvaluationWrapper(EmeraldBattleWrapper):
         elif action == 3: move_pp = info['move_4_pp']
 
         if move_pp <= 0:
-            print(f"Agent tried Action {action} but had NO PP!")
-            # The base wrapper handles the penalty, we just want to see it fail
-        
-        # Call the normal step, but it uses OUR _wait and _perform_move_macro
+            print(f"⚠️ AGENT ERROR: Selected Action {action} with 0 PP!")
+
         return super().step(action)
 
     def _perform_move_macro(self, move_index):
-        # We override this to ensure our visual _press_button is used
-        # (Python inheritance usually handles this, but being explicit is safe)
+        # Override to visualize button presses
         self._press_button('A')
         self._wait(MENU_SLIDE_WAIT_FRAMES)
 
@@ -77,23 +84,19 @@ class VisualEvaluationWrapper(EmeraldBattleWrapper):
         self._press_button('A')
 
     def _press_button(self, btn_name):
-        # LOGIC
         action_arr = np.zeros(12, dtype=np.int8)
         action_arr[BTN_INDICES[btn_name]] = 1
         
-        # RENDER HOLD
         for _ in range(BUTTON_HOLD_FRAMES):
             self.env.step(action_arr)
             self._render_frame(action_name=f"PRESS {btn_name}")
             
-        # RENDER RELEASE
         no_op = np.zeros(12, dtype=np.int8)
         for _ in range(BUTTON_RELEASE_FRAMES):
             self.env.step(no_op)
             self._render_frame(action_name="...")
 
     def _wait(self, frames):
-        # RENDER WAIT
         no_op = np.zeros(12, dtype=np.int8)
         for _ in range(frames):
             self.env.step(no_op)
@@ -114,15 +117,19 @@ class VisualEvaluationWrapper(EmeraldBattleWrapper):
         # 3. Draw
         self.screen.blit(surf, (0, 0))
         
-        # 4. Overlay
-        text = self.font.render(f"AGENT ACTION: {action_name}", True, (255, 255, 0))
-        # Shadow
-        self.screen.blit(self.font.render(f"AGENT ACTION: {action_name}", True, (0,0,0)), (12, 12))
+        # 4. HUD Overlay
+        # Scenario Name
+        scen_text = self.hud_font.render(f"SCENARIO: {self.scenario_name}", True, (0, 255, 255))
+        self.screen.blit(scen_text, (10, 290))
+
+        # Agent Action
+        text = self.font.render(f"ACTION: {action_name}", True, (255, 255, 0))
+        self.screen.blit(self.font.render(f"ACTION: {action_name}", True, (0,0,0)), (12, 12)) # Shadow
         self.screen.blit(text, (10, 10))
 
         pygame.display.flip()
         
-        # 5. Cap FPS (Run at 60 to look normal, or 120 to fast forward slightly)
+        # 5. Cap FPS
         self.clock.tick(120) 
 
 def main():
@@ -130,56 +137,71 @@ def main():
     pygame.init()
     pygame.font.init()
     screen = pygame.display.set_mode((480, 320))
-    pygame.display.set_caption("Pokemon Emerald - PPO Agent Evaluation")
+    pygame.display.set_caption("Pokemon Emerald - Curriculum Evaluation")
 
-    # 2. Load Environment
-    print("Loading Environment...")
-    # render_mode='rgb_array' is required for get_screen()
-    raw_env = retro.make(game=GAME_ID, state=STATE_NAME, render_mode='rgb_array')
-    env = VisualEvaluationWrapper(raw_env, screen)
-
-    # 3. Load Model
-    model_path = "models/PPO/emerald_battle_v1"
-    print(f"Loading Model from: {model_path}")
-    
+    # 2. Load Model
+    print(f"Loading Model from: {MODEL_PATH}")
     try:
-        model = MaskablePPO.load(model_path)
+        model = MaskablePPO.load(MODEL_PATH)
     except FileNotFoundError:
-        print("❌ Model not found! Did you finish training?")
+        print("❌ Model not found! Ensure you have trained 'emerald_curriculum_v1'.")
         return
 
-    # 4. Evaluation Loop
-    battles = 0
-    wins = 0
-    
-    obs, info = env.reset()
-    
-    print("\n--- STARTING EVALUATION ---")
-    
+    print(f"\n🚀 STARTING EVALUATION LOOP")
+    print(f"Scenarios: {TRAIN_STATES}\n")
+
+    # 3. Main Loop (Cycles through states)
+    state_index = 0
+    battles_total = 0
+    wins_total = 0
+
     while True:
-        # GET ACTION FROM AI
-        # Retrieve valid action masks to prevent invalid moves
-        action_masks = env.action_masks()
-        # deterministic=True means "Pick the absolute best move", no randomness
-        action, _states = model.predict(obs, action_masks=action_masks, deterministic=True)
+        # A. Pick Scenario
+        current_state = TRAIN_STATES[state_index % len(TRAIN_STATES)]
+        print(f"--- Battle {battles_total + 1} | Scenario: {current_state} ---")
+
+        # B. Init Environment (Re-make to load new state)
+        # Note: We must use render_mode='rgb_array' for get_screen() to work in wrapper
+        try:
+            raw_env = retro.make(game=GAME_ID, state=current_state, render_mode='rgb_array')
+        except FileNotFoundError:
+            print(f"⚠️  State '{current_state}' not found. Skipping.")
+            state_index += 1
+            continue
+
+        env = VisualEvaluationWrapper(raw_env, screen, current_state)
         
-        # STEP ENV
-        obs, reward, terminated, truncated, info = env.step(action)
+        # C. Run Episode
+        obs, info = env.reset()
+        terminated = False
         
-        if terminated:
-            battles += 1
-            # Check Win Condition (Enemy HP = 0)
-            if info.get('enemy_hp') == 0:
-                print(f"Battle {battles}: VICTORY 🏆")
-                wins += 1
-            else:
-                print(f"Battle {battles}: DEFEAT 💀")
+        while not terminated:
+            # Action Masking is CRITICAL for MaskablePPO
+            action_masks = env.action_masks()
             
-            print(f"Win Rate: {wins}/{battles} ({wins/battles*100:.1f}%)")
+            # Predict
+            action, _ = model.predict(obs, action_masks=action_masks, deterministic=True)
             
-            # Pause briefly to see the result screen
-            env._wait(120)
-            obs, info = env.reset()
+            # Step
+            obs, reward, terminated, truncated, info = env.step(action)
+            
+            if terminated:
+                battles_total += 1
+                if info.get('enemy_hp') == 0:
+                    print(f"   Result: VICTORY 🏆")
+                    wins_total += 1
+                else:
+                    print(f"   Result: DEFEAT 💀")
+                
+                # Show result for a moment
+                env._wait(120)
+
+        # D. Cleanup & Next
+        env.close()
+        state_index += 1
+        
+        # Optional: Print Stats
+        print(f"   Session Win Rate: {wins_total}/{battles_total} ({wins_total/battles_total*100:.1f}%)")
 
 if __name__ == "__main__":
     main()
