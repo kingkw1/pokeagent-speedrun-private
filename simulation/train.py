@@ -28,9 +28,11 @@ from stable_baselines3.common.monitor import Monitor
 GAME_ID = 'PokemonEmerald-GBA'
 # The agent will cycle through these states in parallel
 TRAIN_STATES = [
-    'BattleLevel5',       # Original (Torchic vs Wurmple)
-    'State_Advantage',    # e.g., Fire vs Grass (Should learn Ember)
-    'State_Disadvantage'  # e.g., Fire vs Water (Should learn Scratch)
+    'State_Advantage',
+    'State_Advantage2',
+    'State_Disadvantage',
+    'State_Disadvantage2', 
+    'State_Neutral',
 ]
 NUM_ENVS = 4 # Must be at least len(TRAIN_STATES) to see all scenarios
 
@@ -113,7 +115,6 @@ class EmeraldBattleWrapper(gym.Wrapper):
 
     def step(self, action):
         # 1. GET DATA (Robust Lookup)
-        # We perform a manual lookup because env.data is not a standard dict
         data = self.env.data
         info = {
             'my_hp': data.lookup_value('my_hp') or 0,
@@ -130,8 +131,18 @@ class EmeraldBattleWrapper(gym.Wrapper):
             'enemy_species': data.lookup_value('enemy_species') or 0,
         }
 
-        # 2. ACTION MASKING (Soft Mask / Penalty)
-        # Check if the chosen move has PP
+        # 2. PRE-CALCULATE EFFECTIVENESS (Reward Shaping)
+        # We check this BEFORE execution to reward the *decision*, not just the result.
+        chosen_move_id = info.get(f'move_{action+1}', 0)
+        move_data = MOVES_DATA.get(chosen_move_id, {'type': 0, 'power': 0})
+        
+        enemy_id = info.get('enemy_species', 0)
+        enemy_types = SPECIES_DATA.get(enemy_id, {}).get('types', [None, None])
+        
+        # Calculate multiplier (e.g., 2.0, 0.5, 1.0)
+        effectiveness = get_effectiveness(move_data['type'], enemy_types)
+
+        # 3. ACTION MASKING (Soft Mask / Penalty)
         move_pp = 0
         if action == 0: move_pp = info['move_1_pp']
         elif action == 1: move_pp = info['move_2_pp']
@@ -139,32 +150,47 @@ class EmeraldBattleWrapper(gym.Wrapper):
         elif action == 3: move_pp = info['move_4_pp']
 
         if move_pp <= 0:
-            # INVALID MOVE: Penalize and skip turn logic to prevent getting stuck
+            # INVALID MOVE: Penalize and skip turn logic
             obs = self._get_obs(info)
-            # We step 1 frame just to tick the clock slightly
             self._wait(1) 
             return obs, PENALTY_INVALID_MOVE, False, False, info
 
-        # 3. EXECUTE MACRO
+        # 4. EXECUTE MACRO
         self._perform_move_macro(action)
         
-        # 4. FAST FORWARD (Wait for animation)
+        # 5. FAST FORWARD
         self._wait(POST_ATTACK_WAIT_FRAMES) 
 
-        # 5. CALCULATE REWARD
-        # Refresh info after the turn to see the damage result
+        # 6. CALCULATE REWARD
         new_my_hp = data.lookup_value('my_hp') or 0
         new_enemy_hp = data.lookup_value('enemy_hp') or 0
         
         damage_dealt = self.prev_enemy_hp - new_enemy_hp
         damage_taken = self.prev_my_hp - new_my_hp
         
-        # Clamp negative damage (healing/reset noise)
         if damage_dealt < 0: damage_dealt = 0
         if damage_taken < 0: damage_taken = 0
         
+        # Base Reward: Damage Differential
         reward = (damage_dealt * REWARD_DMG_MULTIPLIER) - (damage_taken * PENALTY_DMG_TAKEN)
+                
+        # A. Efficiency Penalty (The "Clock")
+        # Forces the agent to win as fast as possible.
+        reward -= 0.1
         
+        # B. Intelligence Bonus (The "Professor")
+        # Explicitly reward using the correct Type, regardless of damage RNG.
+        if effectiveness > 1.0:
+            reward += 1.0 # Super Effective!
+        elif effectiveness < 1.0 and effectiveness > 0.0:
+            reward -= 1.0 # Not Very Effective...
+        
+        # C. Whiff Penalty
+        # If a DAMAGING move did 0 damage, punish it heavily.
+        # This prevents spamming attacks on immune enemies or missing repeatedly.
+        if damage_dealt == 0 and move_data['power'] > 0:
+             reward -= 0.5
+
         # Win Bonus
         terminated = False
         if new_enemy_hp == 0 and self.prev_enemy_hp > 0:
