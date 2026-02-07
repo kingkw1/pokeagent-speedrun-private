@@ -10,7 +10,7 @@ from datetime import datetime
 # Configuration
 GAME = 'PokemonEmerald-GBA'
 # LOAD_STATE_NAME = 'starter'
-LOAD_STATE_NAME = 'BattleLevel5'  # IGNORE
+LOAD_STATE_NAME = 'lotad'  # IGNORE
 
 # Load custom buttons if exists
 BUTTONS_JSON_PATH = os.path.join(os.path.dirname(__file__), 'data', GAME, 'buttons.json')
