@@ -43,6 +43,7 @@
 *   **Action:** Load the model and watch it play 10 battles in `render_mode='human'`.
 *   **VCC:** The agent wins >80% of battles against the Level 5 rival.
 
+
 ### **Phase 3: The "Smart" Agent****
 **Goal:** Once the baseline HP-based agent is trained, we will incrementally restore complexity to the observation space to enable type-matching and advanced strategy.
 
@@ -89,6 +90,7 @@
 To prevent the agent from selecting Move 3 when it has 0 PP (which wastes a turn struggling), we will implement **Action Masking**.
 *   **Technique:** Use `ActionMasker` from `sb3-contrib`.
 *   **Logic:** If `pp[i] == 0`, mask Action `i`.
+
 
 ### Phase 4: The "Driver" (Deployment Bridge)
 **Goal:** Build the interface that allows your Python code to "see" the real mGBA emulator the same way the model sees the simulation.

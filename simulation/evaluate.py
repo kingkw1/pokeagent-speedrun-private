@@ -12,7 +12,7 @@ from train import EmeraldBattleWrapper, STATE_NAME, GAME_ID, BTN_INDICES
 # ==================================================================================
 # ⚙️  EVALUATION CONFIG (Must match Training!)
 # ==================================================================================
-POST_ATTACK_WAIT_FRAMES = 250  # Matches train.py (or whatever you set it to)
+POST_ATTACK_WAIT_FRAMES = 200  # Matches train.py (or whatever you set it to)
 MENU_SLIDE_WAIT_FRAMES = 30
 BUTTON_HOLD_FRAMES = 6
 BUTTON_RELEASE_FRAMES = 6

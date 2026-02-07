@@ -6,7 +6,7 @@ import pygame
 import sys
 
 # Import existing wrapper
-from train import EmeraldBattleWrapper 
+from train import EmeraldBattleWrapper, BTN_INDICES 
 
 # ==================================================================================
 # ⚙️  TUNING CONFIGURATION (Edit these values!)
@@ -15,7 +15,7 @@ from train import EmeraldBattleWrapper
 # 1. TURN DURATION
 # How long to wait after confirming an attack for the animation to play out.
 # If this is too short, the agent won't see the HP bar drop.
-POST_ATTACK_WAIT_FRAMES = 900  
+POST_ATTACK_WAIT_FRAMES = 800  
 
 # 2. BUTTON TIMING
 # How long to hold a button down (GBA needs ~4-8 frames to register reliably).
@@ -98,7 +98,7 @@ class VisualBattleWrapper(EmeraldBattleWrapper):
         print(f"   [DEBUG] Pressing Button: {btn_name}")
         
         action_arr = np.zeros(12, dtype=np.int8)
-        action_arr[self.btn_indices[btn_name]] = 1
+        action_arr[BTN_INDICES[btn_name]] = 1
         
         # Hold
         for _ in range(hold_frames):

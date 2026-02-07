@@ -2,6 +2,19 @@ import stable_retro as retro
 import gymnasium as gym
 import numpy as np
 import os
+import sys
+
+# Add the current directory to sys.path to ensure we can import local modules
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
+
+try:
+    from pokedex import MOVES_DATA, SPECIES_DATA, get_effectiveness
+except ImportError:
+    # Fallback if running from root without package structure
+    from simulation.pokedex import MOVES_DATA, SPECIES_DATA, get_effectiveness
+
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
@@ -52,7 +65,7 @@ OBS_NORM_FACTOR = 20.0
 NUM_ENVS = 4
 
 # 5. TRAINING HYPERPARAMETERS
-TOTAL_TIMESTEPS = 128
+TOTAL_TIMESTEPS = 256
 PPO_LEARNING_RATE = 0.0003
 PPO_N_STEPS = 64
 PPO_BATCH_SIZE = 64
@@ -69,8 +82,10 @@ class EmeraldBattleWrapper(gym.Wrapper):
         # Action Space: 4 Discrete Actions (Move 1, Move 2, Move 3, Move 4)
         self.action_space = gym.spaces.Discrete(4)
         
-        # Observation Space: [MyHP, EnemyHP, PP1, PP2, PP3, PP4] (Normalized)
-        self.observation_space = gym.spaces.Box(low=0, high=1, shape=(6,), dtype=np.float32)
+        # Observation Space: 
+        # [MyHP, EnemyHP] + 4 * [PP, Power, Effectiveness]
+        # Total = 2 + 12 = 14
+        self.observation_space = gym.spaces.Box(low=0, high=1, shape=(14,), dtype=np.float32)
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
@@ -89,6 +104,12 @@ class EmeraldBattleWrapper(gym.Wrapper):
             'move_2_pp': data.lookup_value('move_2_pp') or 0,
             'move_3_pp': data.lookup_value('move_3_pp') or 0,
             'move_4_pp': data.lookup_value('move_4_pp') or 0,
+            # Extended Data for Pokedex
+            'move_1': data.lookup_value('move_1') or 0,
+            'move_2': data.lookup_value('move_2') or 0,
+            'move_3': data.lookup_value('move_3') or 0,
+            'move_4': data.lookup_value('move_4') or 0,
+            'enemy_species': data.lookup_value('enemy_species') or 0,
         }
 
         # 2. ACTION MASKING (Soft Mask / Penalty)
@@ -145,15 +166,39 @@ class EmeraldBattleWrapper(gym.Wrapper):
         return self._get_obs(info), reward, terminated, False, info
 
     def _get_obs(self, info):
-        # Normalize Data (Assuming Level 5 stats ~20 HP)
-        return np.array([
+        # 1. Base Stats
+        obs = [
             info.get('my_hp', 0) / OBS_NORM_FACTOR, 
             info.get('enemy_hp', 0) / OBS_NORM_FACTOR,
-            info.get('move_1_pp', 0) / OBS_NORM_FACTOR,
-            info.get('move_2_pp', 0) / OBS_NORM_FACTOR,
-            info.get('move_3_pp', 0) / OBS_NORM_FACTOR,
-            info.get('move_4_pp', 0) / OBS_NORM_FACTOR
-        ], dtype=np.float32)
+        ]
+
+        # 2. Parse Enemy Types
+        enemy_id = info.get('enemy_species', 0)
+        enemy_data = SPECIES_DATA.get(enemy_id, {"types": [None, None]})
+        enemy_types = enemy_data.get("types", [None, None])
+
+        # 3. Enriched Move Data
+        for i in range(1, 5):
+            # PP
+            pp = info.get(f'move_{i}_pp', 0)
+            norm_pp = pp / OBS_NORM_FACTOR
+            
+            # Pokedex Info
+            move_id = info.get(f'move_{i}', 0)
+            move_info = MOVES_DATA.get(move_id, {"type": 0, "power": 0})
+            
+            # Power
+            power = move_info.get("power", 0)
+            norm_power = power / 100.0 # Normalize 100 power -> 1.0 (some moves are 120+, but rare early game)
+            
+            # Effectiveness
+            move_type = move_info.get("type", 0)
+            eff = get_effectiveness(move_type, enemy_types)
+            norm_eff = eff / 4.0 # Normalize 4x -> 1.0
+            
+            obs.extend([norm_pp, norm_power, norm_eff])
+
+        return np.array(obs, dtype=np.float32)
 
     def _perform_move_macro(self, move_index):
         """
