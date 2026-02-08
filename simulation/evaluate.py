@@ -8,6 +8,7 @@ import os
 
 # SB3 Contrib for Masking
 from sb3_contrib import MaskablePPO
+from pokedex import MOVES_DATA, SPECIES_DATA
 
 # Reuse wrapper and config from train.py
 # Ensure train.py is in the same folder or python path
@@ -52,6 +53,17 @@ class VisualEvaluationWrapper(EmeraldBattleWrapper):
             'move_3_pp': self.env.data.lookup_value('move_3_pp'),
             'move_4_pp': self.env.data.lookup_value('move_4_pp'),
         }
+
+        # --- LOGGING: Move & Enemy ---
+        move_id_key = f'move_{action+1}'
+        move_id = self.env.data.lookup_value(move_id_key)
+        enemy_id = self.env.data.lookup_value('enemy_species')
+        
+        move_name = MOVES_DATA.get(move_id, {}).get('name', f"Unknown Move {move_id}")
+        enemy_name = SPECIES_DATA.get(enemy_id, {}).get('name', f"Unknown Mon {enemy_id}")
+        
+        print(f"   > Action Used: {move_name} | vs Enemy: {enemy_name}")
+        # -----------------------------
         
         move_pp = 0
         if action == 0: move_pp = info['move_1_pp']
@@ -158,7 +170,6 @@ def main():
     while True:
         # A. Pick Scenario
         current_state = TRAIN_STATES[state_index % len(TRAIN_STATES)]
-        print(f"--- Battle {battles_total + 1} | Scenario: {current_state} ---")
 
         # B. Init Environment (Re-make to load new state)
         # Note: We must use render_mode='rgb_array' for get_screen() to work in wrapper
@@ -173,6 +184,13 @@ def main():
         
         # C. Run Episode
         obs, info = env.reset()
+
+        # Print Battle Header with Enemy Name
+        # Note: env is VisualEvaluationWrapper -> env.env is RetroEnv
+        enemy_id = env.env.data.lookup_value('enemy_species')
+        enemy_name = SPECIES_DATA.get(enemy_id, {}).get('name', f'Unknown_{enemy_id}')
+        
+        print(f"--- Battle {battles_total + 1} | Scenario: {current_state} vs {enemy_name} ---")
         terminated = False
         
         while not terminated:
