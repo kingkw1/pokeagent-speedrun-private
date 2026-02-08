@@ -131,17 +131,10 @@ class EmeraldBattleWrapper(gym.Wrapper):
             'enemy_species': data.lookup_value('enemy_species') or 0,
         }
 
-        # 2. PRE-CALCULATE EFFECTIVENESS (Reward Shaping)
-        # We check this BEFORE execution to reward the *decision*, not just the result.
+        # 2. PRE-CALCULATE EFFECTIVENESS (For Info only, not Reward)
         chosen_move_id = info.get(f'move_{action+1}', 0)
         move_data = MOVES_DATA.get(chosen_move_id, {'type': 0, 'power': 0})
         
-        enemy_id = info.get('enemy_species', 0)
-        enemy_types = SPECIES_DATA.get(enemy_id, {}).get('types', [None, None])
-        
-        # Calculate multiplier (e.g., 2.0, 0.5, 1.0)
-        effectiveness = get_effectiveness(move_data['type'], enemy_types)
-
         # 3. ACTION MASKING (Soft Mask / Penalty)
         move_pp = 0
         if action == 0: move_pp = info['move_1_pp']
@@ -161,36 +154,37 @@ class EmeraldBattleWrapper(gym.Wrapper):
         # 5. FAST FORWARD
         self._wait(POST_ATTACK_WAIT_FRAMES) 
 
-        # 6. CALCULATE REWARD
+        # 6. CALCULATE REWARD (The "Speedrunner" Logic)
         new_my_hp = data.lookup_value('my_hp') or 0
         new_enemy_hp = data.lookup_value('enemy_hp') or 0
         
         damage_dealt = self.prev_enemy_hp - new_enemy_hp
         damage_taken = self.prev_my_hp - new_my_hp
         
+        # Clamp noise
         if damage_dealt < 0: damage_dealt = 0
         if damage_taken < 0: damage_taken = 0
         
-        # Base Reward: Damage Differential
-        reward = (damage_dealt * REWARD_DMG_MULTIPLIER) - (damage_taken * PENALTY_DMG_TAKEN)
-                
-        # A. Efficiency Penalty (The "Clock")
-        # Forces the agent to win as fast as possible.
-        reward -= 0.1
+        # A. Damage is King
+        # We massively amplify the signal for lowering enemy HP.
+        # This naturally finds the highest damage move (Scratch vs Marill)
+        # without needing hard-coded type rules.
+        reward = (damage_dealt * 4.0)
         
-        # B. Intelligence Bonus (The "Professor")
-        # Explicitly reward using the correct Type, regardless of damage RNG.
-        if effectiveness > 1.0:
-            reward += 1.0 # Super Effective!
-        elif effectiveness < 1.0 and effectiveness > 0.0:
-            reward -= 1.0 # Not Very Effective...
+        # B. The Cost of Doing Business (Damage Taken)
+        # We penalize taking damage, but less than we reward dealing it.
+        reward -= (damage_taken * 1.0)
         
-        # C. Whiff Penalty
-        # If a DAMAGING move did 0 damage, punish it heavily.
-        # This prevents spamming attacks on immune enemies or missing repeatedly.
+        # C. The Clock (Efficiency)
+        # We punish EVERY step. This forces the agent to find the *fastest* kill.
+        reward -= 1.0
+        
+        # D. The "Whiff" Penalty (Zero Damage)
+        # If we did NOTHING to the enemy state (and it was a damaging move), punish heavily.
+        # This stops Growl loops or attacking immune types.
         if damage_dealt == 0 and move_data['power'] > 0:
-             reward -= 0.5
-
+            reward -= 2.0
+            
         # Win Bonus
         terminated = False
         if new_enemy_hp == 0 and self.prev_enemy_hp > 0:
@@ -294,7 +288,7 @@ class EmeraldBattleWrapper(gym.Wrapper):
                 self._press_button('UP')
                 self._wait(CURSOR_WAIT_FRAMES) 
                 self._press_button('LEFT')
-                
+
             self._wait(CURSOR_WAIT_FRAMES)
 
             # 4. Confirm Move
