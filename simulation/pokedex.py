@@ -46,6 +46,7 @@ SPECIES_DATA = {
     285: {"name": "Swampert",  "types": [11, 4]},
 
     # --- ROUTE 101 / 102 / 103 (Early Game) ---
+    183: {"name": "Marill",    "types": [11, 0]},  # Verified
     286: {"name": "Poochyena", "types": [17, None]}, # Verified
     287: {"name": "Mightyena", "types": [17, None]},
     288: {"name": "Zigzagoon", "types": [0, None]},  # Verified

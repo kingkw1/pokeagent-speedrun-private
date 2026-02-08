@@ -77,23 +77,60 @@ class VisualEvaluationWrapper(EmeraldBattleWrapper):
         return super().step(action)
 
     def _perform_move_macro(self, move_index):
-        # Override to visualize button presses
-        self._press_button('A')
-        self._wait(MENU_SLIDE_WAIT_FRAMES)
+            """
+            Navigates the Battle Menu safely by resetting cursor position.
+            """
 
-        if move_index == 1: 
-            self._press_button('RIGHT')
-        elif move_index == 2: 
-            self._press_button('DOWN')
-        elif move_index == 3: 
-            self._press_button('DOWN') 
+            # 0. Clear menu and reset cursor to default root menu position (Fight)
+            self._press_button('B')
             self._wait(CURSOR_WAIT_FRAMES) 
-            self._press_button('RIGHT')
+            self._press_button('B')
+            self._wait(CURSOR_WAIT_FRAMES) 
+            self._press_button('B')
+            self._wait(CURSOR_WAIT_FRAMES) 
+            self._press_button('UP')
+            self._wait(CURSOR_WAIT_FRAMES) 
+            self._press_button('LEFT')
+            self._wait(CURSOR_WAIT_FRAMES) 
+            self._press_button('UP')
+            self._wait(CURSOR_WAIT_FRAMES) 
+            self._press_button('LEFT')
+            self._wait(CURSOR_WAIT_FRAMES) 
 
-        if move_index != 0:
+            # 1. Select 'FIGHT')
+            self._press_button('A')
+            self._wait(MENU_SLIDE_WAIT_FRAMES)
+
+            # 2. GLOBAL CURSOR RESET (The Fix)
+            # We blindly press UP and LEFT to force the cursor to the Top-Left (Move 1).
+            # This fixes the "Menu Memory" where the cursor position is remembered between moves.
+            self._press_button('UP')
+            self._wait(CURSOR_WAIT_FRAMES) 
+            self._press_button('LEFT')
+            self._wait(CURSOR_WAIT_FRAMES) 
+            
+            # 3. Navigate to Target from Top-Left
+            if move_index == 1: # TR
+                self._press_button('UP')
+                self._wait(CURSOR_WAIT_FRAMES) 
+                self._press_button('RIGHT')
+            elif move_index == 2: # BL
+                self._press_button('DOWN')
+                self._wait(CURSOR_WAIT_FRAMES) 
+                self._press_button('LEFT')
+            elif move_index == 3: # BR
+                self._press_button('DOWN') 
+                self._wait(CURSOR_WAIT_FRAMES) 
+                self._press_button('RIGHT')
+            elif move_index == 0:
+                self._press_button('UP')
+                self._wait(CURSOR_WAIT_FRAMES) 
+                self._press_button('LEFT')
+                
             self._wait(CURSOR_WAIT_FRAMES)
 
-        self._press_button('A')
+            # 4. Confirm Move
+            self._press_button('A')
 
     def _press_button(self, btn_name):
         action_arr = np.zeros(12, dtype=np.int8)

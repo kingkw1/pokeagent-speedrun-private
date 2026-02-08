@@ -260,6 +260,10 @@ class EmeraldBattleWrapper(gym.Wrapper):
             self._wait(CURSOR_WAIT_FRAMES) 
             self._press_button('LEFT')
             self._wait(CURSOR_WAIT_FRAMES) 
+            self._press_button('UP')
+            self._wait(CURSOR_WAIT_FRAMES) 
+            self._press_button('LEFT')
+            self._wait(CURSOR_WAIT_FRAMES) 
 
             # 1. Select 'FIGHT')
             self._press_button('A')
@@ -275,16 +279,23 @@ class EmeraldBattleWrapper(gym.Wrapper):
             
             # 3. Navigate to Target from Top-Left
             if move_index == 1: # TR
+                self._press_button('UP')
+                self._wait(CURSOR_WAIT_FRAMES) 
                 self._press_button('RIGHT')
             elif move_index == 2: # BL
                 self._press_button('DOWN')
+                self._wait(CURSOR_WAIT_FRAMES) 
+                self._press_button('LEFT')
             elif move_index == 3: # BR
                 self._press_button('DOWN') 
                 self._wait(CURSOR_WAIT_FRAMES) 
                 self._press_button('RIGHT')
-
-            if move_index != 0:
-                self._wait(CURSOR_WAIT_FRAMES)
+            elif move_index == 0:
+                self._press_button('UP')
+                self._wait(CURSOR_WAIT_FRAMES) 
+                self._press_button('LEFT')
+                
+            self._wait(CURSOR_WAIT_FRAMES)
 
             # 4. Confirm Move
             self._press_button('A')
