@@ -254,24 +254,12 @@ class EmeraldBattleWrapper(gym.Wrapper):
             self._wait(CURSOR_WAIT_FRAMES) 
             self._press_button('LEFT')
             self._wait(CURSOR_WAIT_FRAMES) 
-            self._press_button('UP')
-            self._wait(CURSOR_WAIT_FRAMES) 
-            self._press_button('LEFT')
-            self._wait(CURSOR_WAIT_FRAMES) 
 
             # 1. Select 'FIGHT')
             self._press_button('A')
             self._wait(MENU_SLIDE_WAIT_FRAMES)
-
-            # 2. GLOBAL CURSOR RESET (The Fix)
-            # We blindly press UP and LEFT to force the cursor to the Top-Left (Move 1).
-            # This fixes the "Menu Memory" where the cursor position is remembered between moves.
-            self._press_button('UP')
-            self._wait(CURSOR_WAIT_FRAMES) 
-            self._press_button('LEFT')
-            self._wait(CURSOR_WAIT_FRAMES) 
-            
-            # 3. Navigate to Target from Top-Left
+           
+            # 2. Navigate to Target from any Position
             if move_index == 1: # TR
                 self._press_button('UP')
                 self._wait(CURSOR_WAIT_FRAMES) 
@@ -291,7 +279,7 @@ class EmeraldBattleWrapper(gym.Wrapper):
 
             self._wait(CURSOR_WAIT_FRAMES)
 
-            # 4. Confirm Move
+            # 3. Confirm Move
             self._press_button('A')
 
     def _press_button(self, btn_name):
