@@ -27,7 +27,7 @@ def test_state(state_file, expected, name):
         import io
         import base64
         
-        vlm = VLM(backend="gemini", model_name="gemini-2.0-flash-exp")
+        vlm = VLM(backend="gemini", model_name="gemini-2.0-flash")
         
         state_resp = requests.get("http://localhost:8000/state", timeout=5)
         state_data = state_resp.json()

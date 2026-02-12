@@ -27,7 +27,7 @@ try:
     
     class Args:
         backend = "gemini"
-        model_name = "gemini-2.0-flash-exp"
+        model_name = "gemini-2.0-flash"
         simple = False
     
     print("🤖 Initializing agent...")

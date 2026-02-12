@@ -183,7 +183,7 @@ def main():
     # Initialize VLM (hard-coded to Gemini backend for now)
     print("🤖 Initializing VLM backend...")
     try:
-        vlm = VLM(backend="gemini", model_name="gemini-2.0-flash-exp")
+        vlm = VLM(backend="gemini", model_name="gemini-2.0-flash")
         print("✅ VLM initialized successfully")
     except Exception as e:
         print(f"❌ Error initializing VLM: {e}")
