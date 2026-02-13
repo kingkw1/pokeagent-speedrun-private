@@ -11,35 +11,39 @@ _FALLBACK_PLAN = {
     "reasoning": "Fallback — LLM response could not be parsed.",
 }
 
+# Safety-net context used when memory has nothing relevant yet
+_STATIC_KNOWLEDGE = (
+    "KNOWN GAME MECHANICS:\n"
+    "- If an Old Man blocks the path, you must talk to him to watch a catching tutorial.\n"
+    "- If a small tree blocks the path, you need the HM Cut.\n"
+    "- If a ledge blocks the path, go around; ledges are one-way.\n"
+    "- If a Team Aqua/Magma grunt is blocking a door, you usually need to "
+    "clear a nearby dungeon or deliver an item."
+)
+
 
 class RecoveryPlanner:
     """
     The Reasoning Engine.
     Uses an LLM to generate recovery steps when the agent gets blocked.
 
-    Phase 1: Context comes from a hardcoded cheat-sheet string.
-    Phase 2: Context will come from EpisodicMemory.retrieve().
+    Powered by RAG (Retrieval-Augmented Generation):
+    1. Queries EpisodicMemory for relevant context.
+    2. Falls back to a static cheat-sheet if memory is empty/disconnected.
+    3. Sends the context + situation to the LLM for a plan.
     """
 
-    def __init__(self, vlm=None):
+    def __init__(self, vlm=None, memory=None):
         """
         Args:
             vlm: An initialised ``utils.vlm.VLM`` instance.  When *None* the
                  planner falls back to a deterministic mock (useful for unit
                  tests and offline demos).
+            memory: An ``EpisodicMemory`` instance for RAG retrieval.
+                    When *None*, the static cheat-sheet is used instead.
         """
         self.vlm = vlm
-
-        # PHASE 1: HARDCODED CONTEXT (The "Cheat Sheet")
-        # In Phase 2, replace this with memory.retrieve()
-        self.static_knowledge = (
-            "KNOWN GAME MECHANICS:\n"
-            "- If an Old Man blocks the path, you must talk to him to watch a catching tutorial.\n"
-            "- If a small tree blocks the path, you need the HM Cut.\n"
-            "- If a ledge blocks the path, go around; ledges are one-way.\n"
-            "- If a Team Aqua/Magma grunt is blocking a door, you usually need to "
-            "clear a nearby dungeon or deliver an item."
-        )
+        self.memory = memory
 
     def generate_recovery_plan(
         self,
@@ -48,31 +52,52 @@ class RecoveryPlanner:
         blocker_context: str,
     ) -> dict:
         """
-        Asks the LLM to formulate a plan based on the active blocker and
-        available context.
+        Asks the LLM to formulate a plan.
+        1. Retrieves relevant memories based on the blocker.
+        2. Falls back to static knowledge if memory is empty.
+        3. Constructs a prompt with that dynamic context.
+        4. Parses the LLM response.
 
         Returns:
             dict with keys ``recovery_task`` (str) and ``reasoning`` (str).
             Always returns a valid dict — falls back to a safe default on any
             parse or API error.
         """
+        # 1. RAG RETRIEVAL (The "Brain" looks up the answer)
+        retrieved_context = None
+        if self.memory:
+            query = f"How to get past {blocker_reason} {blocker_context}"
+            logger.info(f"[RecoveryPlanner] Querying memory: '{query}'")
+            retrieved_context = self.memory.retrieve_relevant(query, n_results=3)
+
+        # 2. Determine the context to use
+        if retrieved_context and retrieved_context != "No relevant memories found.":
+            context_block = f"RELEVANT GAME KNOWLEDGE (From Memory):\n{retrieved_context}"
+        else:
+            logger.info("[RecoveryPlanner] Memory empty or disconnected — using static knowledge.")
+            context_block = f"GAME KNOWLEDGE (Static):\n{_STATIC_KNOWLEDGE}"
+
+        # 3. PROMPT CONSTRUCTION
         prompt = (
             "You are an expert Pokemon Speedrun Guide.\n\n"
-            f"CONTEXT (Game Knowledge):\n{self.static_knowledge}\n\n"
+            f"{context_block}\n\n"
             f"SITUATION:\n"
             f"The player's current goal is: \"{current_goal}\".\n"
             f"The player is currently blocked.\n"
             f"System Reason: \"{blocker_reason}\"\n"
             f"On-Screen Visual Context: \"{blocker_context}\"\n\n"
             "TASK:\n"
-            "Based strictly on the CONTEXT provided, what is the immediate next "
-            "step the player should take to clear the blocker?\n\n"
+            "Based strictly on the KNOWLEDGE provided above, what is the immediate next "
+            "step the player should take to clear the blocker?\n"
+            "If the memory does not contain a specific solution, infer the most logical "
+            "game action (e.g., 'Explore', 'Talk to NPC').\n\n"
             "Output your response as a valid JSON object with EXACTLY these two keys:\n"
             "- \"recovery_task\": A short, actionable command string (e.g., \"Talk to the Old Man\").\n"
             "- \"reasoning\": A brief explanation of why this solves the problem.\n\n"
             "Return ONLY the JSON object, no other text."
         )
 
+        # 4. LLM CALL
         response_text = self._call_llm(prompt)
         return self._parse_response(response_text)
 
@@ -95,8 +120,7 @@ class RecoveryPlanner:
         print(f"   [RecoveryPlanner] Mock mode — no VLM configured (prompt {len(prompt)} chars)")
         return (
             '{"recovery_task": "Interact with the Old Man", '
-            '"reasoning": "The context states that the Old Man requires you to '
-            'watch a catching tutorial before passing."}'
+            '"reasoning": "Memory indicates Old Man triggers the tutorial."}'
         )
 
     # ------------------------------------------------------------------

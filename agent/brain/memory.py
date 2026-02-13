@@ -79,12 +79,20 @@ class EpisodicMemory:
             for doc, meta, dist in zip(documents, metadatas, distances)
         ]
 
-    def retrieve_relevant(self, query: str, n_results: int = 3) -> str:
+    def retrieve_relevant(self, query: str, n_results: int = 3, max_distance: float | None = None) -> str:
         """
         Performs a Semantic Search.
         Returns a formatted string of the top N relevant memories.
+
+        Args:
+            max_distance: If set, drops results whose cosine distance exceeds
+                          this threshold (lower = more similar). Typical useful
+                          range for MiniLM is 0.8–1.3.
         """
         entries = self.retrieve_raw(query, n_results)
+
+        if max_distance is not None:
+            entries = [e for e in entries if e["distance"] is not None and e["distance"] <= max_distance]
 
         if not entries:
             return "No relevant memories found."

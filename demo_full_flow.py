@@ -1,0 +1,88 @@
+# demo_full_flow.py
+import argparse
+import shutil
+from agent.brain.goal_manager import GoalManager
+from agent.brain.planner import RecoveryPlanner
+from agent.brain.memory import EpisodicMemory
+
+_DEMO_DB_PATH = "./memory_db_full_flow"
+
+
+def run_demo(live: bool = False):
+    print("==================================================")
+    print("🧠 POKEMON AGENT: END-TO-END RAG DEMO")
+    print("==================================================")
+
+    # 1. Initialize Components
+    memory = EpisodicMemory(db_path=_DEMO_DB_PATH)
+    memory.clear_memory()  # Start fresh
+
+    vlm = None
+    if live:
+        from utils.vlm import VLM
+        vlm = VLM(model_name="gemini-2.0-flash", backend="gemini")
+        print("   Mode: LIVE (Gemini API)")
+    else:
+        print("   Mode: MOCK (no API call)")
+
+    gm = GoalManager()
+    planner = RecoveryPlanner(vlm=vlm, memory=memory)
+
+    # 2. The "Learning" Phase
+    # The agent "experiences" the game rules and logs them to ChromaDB
+    print("\n--- PHASE 1: LEARNING (LOGGING MEMORIES) ---")
+    facts = [
+        "To pass the Old Man in Viridian/Oldale, you must talk to him to watch the tutorial.",
+        "Small trees can be cut using HM01 Cut.",
+        "Ledges are one-way jumps.",
+        "The Sketch Artist blocks Route 103 until you beat the Rival.",
+    ]
+    for fact in facts:
+        memory.log_event(fact, {"type": "mechanic"})
+        print(f"📝 Logged: {fact}")
+
+    # 3. The "Problem" Phase
+    # The agent gets blocked
+    print("\n--- PHASE 2: THE BLOCKER ---")
+    mock_perception = {
+        "visual_data": {
+            "screen_context": "overworld",
+            "on_screen_text": {
+                "dialogue": "Wait! Don't go out there! It's dangerous!",
+                "speaker": "Old Man",
+            },
+        }
+    }
+    gm.update(mock_perception)
+
+    # 4. The "Solution" Phase (RAG + Planning)
+    active_task = gm.state["sub_tasks"][0]
+    if active_task["status"] == "BLOCKED":
+        print("\n--- PHASE 3: RAG & PLANNING ---")
+
+        plan = planner.generate_recovery_plan(
+            current_goal=active_task["task"],
+            blocker_reason="NPC Dialogue Keyword",
+            blocker_context=active_task["blocker_context"],
+        )
+
+        print(f"🤖 LLM REASONING: {plan['reasoning']}")
+        print(f"✅ NEW TASK: {plan['recovery_task']}")
+
+        # Validate that RAG actually happened
+        if "tutorial" in plan["reasoning"].lower() or "talk" in plan["recovery_task"].lower():
+            print("\n🏆 SUCCESS: The agent used the Retrieved Memory to solve the problem!")
+        else:
+            print("\n⚠️  WARNING: The plan seems generic. RAG might not have retrieved the right key.")
+    else:
+        print("\n❌ FAIL: GoalManager did not detect the blocker.")
+
+    # Cleanup demo DB
+    shutil.rmtree(_DEMO_DB_PATH, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="End-to-end RAG demo for the Pokemon Agent")
+    parser.add_argument("--live", action="store_true", help="Use real Gemini API")
+    args = parser.parse_args()
+    run_demo(live=args.live)
