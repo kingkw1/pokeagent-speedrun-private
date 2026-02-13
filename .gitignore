@@ -206,3 +206,7 @@ docs/archive/
 
 # State files
 *.state
+
+# Memory files
+memory_db/
+memory_db_demo/
