@@ -1638,6 +1638,9 @@ What button should you press? Respond with ONE button name only: A"""
                     button_recommendation = "B"
                     decision_explanation = "Advance battle dialogue"
                     logger.info("💬 [BATTLE BOT] Recommending B to advance dialogue")
+                    # Reset RUN navigation since cursor resets when returning to base_menu
+                    if hasattr(action_step, '_run_nav_step'):
+                        action_step._run_nav_step = 0
                 
                 elif battle_decision == "RECOVER_FROM_RUN_FAILURE":
                     # We tried to run from a trainer battle - press B to dismiss message
@@ -1654,43 +1657,30 @@ What button should you press? Respond with ONE button name only: A"""
                     logger.info("🏃 [BATTLE BOT] Recommending A to confirm RUN")
                 
                 elif battle_decision == "VLM_SELECT_RUN":
-                    # Ask VLM to navigate to and select RUN option
-                    # VLM can see the menu options and navigate correctly
-                    vision_prompt = """You are controlling a Pokemon game battle menu.
-
-Current screen shows a battle menu with options:
-- FIGHT
-- BAG  
-- POKEMON
-- RUN
-
-Your task: Navigate to and select the RUN option to flee from this wild Pokemon battle.
-
-What button should you press RIGHT NOW (this frame) to move toward selecting RUN?
-- If cursor is on FIGHT: press DOWN (to move to POKEMON row)
-- If cursor is on BAG: press DOWN (to move to RUN)
-- If cursor is on POKEMON: press RIGHT (to move to RUN)
-- If cursor is on RUN: press A (to select it)
-
-Return ONLY the button name: UP, DOWN, LEFT, RIGHT, A, or B"""
+                    # Navigate to RUN option deterministically
+                    # Pokemon battle menu is a 2x2 grid:
+                    #   FIGHT  | BAG
+                    #   POKEMON| RUN
+                    # Cursor starts on FIGHT. Navigate: DOWN → RIGHT → A
+                    if not hasattr(action_step, '_run_nav_step'):
+                        action_step._run_nav_step = 0
                     
-                    # Get VLM to select the button
-                    vlm_button = self._call_vlm_for_button(
-                        screenshot_base64,
-                        vision_prompt
-                    )
+                    run_steps = ['DOWN', 'RIGHT', 'A']
+                    step_idx = action_step._run_nav_step
                     
-                    if vlm_button and vlm_button in ['UP', 'DOWN', 'LEFT', 'RIGHT', 'A', 'B']:
-                        button_recommendation = vlm_button
-                        decision_explanation = f"VLM navigating to RUN option: {vlm_button}"
-                        logger.info(f"🏃 [BATTLE BOT VLM] Recommending {vlm_button} to navigate to RUN")
-                        print(f"🏃 [BATTLE BOT VLM] {vlm_button} → RUN")
+                    if step_idx < len(run_steps):
+                        button_recommendation = run_steps[step_idx]
+                        decision_explanation = f"Navigating to RUN option (step {step_idx + 1}/3): {button_recommendation}"
+                        action_step._run_nav_step = step_idx + 1
+                        logger.info(f"🏃 [BATTLE BOT] RUN nav step {step_idx + 1}/3: {button_recommendation}")
+                        print(f"🏃 [BATTLE BOT] RUN nav: {button_recommendation} (step {step_idx + 1}/3)")
                     else:
-                        # Fallback if VLM fails
-                        button_recommendation = "DOWN"
-                        decision_explanation = "VLM failed - defaulting to DOWN to navigate to RUN"
-                        logger.warning("⚠️ [BATTLE BOT VLM] Failed to get valid button, defaulting to DOWN")
-                        print("⚠️ [BATTLE BOT VLM] Failed - pressing DOWN as fallback")
+                        # Already sent all nav steps, press A again to confirm
+                        button_recommendation = 'A'
+                        decision_explanation = "Confirming RUN selection"
+                        action_step._run_nav_step = 0  # Reset for next attempt
+                        logger.info("🏃 [BATTLE BOT] RUN nav complete - pressing A")
+                        print("🏃 [BATTLE BOT] RUN nav complete → A")
                 
                 elif battle_decision == "PRESS_RIGHT":
                     # Move cursor toward RUN option

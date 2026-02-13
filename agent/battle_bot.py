@@ -519,7 +519,8 @@ class BattleBot:
             self._current_battle_type = BattleType.WILD
             logger.info(f"🌿 [BATTLE TYPE] WILD BATTLE detected via dialogue (HIGHEST PRIORITY)")
             logger.info(f"   Dialogue evidence: '{all_dialogue[:100]}'")
-            print(f"🏃 [BATTLE TYPE] WILD BATTLE detected from dialogue: '{dialogue_text[:50]}'")
+            display_text = dialogue_text[:50] if dialogue_text else all_dialogue[:50]
+            print(f"🏃 [BATTLE TYPE] WILD BATTLE detected from dialogue: '{display_text}'")
             return BattleType.WILD
         
         # Check for trainer evidence (second priority)
