@@ -2,6 +2,8 @@ import json
 from typing import List, Dict, Optional
 
 
+BLOCKING_KEYWORDS = ["wait", "stop", "don't go", "dangerous"] # Keywords indicating player cannot progress
+
 class GoalManager:
     """
     The Executive State Machine. 
@@ -22,7 +24,7 @@ class GoalManager:
         }
         
         # Keywords that indicate the player cannot progress
-        self.blocking_keywords = ["wait", "stop", "don't go", "dangerous"]
+        self.blocking_keywords = BLOCKING_KEYWORDS
 
     def update(self, perception_output: dict):
         """
