@@ -95,6 +95,10 @@ class GoalManager:
             "blocker_context": None
         })
 
+    def signal_blocker(self, reason: str, context: str):
+        """External trigger to force BLOCKED state (e.g., battle transition)."""
+        self._handle_blocker(reason=reason, context=context)
+
     def complete_task(self):
         """Marks the active task as COMPLETED and removes it from the stack."""
         if not self.state["sub_tasks"]:

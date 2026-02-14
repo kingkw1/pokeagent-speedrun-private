@@ -33,7 +33,7 @@ class RecoveryPlanner:
     3. Sends the context + situation to the LLM for a plan.
     """
 
-    def __init__(self, vlm=None, memory=None):
+    def __init__(self, vlm=None, memory=None, verbose=False):
         """
         Args:
             vlm: An initialised ``utils.vlm.VLM`` instance.  When *None* the
@@ -41,9 +41,12 @@ class RecoveryPlanner:
                  tests and offline demos).
             memory: An ``EpisodicMemory`` instance for RAG retrieval.
                     When *None*, the static cheat-sheet is used instead.
+            verbose: When *True*, prints detailed RAG retrieval info to the
+                     console (useful for demos and debugging).
         """
         self.vlm = vlm
         self.memory = memory
+        self.verbose = verbose
 
     def generate_recovery_plan(
         self,
@@ -70,9 +73,14 @@ class RecoveryPlanner:
             logger.info(f"[RecoveryPlanner] Querying memory: '{query}'")
             retrieved_context = self.memory.retrieve_relevant(query, n_results=3)
 
-            print(f"\n🧠 [RAG] Block Detected: {blocker_reason}")
-            print(f"🔍 [RAG] Searching Memory for: '{query}'")
-            print(f"📂 [RAG] Retrieved Context:\n{retrieved_context}\n")
+            if self.verbose:
+                print("\n" + "=" * 60)
+                print(f"\U0001f9e0 [BRAIN] INTERRUPTION DETECTED: {blocker_reason}")
+                print(f"\U0001f50d [RAG] Querying Vector Database: '{query}'")
+                print(f"\U0001f4c2 [RAG] RETRIEVED KNOWLEDGE:")
+                for line in retrieved_context.split("\n"):
+                    print(f"   {line}")
+                print("=" * 60 + "\n")
 
         # 2. Determine the context to use
         if retrieved_context and retrieved_context != "No relevant memories found.":

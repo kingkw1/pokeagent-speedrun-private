@@ -92,8 +92,9 @@ class Agent:
             # 🧠 Brain initialization (Memory + GoalManager + Planner)
             self.episodic_memory = EpisodicMemory(db_path="./memory_db")
             self.goal_manager = GoalManager()
-            self.planner = RecoveryPlanner(vlm=self.vlm, memory=self.episodic_memory)
+            self.planner = RecoveryPlanner(vlm=self.vlm, memory=self.episodic_memory, verbose=True)
             self.last_logged_dialogue = None
+            self._brain_prev_in_battle = False  # Track battle transitions
             
             # Pre-seed knowledge for mid-game save states
             _SEED_MARKER = {"type": "seed_marker"}
@@ -198,26 +199,72 @@ class Agent:
                     )
                     self.last_logged_dialogue = brain_dialogue
                 
-                # B. Update GoalManager state (detect blockers)
-                self.goal_manager.update(perception_output)
+                # B. Detect battle transitions (overworld → battle, battle → overworld)
+                brain_in_battle = state_data.get('game', {}).get('in_battle', False)
+                brain_screen = brain_visual.get('screen_context', '')
+                brain_location = state_data.get('player', {}).get('location', 'Unknown')
                 
-                # C. If blocked, trigger recovery planner and short-circuit
-                if self.goal_manager.state["sub_tasks"]:
-                    active_task = self.goal_manager.state["sub_tasks"][0]
-                    if active_task["status"] == "BLOCKED":
-                        # Generate a recovery plan if we haven't already
+                if brain_in_battle and not self._brain_prev_in_battle:
+                    # === BATTLE START ===
+                    battle_context = brain_dialogue or f"Entered battle on {brain_location}"
+                    self.episodic_memory.log_event(
+                        f"Battle started on {brain_location}: {battle_context}",
+                        {"type": "battle_start", "location": brain_location}
+                    )
+                    # Signal GoalManager and fire RAG query
+                    self.goal_manager.signal_blocker(
+                        reason="Trainer Battle",
+                        context=battle_context
+                    )
+                    if self.goal_manager.state["sub_tasks"]:
+                        active_task = self.goal_manager.state["sub_tasks"][0]
                         if active_task.get("type") != "RECOVERY":
-                            print("🤔 [Agent] Thinking... Querying Memory & LLM...")
                             plan = self.planner.generate_recovery_plan(
                                 current_goal=active_task["task"],
-                                blocker_reason="Obstacle Detected",
-                                blocker_context=active_task["blocker_context"] or "",
+                                blocker_reason="Trainer Battle",
+                                blocker_context=battle_context,
                             )
                             print(f"💡 [Agent] Recovery Plan: {plan['recovery_task']}")
                             self.goal_manager.add_recovery_task(plan["recovery_task"])
-                        
-                        # Execute the recovery action (press A to dismiss / battle)
-                        return {'action': ['A']}
+                
+                elif not brain_in_battle and self._brain_prev_in_battle:
+                    # === BATTLE END ===
+                    self.episodic_memory.log_event(
+                        f"Battle ended on {brain_location}. Resumed navigation.",
+                        {"type": "battle_end", "location": brain_location}
+                    )
+                    # Complete the recovery task so normal navigation resumes
+                    if (self.goal_manager.state["sub_tasks"] and
+                            self.goal_manager.state["sub_tasks"][0].get("type") == "RECOVERY"):
+                        self.goal_manager.complete_task()
+                    # Also clear any BLOCKED state on the underlying task
+                    if (self.goal_manager.state["sub_tasks"] and
+                            self.goal_manager.state["sub_tasks"][0]["status"] == "BLOCKED"):
+                        self.goal_manager.state["sub_tasks"][0]["status"] = "IN_PROGRESS"
+                        self.goal_manager.state["sub_tasks"][0]["blocker_context"] = None
+                    print(f"✅ [Brain] Battle complete. Resuming navigation.")
+                
+                self._brain_prev_in_battle = brain_in_battle
+                
+                # C. Update GoalManager with dialogue keywords (non-battle blockers)
+                if not brain_in_battle:
+                    self.goal_manager.update(perception_output)
+                
+                # D. If blocked by a NON-BATTLE blocker, short-circuit
+                #    (Battle blockers are handled by the battle bot — don't short-circuit)
+                if (not brain_in_battle and self.goal_manager.state["sub_tasks"]
+                        and self.goal_manager.state["sub_tasks"][0]["status"] == "BLOCKED"):
+                    active_task = self.goal_manager.state["sub_tasks"][0]
+                    if active_task.get("type") != "RECOVERY":
+                        print("🤔 [Agent] Thinking... Querying Memory & LLM...")
+                        plan = self.planner.generate_recovery_plan(
+                            current_goal=active_task["task"],
+                            blocker_reason="Obstacle Detected",
+                            blocker_context=active_task["blocker_context"] or "",
+                        )
+                        print(f"💡 [Agent] Recovery Plan: {plan['recovery_task']}")
+                        self.goal_manager.add_recovery_task(plan["recovery_task"])
+                    return {'action': ['A']}
                 
                 # -----------------------------------------------------------
                 

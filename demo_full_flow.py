@@ -26,7 +26,7 @@ def run_demo(live: bool = False):
         print("   Mode: MOCK (no API call)")
 
     gm = GoalManager()
-    planner = RecoveryPlanner(vlm=vlm, memory=memory)
+    planner = RecoveryPlanner(vlm=vlm, memory=memory, verbose=True)
 
     # 2. The "Learning" Phase
     # The agent "experiences" the game rules and logs them to ChromaDB
