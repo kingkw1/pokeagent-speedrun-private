@@ -1515,10 +1515,15 @@ class PokemonEmeraldReader:
                     logger.debug("All methods failed, trying memory scan")
                     opponent_data = self._scan_for_opponent_pokemon()
                 
-                # Opponent detection disabled - feature not working correctly
-                enhanced_battle["opponent_pokemon"] = None
-                enhanced_battle["opponent_status"] = "Opponent detection disabled (feature not reliable)"
-                logger.debug("Opponent detection disabled due to incorrect readings")
+                # Use opponent data if any method succeeded
+                if opponent_data:
+                    enhanced_battle["opponent_pokemon"] = opponent_data
+                    enhanced_battle["opponent_status"] = "Opponent detected"
+                    logger.info(f"Opponent data available: {opponent_data.get('species', 'Unknown')} Lv{opponent_data.get('level', '?')}")
+                else:
+                    enhanced_battle["opponent_pokemon"] = None
+                    enhanced_battle["opponent_status"] = "Opponent not detected"
+                    logger.debug("No opponent data from any method")
                             
             except Exception as e:
                 logger.warning(f"Failed to read opponent battle Pokémon: {e}")

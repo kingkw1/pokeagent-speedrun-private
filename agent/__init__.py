@@ -44,6 +44,9 @@ from .perception import perception_step
 from .planning import planning_step
 from .simple import SimpleAgent, get_simple_agent, simple_mode_processing_multiprocess, configure_simple_agent_defaults
 from .opener_bot import OpenerBot, get_opener_bot
+from .brain.memory import EpisodicMemory
+from .brain.goal_manager import GoalManager
+from .brain.planner import RecoveryPlanner
 
 # Set up module logging
 logger = logging.getLogger(__name__)
@@ -85,6 +88,32 @@ class Agent:
                 'memory': []
             }
             print(f"   Mode: Four-module architecture")
+            
+            # 🧠 Brain initialization (Memory + GoalManager + Planner)
+            self.episodic_memory = EpisodicMemory(db_path="./memory_db")
+            self.goal_manager = GoalManager()
+            self.planner = RecoveryPlanner(vlm=self.vlm, memory=self.episodic_memory)
+            self.last_logged_dialogue = None
+            
+            # Pre-seed knowledge for mid-game save states
+            _SEED_MARKER = {"type": "seed_marker"}
+            existing_seeds = self.episodic_memory.collection.get(
+                where={"type": "seed_marker"}
+            )
+            if not existing_seeds["ids"]:
+                print("🧠 [Brain] Pre-seeding world knowledge...")
+                rules = [
+                    "Route 102 connects Oldale Town to Petalburg City.",
+                    "If a Trainer spots you (shouts 'Wait' or '!'), you must battle them to pass.",
+                    "Ledges are one-way jumps; find a path around them.",
+                    "Entering a Gym usually triggers a conversation with the Leader.",
+                    "To pass the Old Man, you must watch his tutorial.",
+                ]
+                for rule in rules:
+                    self.episodic_memory.log_event(rule, {"type": "mechanic"})
+                # Write a marker so we don't re-seed on next boot
+                self.episodic_memory.log_event("seed_complete", _SEED_MARKER)
+                print(f"🧠 [Brain] Seeded {len(rules)} rules.")
     
     def step(self, game_state):
         """
@@ -148,6 +177,49 @@ class Agent:
                     }
                 
                 self.context['perception_output'] = perception_output
+                
+                # -----------------------------------------------------------
+                # 🧠 BRAIN UPDATE (Memory + GoalManager + Recovery Planner)
+                # -----------------------------------------------------------
+                
+                # A. Log new dialogue to episodic memory
+                brain_visual = perception_output.get('visual_data', {})
+                brain_on_screen = brain_visual.get('on_screen_text', {})
+                brain_dialogue = None
+                if isinstance(brain_on_screen, str):
+                    brain_dialogue = brain_on_screen
+                elif isinstance(brain_on_screen, dict):
+                    brain_dialogue = brain_on_screen.get('dialogue')
+                
+                if brain_dialogue and brain_dialogue != self.last_logged_dialogue:
+                    self.episodic_memory.log_event(
+                        f"Heard dialogue: '{brain_dialogue}'",
+                        {"type": "dialogue"}
+                    )
+                    self.last_logged_dialogue = brain_dialogue
+                
+                # B. Update GoalManager state (detect blockers)
+                self.goal_manager.update(perception_output)
+                
+                # C. If blocked, trigger recovery planner and short-circuit
+                if self.goal_manager.state["sub_tasks"]:
+                    active_task = self.goal_manager.state["sub_tasks"][0]
+                    if active_task["status"] == "BLOCKED":
+                        # Generate a recovery plan if we haven't already
+                        if active_task.get("type") != "RECOVERY":
+                            print("🤔 [Agent] Thinking... Querying Memory & LLM...")
+                            plan = self.planner.generate_recovery_plan(
+                                current_goal=active_task["task"],
+                                blocker_reason="Obstacle Detected",
+                                blocker_context=active_task["blocker_context"] or "",
+                            )
+                            print(f"💡 [Agent] Recovery Plan: {plan['recovery_task']}")
+                            self.goal_manager.add_recovery_task(plan["recovery_task"])
+                        
+                        # Execute the recovery action (press A to dismiss / battle)
+                        return {'action': ['A']}
+                
+                # -----------------------------------------------------------
                 
                 # 1.5. Extract visual dialogue detection from VLM perception
                 # This replaces unreliable memory-based detection (42.9% accurate)

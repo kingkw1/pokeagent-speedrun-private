@@ -70,6 +70,10 @@ class RecoveryPlanner:
             logger.info(f"[RecoveryPlanner] Querying memory: '{query}'")
             retrieved_context = self.memory.retrieve_relevant(query, n_results=3)
 
+            print(f"\n🧠 [RAG] Block Detected: {blocker_reason}")
+            print(f"🔍 [RAG] Searching Memory for: '{query}'")
+            print(f"📂 [RAG] Retrieved Context:\n{retrieved_context}\n")
+
         # 2. Determine the context to use
         if retrieved_context and retrieved_context != "No relevant memories found.":
             context_block = f"RELEVANT GAME KNOWLEDGE (From Memory):\n{retrieved_context}"
