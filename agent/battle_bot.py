@@ -120,6 +120,10 @@ class BattleBot:
         'MAGIKARP',     # Water
         'MUDKIP',       # Water/Ground
         'SLAKOTH',      # Normal
+        'MAKUHITA',     # Fighting
+        'BARBOACH',     # Water/Ground (SUPER EFFECTIVE)
+        'WHISMUR',      # Normal
+        'NUMEL',        # Fire/Ground (Ground makes it effective despite Fire)
     }
 
     def __init__(self):
@@ -138,6 +142,7 @@ class BattleBot:
         self._wild_battle_dialogue_turns = 0  # Track dialogue turns in wild battle (force base_menu after N turns)
         self._opponent_species_from_dialogue = None  # Cache opponent species extracted from "sent out" dialogue
         self._is_birch_rescue_battle = False  # Flag set ONCE at battle start for Birch rescue detection
+        self._pending_move = None  # Track pending move decision across multi-step button sequences
         logger.info("🥊 [BATTLE BOT] Initialized with type-effective move selection")
     
     def should_handle(self, state_data: Dict[str, Any]) -> bool:
@@ -361,6 +366,7 @@ class BattleBot:
                 self._current_opponent = None  # Reset opponent tracking
                 self._unknown_state_count = 0  # Reset VLM hallucination counter
                 self._wild_battle_dialogue_turns = 0  # Reset wild battle dialogue counter
+                self._pending_move = None  # Reset pending move
         elif self._post_battle_dialogue and not is_post_battle_dialogue:
             # Post-battle dialogue finished
             logger.info(f"🥊 [BATTLE BOT] Post-battle dialogue finished, releasing control")
@@ -371,6 +377,7 @@ class BattleBot:
             self._dialogue_history = []
             self._battle_start_tile = None
             self._current_opponent = None  # Reset opponent tracking
+            self._pending_move = None  # Reset pending move
         
         # Update battle state tracking for next step
         self._was_in_battle_last_step = in_battle
@@ -981,7 +988,56 @@ class BattleBot:
         logger.warning(f"   Known species: {sorted(all_known_species)}")
         return species_upper
     
-    def _should_use_absorb(self, species: str, player_pokemon: Dict[str, Any] = None) -> bool:
+    # Grass-type move effectiveness by defender type
+    # Super effective (2x damage)
+    GRASS_SUPER_EFFECTIVE_TYPES = {'WATER', 'GROUND', 'ROCK'}
+    # Not very effective (0.5x damage)
+    GRASS_NOT_EFFECTIVE_TYPES = {'FLYING', 'POISON', 'BUG', 'FIRE', 'GRASS', 'DRAGON', 'STEEL'}
+    
+    def _should_use_absorb_by_types(self, opponent_types: list) -> Optional[bool]:
+        """
+        Determine if Absorb should be used based on opponent's types directly.
+        
+        This is more reliable than species name matching since it uses the
+        actual type data from the memory reader.
+        
+        Returns:
+            True if Absorb is effective (any type is weak to Grass)
+            False if Absorb is resisted (any type resists Grass, and none are weak)
+            None if types are unknown/empty (caller should fall back to species matching)
+        """
+        if not opponent_types:
+            return None
+        
+        # Normalize type names
+        normalized_types = [t.upper().strip() for t in opponent_types if t]
+        if not normalized_types:
+            return None
+        
+        logger.info(f"🔍 [TYPE CHECK] Opponent types: {normalized_types}")
+        print(f"🔍 [TYPE CHECK] Opponent types: {normalized_types}")
+        
+        has_super_effective = any(t in self.GRASS_SUPER_EFFECTIVE_TYPES for t in normalized_types)
+        has_not_effective = any(t in self.GRASS_NOT_EFFECTIVE_TYPES for t in normalized_types)
+        
+        if has_super_effective:
+            # At least one type is weak to Grass - use Absorb even if other type resists
+            # (e.g., Water/Flying Wingull: Water weakness outweighs Flying resistance → neutral)
+            logger.info(f"🌿 [TYPE CHECK] Super effective! Types {normalized_types} include Grass weakness → ABSORB")
+            print(f"🌿 [TYPE CHECK] Super effective vs {normalized_types} → ABSORB")
+            return True
+        elif has_not_effective:
+            # No type is weak but at least one resists - don't use Absorb
+            logger.info(f"🥊 [TYPE CHECK] Not effective! Types {normalized_types} resist Grass → POUND")
+            print(f"🥊 [TYPE CHECK] Resisted by {normalized_types} → POUND")
+            return False
+        else:
+            # Neutral matchup (e.g., Normal, Psychic, Fighting) - use Absorb for HP drain
+            logger.info(f"🌿 [TYPE CHECK] Neutral matchup vs {normalized_types} → ABSORB (HP drain)")
+            print(f"🌿 [TYPE CHECK] Neutral vs {normalized_types} → ABSORB (HP drain)")
+            return True
+    
+    def _should_use_absorb(self, species: str, player_pokemon: Dict[str, Any] = None, opponent_types: list = None) -> bool:
         """
         Determine if Absorb should be used against this opponent.
         
@@ -1062,11 +1118,21 @@ class BattleBot:
             return False
         
         if not species or species == 'Unknown':
-            logger.warning("⚠️ [MOVE SELECT] No opponent species - defaulting to POUND")
-            print(f"⚠️ [MOVE SELECT] No opponent → POUND (safe default)")
+            # Species unknown - try type-based decision if we have opponent types
+            if opponent_types:
+                type_decision = self._should_use_absorb_by_types(opponent_types)
+                if type_decision is not None:
+                    logger.info(f"🔍 [MOVE SELECT] Species unknown but have types {opponent_types} → {'ABSORB' if type_decision else 'POUND'}")
+                    print(f"🔍 [MOVE SELECT] Unknown species, but types {opponent_types} → {'ABSORB' if type_decision else 'POUND'}")
+                    logger.info(f"=" * 60)
+                    print(f"=" * 50)
+                    return type_decision
+            # No species AND no types - default to ABSORB (HP drain benefit outweighs risk)
+            logger.warning("⚠️ [MOVE SELECT] No opponent species or types - defaulting to ABSORB (HP drain)")
+            print(f"🌿 [MOVE SELECT] No info → ABSORB (HP drain is always useful)")
             logger.info(f"=" * 60)
             print(f"=" * 50)
-            return False
+            return True
         
         # Normalize species name (uppercase, strip whitespace)
         species_normalized = species.upper().strip()
@@ -1104,14 +1170,22 @@ class BattleBot:
             logger.info(f"🔍 [MOVE SELECT] ❌ NOT in ABSORB_EFFECTIVE list")
             print(f"🔍 [CHECK 2] NO - not in EFFECTIVE list")
         
-        # Unknown Pokemon - default to Absorb (HP drain benefit)
+        # Unknown Pokemon - try type-based decision first, then default to Absorb
         logger.warning(f"⚠️ [MOVE SELECT] Unknown Pokemon '{species_normalized}' - not in either list")
+        if opponent_types:
+            type_decision = self._should_use_absorb_by_types(opponent_types)
+            if type_decision is not None:
+                logger.info(f"🔍 [MOVE SELECT] '{species_normalized}' not in lists, but types {opponent_types} → {'ABSORB' if type_decision else 'POUND'}")
+                print(f"🔍 [MOVE SELECT] '{species_normalized}' types {opponent_types} → {'ABSORB' if type_decision else 'POUND'}")
+                logger.info(f"=" * 60)
+                print(f"=" * 50)
+                return type_decision
         logger.warning(f"   ABSORB_NOT_EFFECTIVE ({len(self.ABSORB_NOT_EFFECTIVE)} species): {self.ABSORB_NOT_EFFECTIVE}")
         logger.warning(f"   ABSORB_EFFECTIVE ({len(self.ABSORB_EFFECTIVE)} species): {self.ABSORB_EFFECTIVE}")
         print(f"🌿 [RESULT] Unknown Pokemon '{species_normalized}' → ABSORB (default: HP drain!)")
         logger.info(f"=" * 60)
         print(f"=" * 50)
-        return True  # CHANGED: Default to Absorb for HP recovery
+        return True  # Default to Absorb for HP recovery
     
     def get_action(self, state_data: Dict[str, Any]) -> Optional[str]:
         """
@@ -1391,23 +1465,18 @@ class BattleBot:
                     logger.info("⚔️ [BATTLE BOT] At base/fight menu - selecting move based on type effectiveness")
                     print("⚔️ [BATTLE BOT] Selecting move")
                     self._unknown_state_count = 0  # Reset counter
+                    # Clear pending move - we're at a decision point (new turn or re-entering menu)
+                    if self._pending_move:
+                        logger.info(f"🔄 [PENDING MOVE] Clearing pending move '{self._pending_move}' (at {menu_state})")
+                        self._pending_move = None
                     # In fight menu - select move based on type effectiveness
-                    # 
-                    # ⚠️⚠️⚠️ CRITICAL WARNING - DO NOT USE MEMORY READER FOR OPPONENT DATA ⚠️⚠️⚠️
-                    # Memory reader's opponent_pokemon is ALWAYS EMPTY and NEVER populated.
-                    # BATTLE_COMMUNICATION is always 175 and never changes.
-                    # These have been proven useless through extensive testing and logging.
-                    # DO NOT attempt to use battle_info.get('opponent_pokemon') - it will ALWAYS be {}.
-                    # DO NOT attempt to use BATTLE_COMMUNICATION - it's stuck at 175 forever.
-                    # Any code relying on these values is DEAD CODE and will never execute.
-                    # ⚠️⚠️⚠️ END CRITICAL WARNING ⚠️⚠️⚠️
                     
                     player_pokemon = battle_info.get('player_pokemon', {})
                     
                     if not player_pokemon:
                         logger.warning("⚠️ [BATTLE BOT] No player_pokemon in battle_info")
-                        print("⚠️ [BATTLE BOT] No player_pokemon - defaulting to POUND")
-                        return "USE_MOVE_POUND"  # Safe default
+                        print("⚠️ [BATTLE BOT] No player_pokemon - defaulting to ABSORB (HP drain)")
+                        return "USE_MOVE_ABSORB"  # Default to Absorb for HP drain benefit
                     
                     # Log battle status
                     player_species = player_pokemon.get('species', 'Unknown')
@@ -1415,8 +1484,27 @@ class BattleBot:
                     player_max_hp = player_pokemon.get('max_hp', 1)
                     player_hp_percent = (player_hp / player_max_hp * 100) if player_max_hp > 0 else 0
                     
+                    # Track opponent types from memory reader (used for type-based decisions)
+                    opp_types_from_memory = []
+                    
+                    # PRIORITY 0 (NEW): Try memory reader opponent data (most reliable - direct RAM)
+                    opp_species = 'Unknown'
+                    opponent_pokemon = battle_info.get('opponent_pokemon')
+                    if opponent_pokemon and isinstance(opponent_pokemon, dict):
+                        mem_species = opponent_pokemon.get('species', '')
+                        mem_types = opponent_pokemon.get('types', [])
+                        if mem_species and mem_species != 'Unknown' and not mem_species.startswith('Species_'):
+                            opp_species = self._fix_species_name(mem_species.upper().strip())
+                            logger.info(f"🧠 [MEMORY READER] Opponent species from RAM: '{opp_species}' (raw: '{mem_species}')")
+                            print(f"🧠 [MEMORY] Opponent: {opp_species} (from RAM)")
+                        if mem_types:
+                            opp_types_from_memory = mem_types
+                            logger.info(f"🧠 [MEMORY READER] Opponent types from RAM: {opp_types_from_memory}")
+                            print(f"🧠 [MEMORY] Types: {opp_types_from_memory}")
+                    
                     # PRIORITY 1: Try VLM visible_entities (most current, reflects Pokemon switches)
-                    opp_species = self._extract_species_from_visible_entities(visual_data, state_data)
+                    if opp_species == 'Unknown':
+                        opp_species = self._extract_species_from_visible_entities(visual_data, state_data)
                     
                     # PRIORITY 2: If VLM didn't find it, extract from dialogue history
                     if opp_species == 'Unknown':
@@ -1424,10 +1512,10 @@ class BattleBot:
                         print("⚠️ [SPECIES] Not in visible_entities - checking dialogue")
                         opp_species = self._extract_opponent_species_from_dialogue()
                     else:
-                        # VLM found the opponent - update dialogue cache to match
+                        # Found the opponent - update dialogue cache to match
                         if self._opponent_species_from_dialogue != opp_species:
-                            logger.info(f"🔄 [SPECIES UPDATE] VLM sees '{opp_species}', updating cache from '{self._opponent_species_from_dialogue}'")
-                            print(f"🔄 [SPECIES UPDATE] VLM sees '{opp_species}' (was '{self._opponent_species_from_dialogue}')")
+                            logger.info(f"🔄 [SPECIES UPDATE] Detected '{opp_species}', updating cache from '{self._opponent_species_from_dialogue}'")
+                            print(f"🔄 [SPECIES UPDATE] Detected '{opp_species}' (was '{self._opponent_species_from_dialogue}')")
                             self._opponent_species_from_dialogue = opp_species
                     
                     logger.info(f"🔍 [SPECIES EXTRACTION] Final opponent: '{opp_species}'")
@@ -1452,20 +1540,22 @@ class BattleBot:
                     self._unknown_state_count = 0  # Reset counter
                     
                     # Type-effectiveness based move selection
-                    logger.info(f"🎯 [MOVE DECISION] Determining move for opponent: '{opp_species}'")
-                    print(f"🎯 [DECIDING] Should we use Absorb vs '{opp_species}'?")
+                    logger.info(f"🎯 [MOVE DECISION] Determining move for opponent: '{opp_species}' types={opp_types_from_memory}")
+                    print(f"🎯 [DECIDING] Should we use Absorb vs '{opp_species}' (types={opp_types_from_memory})?")
                     
-                    use_absorb = self._should_use_absorb(opp_species, player_pokemon)
+                    use_absorb = self._should_use_absorb(opp_species, player_pokemon, opp_types_from_memory)
                     logger.info(f"🎯 [MOVE DECISION] _should_use_absorb('{opp_species}') = {use_absorb}")
                     print(f"🎯 [DECISION] Use Absorb? {use_absorb}")
                     
                     if use_absorb:
                         logger.info(f"🌿 [BATTLE BOT] Using ABSORB vs {opp_species} (effective + HP drain)")
                         print(f"🌿 [BATTLE BOT] ABSORB → {opp_species} (drain HP!)")
+                        self._pending_move = "USE_MOVE_ABSORB"
                         return "USE_MOVE_ABSORB"
                     else:
                         logger.info(f"🥊 [BATTLE BOT] Using POUND vs {opp_species} (Absorb not effective)")
                         print(f"🥊 [BATTLE BOT] POUND → {opp_species} (Absorb resisted)")
+                        self._pending_move = "USE_MOVE_POUND"
                         return "USE_MOVE_POUND"
                 
                 elif menu_state == "bag_menu":
@@ -1480,6 +1570,13 @@ class BattleBot:
                     logger.info("💬 [BATTLE BOT] Advancing battle dialogue")
                     print("💬 [BATTLE BOT] Advancing dialogue")
                     self._unknown_state_count = 0  # Reset counter
+                    # Clear pending move when we see move execution confirmation
+                    if self._pending_move and dialogue_text:
+                        dl = dialogue_text.lower()
+                        if 'used' in dl or 'fainted' in dl or 'what will' in dl:
+                            logger.info(f"🔄 [PENDING MOVE] Clearing pending move '{self._pending_move}' (dialogue: {dialogue_text[:40]})")
+                            print(f"🔄 [PENDING MOVE] Cleared '{self._pending_move}'")
+                            self._pending_move = None
                     return "ADVANCE_BATTLE_DIALOGUE"
                 
                 else:
@@ -1488,6 +1585,15 @@ class BattleBot:
                     logger.warning(f"❓ [BATTLE BOT] Unknown menu state '{menu_state}' (count: {self._unknown_state_count})")
                     print(f"❓ [BATTLE BOT] Unknown state '{menu_state}' (#{self._unknown_state_count})")
                     
+                    # CRITICAL FIX: If we have a pending move decision (mid-sequence),
+                    # keep returning it instead of PRESS_A_ONLY which would select POUND.
+                    # This happens because after pressing A to enter fight menu, VLM sees
+                    # a transition frame and returns unknown menu state.
+                    if self._pending_move and self._unknown_state_count <= 2:
+                        logger.info(f"🔄 [PENDING MOVE] Continuing pending move: {self._pending_move} (unknown state #{self._unknown_state_count})")
+                        print(f"🔄 [PENDING MOVE] Continuing {self._pending_move} (unknown #{self._unknown_state_count})")
+                        return self._pending_move
+                    
                     # If we've been stuck in unknown state for 3+ turns, VLM is likely hallucinating
                     # Force navigation to fight menu as fallback
                     if self._unknown_state_count >= 5:
@@ -1495,21 +1601,34 @@ class BattleBot:
                         logger.warning("   VLM completely stuck - forcing MOVE selection blindly")
                         print(f"⚠️ [BATTLE BOT] VLM broken! Forcing move selection (attempt #{self._unknown_state_count - 4})")
                         
+                        # PRIORITY 0: Try memory reader (most reliable)
+                        opp_species = 'Unknown'
+                        opp_types_blind = []
+                        opponent_pokemon = battle_info.get('opponent_pokemon')
+                        if opponent_pokemon and isinstance(opponent_pokemon, dict):
+                            mem_species = opponent_pokemon.get('species', '')
+                            mem_types = opponent_pokemon.get('types', [])
+                            if mem_species and mem_species != 'Unknown' and not mem_species.startswith('Species_'):
+                                opp_species = self._fix_species_name(mem_species.upper().strip())
+                            if mem_types:
+                                opp_types_blind = mem_types
+                        
                         # PRIORITY 1: Try VLM visible_entities (most current)
-                        opp_species = self._extract_species_from_visible_entities(visual_data, state_data)
+                        if opp_species == 'Unknown':
+                            opp_species = self._extract_species_from_visible_entities(visual_data, state_data)
                         
                         # PRIORITY 2: Extract from dialogue if VLM didn't find it
                         if opp_species == 'Unknown':
                             logger.warning("⚠️ [BLIND] VLM entities failed - trying dialogue")
                             opp_species = self._extract_opponent_species_from_dialogue()
                         
-                        logger.info(f"🔍 [BLIND DECISION] Opponent species: '{opp_species}'")
-                        print(f"🔍 [BLIND] Opponent = '{opp_species}'")
+                        logger.info(f"🔍 [BLIND DECISION] Opponent species: '{opp_species}' types={opp_types_blind}")
+                        print(f"🔍 [BLIND] Opponent = '{opp_species}' types={opp_types_blind}")
                         
                         # Get player_pokemon for level check
                         player_pokemon = battle_info.get('player_pokemon', {})
                         
-                        use_absorb = self._should_use_absorb(opp_species, player_pokemon)
+                        use_absorb = self._should_use_absorb(opp_species, player_pokemon, opp_types_blind)
                         logger.info(f"🎯 [BLIND DECISION] _should_use_absorb('{opp_species}') = {use_absorb}")
                         
                         if use_absorb:
@@ -1528,15 +1647,28 @@ class BattleBot:
                         # Get player_pokemon for level check
                         player_pokemon = battle_info.get('player_pokemon', {})
                         
+                        # PRIORITY 0: Try memory reader (most reliable)
+                        opp_species = 'Unknown'
+                        opp_types_recovery = []
+                        opponent_pokemon = battle_info.get('opponent_pokemon')
+                        if opponent_pokemon and isinstance(opponent_pokemon, dict):
+                            mem_species = opponent_pokemon.get('species', '')
+                            mem_types = opponent_pokemon.get('types', [])
+                            if mem_species and mem_species != 'Unknown' and not mem_species.startswith('Species_'):
+                                opp_species = self._fix_species_name(mem_species.upper().strip())
+                            if mem_types:
+                                opp_types_recovery = mem_types
+                        
                         # PRIORITY 1: Try VLM visible_entities (most current)
-                        opp_species = self._extract_species_from_visible_entities(visual_data, state_data)
+                        if opp_species == 'Unknown':
+                            opp_species = self._extract_species_from_visible_entities(visual_data, state_data)
                         
                         # PRIORITY 2: Extract from dialogue if VLM didn't find it
                         if opp_species == 'Unknown':
                             logger.warning("⚠️ [RECOVERY] VLM entities failed - trying dialogue")
                             opp_species = self._extract_opponent_species_from_dialogue()
                         
-                        use_absorb = self._should_use_absorb(opp_species, player_pokemon)
+                        use_absorb = self._should_use_absorb(opp_species, player_pokemon, opp_types_recovery)
                         
                         if use_absorb:
                             logger.info(f"🌿 [RECOVERY] Using ABSORB vs {opp_species}")

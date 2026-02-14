@@ -1965,10 +1965,10 @@ What button should you press? Respond with ONE button name only: A"""
                         battle_bot._absorb_step = 1
                         logger.info("🌿 [BATTLE BOT] Step 1/3: Press A to select FIGHT")
                     elif battle_bot._absorb_step == 1:
-                        button_recommendation = "UP"
-                        decision_explanation = "Navigate to ABSORB move (if available)"
+                        button_recommendation = "DOWN"
+                        decision_explanation = "Navigate DOWN to ABSORB move (move 3, bottom-left)"
                         battle_bot._absorb_step = 2
-                        logger.info("🌿 [BATTLE BOT] Step 2/3: Press UP to select ABSORB")
+                        logger.info("🌿 [BATTLE BOT] Step 2/3: Press DOWN to select ABSORB")
                     else:  # step 2
                         button_recommendation = "A"
                         decision_explanation = "Confirm ABSORB move"
