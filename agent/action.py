@@ -42,6 +42,21 @@ _dismissed_monologues = set()
 # Stuck detection state
 _stuck_counter = 0
 _last_position = None
+_last_stuck_direction = None  # Track direction that caused stuck (for NPC dialogue detection)
+
+# Dynamic tile blocking - tiles temporarily marked as unwalkable (e.g., NPC-occupied)
+# When the agent gets stuck trying to move in a direction repeatedly, the tile in that
+# direction is marked as blocked so A* will route around it.
+# Dict mapping (world_x, world_y, location) → remaining TTL (decremented each action_step call)
+_dynamically_blocked_tiles = {}
+
+# Direction offsets for converting direction names to coordinate deltas
+_DIRECTION_OFFSETS = {
+    'UP': (0, -1),
+    'DOWN': (0, 1),
+    'LEFT': (-1, 0),
+    'RIGHT': (1, 0)
+}
 
 # Track post-dialogue movements to prevent infinite loops
 # Counts how many directional movements have been made since last dialogue
@@ -211,6 +226,7 @@ def _pathfind_to_target(state_data: Dict[str, Any], target_x: int, target_y: int
         position = player_data.get('position', {})
         current_x = position.get('x')
         current_y = position.get('y')
+        current_location = player_data.get('location', '')
         
         if current_x is None or current_y is None:
             return None
@@ -239,6 +255,13 @@ def _pathfind_to_target(state_data: Dict[str, Any], target_x: int, target_y: int
         def is_walkable(y, x):
             if not (0 <= y < grid_size and 0 <= x < grid_size):
                 return False
+            
+            # Check dynamically blocked tiles (NPC/obstacle positions)
+            world_x = current_x + (x - center)
+            world_y = current_y + (y - center)
+            if (world_x, world_y, current_location) in _dynamically_blocked_tiles:
+                return False
+            
             tile = raw_tiles[y][x]
             symbol = format_tile_to_symbol(tile) if tile else '?'
             
@@ -352,6 +375,13 @@ def _local_pathfind_from_tiles(state_data: Dict[str, Any], goal_direction: str, 
         def is_walkable(y, x):
             if not (0 <= y < grid_size and 0 <= x < grid_size):
                 return False
+            
+            # Check dynamically blocked tiles (NPC/obstacle positions)
+            world_x = current_x + (x - center)
+            world_y = current_y + (y - center)
+            if (world_x, world_y, current_location) in _dynamically_blocked_tiles:
+                return False
+            
             tile = raw_tiles[y][x]
             symbol = format_tile_to_symbol(tile) if tile else '?'
             # Walkable: grass/path only
@@ -638,8 +668,11 @@ def _astar_pathfind_to_coords_with_grid(
         def is_walkable(pos: Tuple[int, int]) -> bool:
             if pos not in location_grid:
                 return False
+            # Check dynamically blocked tiles (NPC/obstacle positions)
+            if (pos[0], pos[1], location) in _dynamically_blocked_tiles:
+                return False
             tile = location_grid[pos]
-            return tile in ['.', '_', '~', 'D', 'S', 'N']  # Include NPCs as potential targets
+            return tile in ['.', '_', '~', 'D', 'S', 'N', '?']  # Include NPCs as potential targets, '?' for frontier tiles
         
         # Helper function to get movement cost
         def get_tile_cost(pos: Tuple[int, int]) -> float:
@@ -1189,6 +1222,9 @@ def _astar_pathfind_with_grid_data(
         def is_walkable(pos: Tuple[int, int]) -> bool:
             if pos not in location_grid:
                 return False
+            # Check dynamically blocked tiles (NPC/obstacle positions)
+            if (pos[0], pos[1], location) in _dynamically_blocked_tiles:
+                return False
             tile = location_grid[pos]
             
             # Diagonal ledges are IMPASSABLE - treat as walls
@@ -1198,7 +1234,9 @@ def _astar_pathfind_with_grid_data(
             # Walkable: path, grass, doors, stairs, AND CARDINAL LEDGES (with directional constraints)
             # Note: We include 'D' (doors) and 'S' (stairs) for pathfinding, but safety checks will filter dangerous ones
             # Ledges are conditionally walkable based on approach direction (checked in neighbor loop)
-            return tile in ['.', '_', '~', 'D', 'S'] or tile in LEDGE_TILES
+            # '?' tiles = unexplored frontier tiles adjacent to walkable areas (added by map stitcher)
+            # They MUST be walkable for A* to path through unexplored regions
+            return tile in ['.', '_', '~', 'D', 'S', '?'] or tile in LEDGE_TILES
         
         # Helper function to get movement cost for a tile
         # This allows us to prefer paths that avoid tall grass (wild encounters)
@@ -1413,6 +1451,153 @@ def _astar_pathfind_with_grid_data(
         print(f"⚠️ [A* MAP] No path found to {goal_direction}")
         print(f"   Explored {len(visited)} tiles")
         print(f"   Target positions checked: {len(target_positions)}")
+        
+        # === FRONTIER FALLBACK ===
+        # If direct pathfinding to goal_coords failed (goal is in grid but unreachable due to
+        # ledges/barriers/unexplored gaps), retry with reachable frontier tiles closest to the goal.
+        # The idea: explore toward the goal by navigating to the nearest frontier tile that A*
+        # CAN reach, which will reveal new tiles and eventually open a path.
+        if goal_coords and len(target_positions) == 1 and target_positions[0] == goal_coords:
+            print(f"🔄 [A* FRONTIER FALLBACK] Direct path to {goal_coords} blocked, searching for reachable frontier tiles...")
+            
+            goal_x, goal_y = goal_coords
+            
+            # Find frontier tiles among the tiles we already explored (visited set)
+            # These are tiles we CAN reach that border unexplored territory
+            # NOTE: The map stitcher adds '?' tiles to location_grid for unexplored positions
+            # adjacent to walkable tiles. So "unexplored" means EITHER:
+            #   1. (nx, ny) not in location_grid at all, OR
+            #   2. location_grid[(nx, ny)] == '?' (frontier marker added by stitcher)
+            frontier_targets = []
+            for pos in visited:
+                tile = location_grid.get(pos)
+                if tile not in ['.', '_', '~', 'D', '?']:
+                    continue
+                # Check if adjacent to unexplored tile or '?' frontier marker
+                x, y = pos
+                has_unknown = False
+                for nx, ny in [(x-1,y), (x+1,y), (x,y-1), (x,y+1)]:
+                    neighbor_tile = location_grid.get((nx, ny))
+                    if neighbor_tile is None or neighbor_tile == '?':
+                        has_unknown = True
+                        break
+                if has_unknown:
+                    dist_to_goal = abs(goal_x - x) + abs(goal_y - y)
+                    dist_to_player = abs(current_x - x) + abs(current_y - y)
+                    # Score: prioritize closeness to goal, penalize distance from player slightly
+                    score = dist_to_goal + dist_to_player * 0.1
+                    frontier_targets.append((score, pos))
+            
+            if frontier_targets:
+                frontier_targets.sort()
+                # Take best frontier tiles
+                best_frontiers = [pos for _, pos in frontier_targets[:10]]
+                print(f"✅ [A* FRONTIER FALLBACK] Found {len(frontier_targets)} reachable frontier tiles, using top {len(best_frontiers)}")
+                for i, (score, pos) in enumerate(frontier_targets[:5]):
+                    print(f"   #{i+1}: {pos} (score={score:.1f}, tile='{location_grid.get(pos, '?')}')")
+                
+                # Re-run A* with frontier targets
+                # Pick the best frontier tile as heuristic target
+                closest_frontier = min(best_frontiers, key=lambda t: abs(goal_x - t[0]) + abs(goal_y - t[1]))
+                
+                pq2 = [(manhattan_distance(current_pos, closest_frontier), 0, current_pos, [], [current_pos])]
+                visited2 = {current_pos}
+                frontier_set = set(best_frontiers)
+                
+                while pq2:
+                    f_score, g_score, current, path, path_coords = heapq.heappop(pq2)
+                    
+                    if current in frontier_set:
+                        if path:
+                            path = _truncate_path_at_warp(path, path_coords[1:], location_grid)
+                            batched_path = path[:MAX_MOVEMENT_BATCH_SIZE]
+                            path_preview = ' → '.join(path[:5])
+                            if len(path) > 5:
+                                path_preview += f" ... ({len(path)} steps)"
+                            print(f"✅ [A* FRONTIER FALLBACK] Found path to frontier {current}: {path_preview}")
+                            print(f"   📦 Batching {len(batched_path)}/{len(path)} steps")
+                            return batched_path
+                        else:
+                            print(f"⚠️ [A* FRONTIER FALLBACK] Already at frontier tile")
+                            return None
+                    
+                    for (ddx, ddy), direction in directions_map.items():
+                        nx, ny = current[0] + ddx, current[1] + ddy
+                        neighbor = (nx, ny)
+                        
+                        if neighbor in visited2:
+                            continue
+                        if neighbor not in location_grid:
+                            continue
+                        
+                        neighbor_tile = location_grid[neighbor]
+                        current_tile = location_grid[current]
+                        
+                        # Ledge physics (same rules as main A*)
+                        if neighbor_tile in LEDGE_TILES:
+                            allowed_dir = LEDGE_TILES[neighbor_tile]
+                            if allowed_dir is None:
+                                if direction != 'DOWN':
+                                    continue
+                            elif direction != allowed_dir:
+                                continue
+                        if current_tile in LEDGE_TILES:
+                            ledge_dir = LEDGE_TILES[current_tile]
+                            if ledge_dir is None:
+                                if direction != 'DOWN':
+                                    continue
+                            elif direction != ledge_dir:
+                                continue
+                        
+                        if not is_walkable(neighbor) and neighbor not in frontier_set:
+                            continue
+                        
+                        visited2.add(neighbor)
+                        new_path = path + [direction]
+                        new_path_coords = path_coords + [neighbor]
+                        tile_cost = get_tile_cost(neighbor, avoid_grass=avoid_grass)
+                        new_g = g_score + tile_cost
+                        new_f = new_g + manhattan_distance(neighbor, closest_frontier)
+                        heapq.heappush(pq2, (new_f, new_g, neighbor, new_path, new_path_coords))
+                
+                print(f"⚠️ [A* FRONTIER FALLBACK] No path to any frontier tile either")
+            else:
+                print(f"⚠️ [A* FRONTIER FALLBACK] No frontier tiles found among {len(visited)} explored tiles")
+                # DIAGNOSTIC: Dump grid around player to understand the topology
+                print(f"📊 [GRID DUMP] Map around player ({current_x}, {current_y}):")
+                dump_radius = 8
+                for dy in range(-dump_radius, dump_radius + 1):
+                    row_chars = []
+                    for dx in range(-dump_radius, dump_radius + 1):
+                        gx, gy = current_x + dx, current_y + dy
+                        if (gx, gy) == (current_x, current_y):
+                            row_chars.append('P')
+                        elif (gx, gy) in visited:
+                            tile = location_grid.get((gx, gy), ' ')
+                            row_chars.append(tile)
+                        elif (gx, gy) in location_grid:
+                            # In grid but NOT reachable by A* — show in brackets concept
+                            tile = location_grid.get((gx, gy), ' ')
+                            row_chars.append(tile.lower() if tile.isalpha() else tile)
+                        else:
+                            row_chars.append(' ')
+                    y_coord = current_y + dy
+                    print(f"   y={y_coord:3d}: {' '.join(row_chars)}")
+                print(f"   Legend: P=player, UPPER=reachable, lower=in-grid-but-unreachable, ' '=not-in-grid")
+                
+                # Show boundary analysis
+                boundary_tiles = {}
+                for pos in visited:
+                    x, y = pos
+                    for nx, ny in [(x-1,y), (x+1,y), (x,y-1), (x,y+1)]:
+                        if (nx, ny) not in visited and (nx, ny) in location_grid:
+                            tile = location_grid[(nx, ny)]
+                            boundary_tiles[(nx, ny)] = tile
+                tile_counts = {}
+                for t in boundary_tiles.values():
+                    tile_counts[t] = tile_counts.get(t, 0) + 1
+                print(f"📊 [BOUNDARY] {len(boundary_tiles)} non-reachable border tiles: {tile_counts}")
+        
         return None
         
     except Exception as e:
@@ -1445,6 +1630,17 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     global _recent_positions, _dismissed_monologues, _stuck_counter, _last_position
     global _post_dialogue_movement_count, _was_in_dialogue
     global _needs_warp_settle_b_press, _last_known_position
+    global _dynamically_blocked_tiles, _last_stuck_direction
+    
+    # Decrement TTLs for dynamically blocked tiles, remove expired ones
+    expired_tiles = [k for k, v in _dynamically_blocked_tiles.items() if v <= 0]
+    for k in expired_tiles:
+        print(f"🔓 [DYNAMIC BLOCK] Tile {k[:2]} on {k[2]} unblocked (TTL expired)")
+        del _dynamically_blocked_tiles[k]
+    for k in _dynamically_blocked_tiles:
+        _dynamically_blocked_tiles[k] -= 1
+    if _dynamically_blocked_tiles:
+        print(f"🚫 [DYNAMIC BLOCK] Currently blocked tiles: {[(k[:2], v) for k, v in _dynamically_blocked_tiles.items()]}")
     
     # Track current position to avoid immediate backtracking through warps
     try:
@@ -1532,41 +1728,66 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
             if _last_position == current_pos and last_action_was_direction:
                 # We tried to move but didn't - increment stuck counter
                 _stuck_counter += 1
+                stuck_dir = recent_actions[-1] if recent_actions else None
+                _last_stuck_direction = stuck_dir  # Track direction for NPC dialogue detection
                 print(f"🔄 [STUCK DETECTION] Position unchanged after direction input: {current_pos}")
-                print(f"   Last action: {recent_actions[-1] if recent_actions else 'None'}")
+                print(f"   Last action: {stuck_dir}")
                 print(f"   Stuck counter: {_stuck_counter}")
                 
-                # If stuck for 3 attempts, press A to check for hidden dialogue
+                # If stuck for 3 attempts, mark the tile in the stuck direction as blocked
+                # This handles NPC obstacles that A* doesn't know about
                 if _stuck_counter >= 3:
                     print(f"🔄 [STUCK DETECTION] Stuck for {_stuck_counter} attempts!")
-                    print(f"   Pressing A to check for hidden dialogue...")
-                    _stuck_counter = 0  # Reset counter
                     
-                    # ✅ VLM EXECUTOR PATTERN (Competition Compliance)
-                    # Route stuck recovery through VLM
-                    stuck_prompt = f"""Playing Pokemon Emerald. Movement is blocked.
+                    # Calculate the tile that's blocking us
+                    if stuck_dir and stuck_dir in _DIRECTION_OFFSETS and current_x is not None and current_y is not None:
+                        dx, dy = _DIRECTION_OFFSETS[stuck_dir]
+                        blocked_x = current_x + dx
+                        blocked_y = current_y + dy
+                        blocked_key = (blocked_x, blocked_y, location)
+                        
+                        if blocked_key not in _dynamically_blocked_tiles:
+                            # New blocked tile - mark it and let pathfinding re-route
+                            _dynamically_blocked_tiles[blocked_key] = 200  # TTL: ~200 action steps
+                            print(f"🚫 [DYNAMIC BLOCK] Marked tile ({blocked_x}, {blocked_y}) on {location} as blocked (NPC/obstacle)")
+                            print(f"   Agent at ({current_x}, {current_y}), tried {stuck_dir}")
+                            logger.info(f"🚫 [DYNAMIC BLOCK] Blocked ({blocked_x}, {blocked_y}) on {location} - stuck {_stuck_counter}x going {stuck_dir}")
+                            _stuck_counter = 0
+                            _last_stuck_direction = None
+                            # DON'T press A - fall through to let pathfinding re-route around the obstacle
+                            # Pressing A here would trigger trainer dialogue creating an infinite loop
+                        else:
+                            # Tile already blocked but we're STILL stuck - try pressing A as fallback
+                            # This handles genuine hidden dialogue that wasn't detected
+                            print(f"🔄 [STUCK DETECTION] Tile already blocked, trying A for hidden dialogue...")
+                            _stuck_counter = 0
+                            _last_stuck_direction = None
+                            
+                            try:
+                                stuck_prompt = f"""Playing Pokemon Emerald. Movement is blocked in all directions.
 
-SITUATION: Tried to move {_stuck_counter} times but position unchanged at {current_pos}
-LIKELY CAUSE: Hidden dialogue (e.g., "............." thinking text) that VLM didn't detect
+SITUATION: Position unchanged at ({current_x}, {current_y}). Tile in {stuck_dir} already blocked.
+LIKELY CAUSE: Hidden dialogue or menu that needs dismissing.
 RECOMMENDED ACTION: Press A to advance dialogue
 
 What button should you press? Respond with ONE button name only: A"""
-                    
-                    try:
-                        vlm_response = vlm.get_text_query(stuck_prompt, "STUCK_RECOVERY_EXECUTOR")
-                        vlm_upper = vlm_response.upper().strip()
-                        
-                        if 'A' in vlm_upper:
-                            logger.info(f"✅ [VLM EXECUTOR] Stuck recovery, VLM confirmed→A")
-                            return ['A']
-                        else:
-                            # Retry with simpler prompt
-                            retry_response = vlm.get_text_query("What button to clear dialogue? Answer: A", "STUCK_RECOVERY_RETRY")
-                            logger.info(f"✅ [VLM EXECUTOR RETRY] Stuck recovery confirmed→A")
-                            return ['A']
-                    except Exception as e:
-                        # COMPLIANCE: VLM must make decision, but A is the only recovery option
-                        logger.error(f"⚠️ [VLM EXECUTOR] Stuck recovery error: {e}, defaulting to A")
+                                vlm_response = vlm.get_text_query(stuck_prompt, "STUCK_RECOVERY_EXECUTOR")
+                                vlm_upper = vlm_response.upper().strip()
+                                
+                                if 'A' in vlm_upper:
+                                    logger.info(f"✅ [VLM EXECUTOR] Stuck recovery (already blocked), VLM confirmed→A")
+                                    return ['A']
+                                else:
+                                    logger.info(f"✅ [VLM EXECUTOR] Stuck recovery fallback→A")
+                                    return ['A']
+                            except Exception as e:
+                                logger.error(f"⚠️ [VLM EXECUTOR] Stuck recovery error: {e}, defaulting to A")
+                                return ['A']
+                    else:
+                        # Can't determine blocked tile - fallback to pressing A
+                        print(f"🔄 [STUCK DETECTION] Can't determine blocked tile, pressing A...")
+                        _stuck_counter = 0
+                        _last_stuck_direction = None
                         return ['A']
             else:
                 # Position changed or we didn't try a direction - reset counter
@@ -1575,12 +1796,40 @@ What button should you press? Respond with ONE button name only: A"""
                     print(f"   Reason: _last_position={_last_position} vs current_pos={current_pos}")
                     print(f"   last_action_was_direction={last_action_was_direction}")
                 _stuck_counter = 0
+                _last_stuck_direction = None  # Clear stuck direction on successful move
         else:
-            # In dialogue or battle - reset stuck counter
-            if _stuck_counter > 0 and (visual_dialogue_detected or in_battle):
-                print(f"🔄 [STUCK DETECTION] In dialogue/battle - resetting stuck counter")
+            # In dialogue or battle - but check if this is NPC-triggered dialogue
+            # If the agent walked into an NPC (position unchanged, last action was directional)
+            # and now dialogue appeared, the NPC tile should be blocked instead of resetting.
+            if visual_dialogue_detected and not in_battle and _last_stuck_direction and current_pos and _last_position == current_pos:
+                # Dialogue triggered right after a failed directional move = NPC obstacle!
+                # Increment stuck counter instead of resetting
+                _stuck_counter += 1
+                print(f"🔄 [STUCK DETECTION] NPC dialogue detected after failed {_last_stuck_direction} move (stuck counter: {_stuck_counter})")
+                
+                # Block the NPC tile immediately (don't wait for 3 attempts since we KNOW it's an NPC)
+                if _last_stuck_direction in _DIRECTION_OFFSETS and current_x is not None and current_y is not None:
+                    dx, dy = _DIRECTION_OFFSETS[_last_stuck_direction]
+                    blocked_x = current_x + dx
+                    blocked_y = current_y + dy
+                    blocked_key = (blocked_x, blocked_y, location)
+                    
+                    if blocked_key not in _dynamically_blocked_tiles:
+                        _dynamically_blocked_tiles[blocked_key] = 200  # TTL: ~200 action steps
+                        print(f"🚫 [DYNAMIC BLOCK] NPC at ({blocked_x}, {blocked_y}) on {location} — blocking tile")
+                        print(f"   Agent at ({current_x}, {current_y}), walked {_last_stuck_direction} into NPC dialogue")
+                        logger.info(f"🚫 [DYNAMIC BLOCK] NPC dialogue block ({blocked_x}, {blocked_y}) on {location} - walked {_last_stuck_direction}")
+                    else:
+                        print(f"🔄 [STUCK DETECTION] NPC tile ({blocked_x}, {blocked_y}) already blocked, continuing dialogue...")
+                
+                # Still need to press A to dismiss the NPC dialogue, but the tile is now blocked
+                # so after dialogue ends, A* will route around it
+            elif _stuck_counter > 0 and (visual_dialogue_detected or in_battle):
+                # Genuine dialogue/battle (not NPC obstacle) - reset stuck counter
+                print(f"🔄 [STUCK DETECTION] In dialogue/battle (not NPC stuck) - resetting stuck counter")
+                _stuck_counter = 0
+                _last_stuck_direction = None
             print(f"🔄 [STUCK DEBUG] Conditions NOT met: dialogue={visual_dialogue_detected}, battle={in_battle}, pos={current_pos}")
-            _stuck_counter = 0
             
         # Update last position for next iteration
         _last_position = current_pos
@@ -2680,7 +2929,12 @@ What button should you press? Respond with ONLY the button name (A, B, UP, DOWN,
                         walkable_tiles = ['.', '_', '~', 'D', 'S', '^', 'v', '<', '>', 'L', '?']
                         
                         # Check if primary is walkable or unexplored
-                        if primary_tile is None:
+                        # Also check dynamically blocked tiles (NPC/obstacle positions)
+                        primary_dynamically_blocked = (primary_x, primary_y, location) in _dynamically_blocked_tiles
+                        if primary_dynamically_blocked:
+                            print(f"🚫 [EXPLORATION] {primary_direction} → ({primary_x}, {primary_y}) dynamically blocked (NPC/obstacle)")
+                            # Fall through to perpendicular search
+                        elif primary_tile is None:
                             # Primary is unexplored - go there!
                             print(f"🔍 [EXPLORATION] {primary_direction} → ({primary_x}, {primary_y}) is UNEXPLORED (frontier)")
                             exploration_direction = primary_direction
@@ -2735,26 +2989,87 @@ What button should you press? Respond with ONLY the button name (A, B, UP, DOWN,
                                 print(f"✅ [LOCAL SEARCH] Found unexplored tile at ({exp_x}, {exp_y}) via {exploration_direction} (+{dist} tiles)")
                                 print(f"🔍 [SMART EXPLORATION] Moving {exploration_direction} to explore and find gap toward goal")
                             else:
-                                # No unexplored found - try any walkable perpendicular
-                                print(f"⚠️ [LOCAL SEARCH] No unexplored tiles found in perpendiculars")
-                                for test_dir in perpendicular_directions:
-                                    test_x, test_y = current_x, current_y
-                                    if test_dir == 'UP':
-                                        test_y -= 1
-                                    elif test_dir == 'DOWN':
-                                        test_y += 1
-                                    elif test_dir == 'LEFT':
-                                        test_x -= 1
-                                    elif test_dir == 'RIGHT':
-                                        test_x += 1
+                                # No unexplored in perpendiculars - also scan OPPOSITE direction
+                                # The path may require going AWAY from goal to get around a barrier
+                                opposite_map = {'UP': 'DOWN', 'DOWN': 'UP', 'LEFT': 'RIGHT', 'RIGHT': 'LEFT'}
+                                opposite_direction = opposite_map.get(primary_direction, None)
+                                
+                                if opposite_direction:
+                                    print(f"🔄 [LOCAL SEARCH] No unexplored in perpendiculars, scanning OPPOSITE direction ({opposite_direction})...")
+                                    for distance in range(1, 6):
+                                        scan_x, scan_y = current_x, current_y
+                                        if opposite_direction == 'UP':
+                                            scan_y -= distance
+                                        elif opposite_direction == 'DOWN':
+                                            scan_y += distance
+                                        elif opposite_direction == 'LEFT':
+                                            scan_x -= distance
+                                        elif opposite_direction == 'RIGHT':
+                                            scan_x += distance
+                                        
+                                        scan_key = f"{scan_x},{scan_y}"
+                                        scan_tile = grid_data.get(scan_key) if grid_data else None
+                                        
+                                        if scan_tile is None:
+                                            print(f"   🎯 [SCAN] {opposite_direction} +{distance} → ({scan_x}, {scan_y}) UNEXPLORED")
+                                            best_unexplored = (opposite_direction, distance, scan_x, scan_y)
+                                            break
+                                        elif scan_tile in walkable_tiles:
+                                            continue
+                                        else:
+                                            print(f"   🚫 [SCAN] {opposite_direction} +{distance} → ({scan_x}, {scan_y}) blocked ('{scan_tile}')")
+                                            break
+                                
+                                if best_unexplored:
+                                    exploration_direction = best_unexplored[0]
+                                    dist = best_unexplored[1]
+                                    exp_x, exp_y = best_unexplored[2], best_unexplored[3]
+                                    print(f"✅ [LOCAL SEARCH] Found unexplored tile at ({exp_x}, {exp_y}) via {exploration_direction} (opposite dir, +{dist} tiles)")
+                                    print(f"🔍 [SMART EXPLORATION] Moving {exploration_direction} AWAY from goal to find detour path")
+                                else:
+                                    # No unexplored found anywhere - try any walkable dir
+                                    # ANTI-OSCILLATION: Check position history to avoid bouncing
+                                    print(f"⚠️ [LOCAL SEARCH] No unexplored tiles found in any direction")
                                     
-                                    test_key = f"{test_x},{test_y}"
-                                    test_tile = grid_data.get(test_key) if grid_data else None
+                                    # Get recent positions for oscillation detection
+                                    pos_history = getattr(action_step, 'position_history', [])
+                                    recent_positions_set = set(pos_history[-6:]) if len(pos_history) >= 4 else set()
+                                    is_oscillating = len(pos_history) >= 6 and len(set(pos_history[-6:])) <= 2
                                     
-                                    if test_tile and test_tile in walkable_tiles:
-                                        print(f"✅ [FALLBACK] {test_dir} → ({test_x}, {test_y}) is walkable ('{test_tile}')")
-                                        exploration_direction = test_dir
-                                        break
+                                    if is_oscillating:
+                                        # OSCILLATION DETECTED: Prefer opposite direction (away from goal) 
+                                        # to break out of the loop. This forces exploration in a new direction.
+                                        print(f"🔄 [ANTI-OSCILLATION] Detected oscillation! Prioritizing OPPOSITE direction ({opposite_direction}) to break free")
+                                        all_directions = ([opposite_direction] if opposite_direction else []) + perpendicular_directions
+                                    else:
+                                        all_directions = perpendicular_directions + ([opposite_direction] if opposite_direction else [])
+                                    
+                                    for test_dir in all_directions:
+                                        test_x, test_y = current_x, current_y
+                                        if test_dir == 'UP':
+                                            test_y -= 1
+                                        elif test_dir == 'DOWN':
+                                            test_y += 1
+                                        elif test_dir == 'LEFT':
+                                            test_x -= 1
+                                        elif test_dir == 'RIGHT':
+                                            test_x += 1
+                                        
+                                        test_key = f"{test_x},{test_y}"
+                                        test_tile = grid_data.get(test_key) if grid_data else None
+                                        
+                                        if test_tile and test_tile in walkable_tiles:
+                                            # Also check dynamically blocked tiles
+                                            if (test_x, test_y, location) in _dynamically_blocked_tiles:
+                                                print(f"🚫 [FALLBACK] {test_dir} → ({test_x}, {test_y}) dynamically blocked")
+                                                continue
+                                            # ANTI-OSCILLATION: Skip directions that return to recent positions
+                                            if is_oscillating and (test_x, test_y) in recent_positions_set:
+                                                print(f"🔄 [FALLBACK] {test_dir} → ({test_x}, {test_y}) skipped (would return to recent position)")
+                                                continue
+                                            print(f"✅ [FALLBACK] {test_dir} → ({test_x}, {test_y}) is walkable ('{test_tile}')")
+                                            exploration_direction = test_dir
+                                            break
                         
                         # Last resort - try primary anyway
                         if not exploration_direction:
