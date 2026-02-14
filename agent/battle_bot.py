@@ -682,6 +682,12 @@ class BattleBot:
             "gained",         # EXP gained
             "grew to",        # Level up
             "learned",        # Learned new move
+            "effective",      # "It's not very effective..." / "It's super effective!"
+            "critical",       # "A critical hit!"
+            "hit",            # "A critical hit!" / "It's a one-hit KO!"
+            "missed",         # "Attack missed!"
+            "hurt",           # "It hurt itself in confusion!"
+            "no effect",      # "It had no effect!"
         ]
         
         if any(indicator in dialogue_lower for indicator in dialogue_indicators):
@@ -1589,14 +1595,14 @@ class BattleBot:
                     # keep returning it instead of PRESS_A_ONLY which would select POUND.
                     # This happens because after pressing A to enter fight menu, VLM sees
                     # a transition frame and returns unknown menu state.
-                    if self._pending_move and self._unknown_state_count <= 2:
+                    if self._pending_move and self._unknown_state_count <= 4:
                         logger.info(f"🔄 [PENDING MOVE] Continuing pending move: {self._pending_move} (unknown state #{self._unknown_state_count})")
                         print(f"🔄 [PENDING MOVE] Continuing {self._pending_move} (unknown #{self._unknown_state_count})")
                         return self._pending_move
                     
-                    # If we've been stuck in unknown state for 3+ turns, VLM is likely hallucinating
+                    # If we've been stuck in unknown state for 5+ turns, VLM is likely hallucinating
                     # Force navigation to fight menu as fallback
-                    if self._unknown_state_count >= 5:
+                    if self._unknown_state_count >= 7:
                         logger.warning(f"⚠️ [BATTLE BOT] Stuck in unknown state for {self._unknown_state_count} turns!")
                         logger.warning("   VLM completely stuck - forcing MOVE selection blindly")
                         print(f"⚠️ [BATTLE BOT] VLM broken! Forcing move selection (attempt #{self._unknown_state_count - 4})")
@@ -1634,15 +1640,17 @@ class BattleBot:
                         if use_absorb:
                             logger.info(f"🌿 [BLIND SELECT] Using ABSORB vs {opp_species}")
                             print(f"🌿 [BLIND] ABSORB → {opp_species}")
+                            self._pending_move = "USE_MOVE_ABSORB"
                             return "USE_MOVE_ABSORB"
                         else:
                             logger.info(f"🥊 [BLIND SELECT] Using POUND vs {opp_species}")
                             print(f"🥊 [BLIND] POUND → {opp_species}")
+                            self._pending_move = "USE_MOVE_POUND"
                             return "USE_MOVE_POUND"
-                    elif self._unknown_state_count >= 3:
+                    elif self._unknown_state_count >= 5:
                         logger.warning(f"⚠️ [BATTLE BOT] Stuck in unknown state for {self._unknown_state_count} turns!")
                         logger.warning("   VLM may be hallucinating - forcing move selection")
-                        print(f"⚠️ [BATTLE BOT] VLM stuck! Forcing move selection (attempt #{self._unknown_state_count - 2})")
+                        print(f"⚠️ [BATTLE BOT] VLM stuck! Forcing move selection (attempt #{self._unknown_state_count - 4})")
                         
                         # Get player_pokemon for level check
                         player_pokemon = battle_info.get('player_pokemon', {})
@@ -1673,10 +1681,12 @@ class BattleBot:
                         if use_absorb:
                             logger.info(f"🌿 [RECOVERY] Using ABSORB vs {opp_species}")
                             print(f"🌿 [RECOVERY] ABSORB → {opp_species}")
+                            self._pending_move = "USE_MOVE_ABSORB"
                             return "USE_MOVE_ABSORB"
                         else:
                             logger.info(f"🥊 [RECOVERY] Using POUND vs {opp_species}")
                             print(f"🥊 [RECOVERY] POUND → {opp_species}")
+                            self._pending_move = "USE_MOVE_POUND"
                             return "USE_MOVE_POUND"
                     else:
                         # First 2 unknown states - just press A only (might be battle animation)

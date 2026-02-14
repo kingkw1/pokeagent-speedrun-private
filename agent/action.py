@@ -1977,7 +1977,9 @@ What button should you press? Respond with ONE button name only: A"""
                     print("🌿 [BATTLE BOT] Working toward ABSORB (Grass-type, drains HP)")
                 
                 elif battle_decision == "USE_MOVE_POUND":
-                    # Battle menu navigation: base_menu → A (selects FIGHT) → fight_menu → A (use POUND - first move)
+                    # Battle menu navigation: base_menu → A (selects FIGHT) → fight_menu → UP (ensure cursor on POUND) → A (confirm)
+                    # CRITICAL: Must explicitly press UP because cursor may be on ABSORB from previous turn!
+                    # Pokemon Emerald fight menu remembers cursor position between turns.
                     # Track which step we're on
                     if not hasattr(battle_bot, '_pound_step'):
                         battle_bot._pound_step = 0
@@ -1995,12 +1997,17 @@ What button should you press? Respond with ONE button name only: A"""
                         button_recommendation = "A"
                         decision_explanation = "Select FIGHT from base menu"
                         battle_bot._pound_step = 1
-                        logger.info("🥊 [BATTLE BOT] Step 1/2: Press A to select FIGHT")
-                    else:  # step 1
+                        logger.info("🥊 [BATTLE BOT] Step 1/3: Press A to select FIGHT")
+                    elif battle_bot._pound_step == 1:
+                        button_recommendation = "UP"
+                        decision_explanation = "Navigate UP to POUND move (cursor may be on ABSORB from last turn)"
+                        battle_bot._pound_step = 2
+                        logger.info("🥊 [BATTLE BOT] Step 2/3: Press UP to select POUND")
+                    else:  # step 2
                         button_recommendation = "A"
-                        decision_explanation = "Confirm POUND move (first move, default selected)"
+                        decision_explanation = "Confirm POUND move"
                         battle_bot._pound_step = 0  # Reset for next turn
-                        logger.info("🥊 [BATTLE BOT] Step 2/2: Press A to use POUND")
+                        logger.info("🥊 [BATTLE BOT] Step 3/3: Press A to use POUND")
                     print("🥊 [BATTLE BOT] Working toward POUND (Normal-type)")
                 
                 elif battle_decision == "PRESS_B":
